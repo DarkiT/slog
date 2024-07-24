@@ -13,8 +13,19 @@ var (
 	fields contextKey = "slog_fields"        // 定义一个用于存储字段的上下文键
 )
 
+// Context 使用给定的上下文
+func Context(parent context.Context) context.Context {
+	if parent != nil {
+		ctx = parent
+	}
+	return ctx
+}
+
 // WithValue 在上下文中存储一个键值对，并返回新的上下文
-func WithValue(key string, val any) context.Context {
+func WithValue(parent context.Context, key string, val any) context.Context {
+	if parent != nil {
+		ctx = parent // 使用给定的上下文
+	}
 	if v, ok := ctx.Value(fields).(*sync.Map); ok { // 检查当前上下文中是否已经有 sync.Map
 		mapCopy := copySyncMap(v) // 复制现有的 sync.Map
 		mapCopy.Store(key, val)   // 在复制的 sync.Map 中存储新的键值对

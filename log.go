@@ -15,7 +15,6 @@ import (
 var (
 	logger                            Logger
 	levelVar                          slog.LevelVar
-	slogHandler                       slog.Handler
 	textEnabled, jsonEnabled, noColor bool
 )
 
@@ -66,6 +65,26 @@ func DisableJsonLogger() {
 	jsonEnabled = false
 }
 
+func NewOptions(options *HandlerOptions) *HandlerOptions {
+	if options == nil {
+		options = &HandlerOptions{
+			Level: &levelVar,
+		}
+	}
+
+	if levelVar.Level() <= LevelDebug {
+		options.AddSource = true
+	}
+
+	AddSource(options)
+
+	return options
+}
+
+func New(handler slog.Handler) *slog.Logger {
+	return slog.New(handler)
+}
+
 // Default 返回默认记录器。
 func Default() *Logger {
 	return &logger
@@ -78,6 +97,9 @@ func setDefaultSlogHandlerOptions(l *slog.HandlerOptions) {
 
 // AddSource 将源添加到 slog 处理程序选项。
 func AddSource(options *slog.HandlerOptions) {
+	if options.Level == nil {
+		options.Level = &levelVar
+	}
 	options.ReplaceAttr = func(groups []string, a slog.Attr) slog.Attr {
 		if a.Key == slog.SourceKey {
 			source := a.Value.Any().(*slog.Source)
@@ -94,10 +116,10 @@ func AddSource(options *slog.HandlerOptions) {
 			} else {
 				levelLabel, exists = LevelTextNames[level]
 			}
-			if exists {
-				a.Value = slog.StringValue(levelLabel)
+			if !exists {
+				a.Value = slog.StringValue(level.String())
 			} else {
-				levelLabel = level.String()
+				a.Value = slog.StringValue(levelLabel)
 			}
 
 		}
@@ -116,8 +138,7 @@ func SetTextLogger(writer io.Writer, addSource bool) {
 		options.AddSource = true
 	}
 
-	slogHandler = NewHandler(writer, options)
-	logger.text = slog.New(slogHandler)
+	logger.text = slog.New(NewConsoleHandler(writer, options))
 	textEnabled = true
 }
 
@@ -130,8 +151,7 @@ func SetJsonLogger(writer io.Writer, addSource bool) {
 	if levelVar.Level() <= LevelDebug || addSource {
 		options.AddSource = true
 	}
-	slogHandler = slog.NewJSONHandler(writer, options)
-	logger.json = slog.New(slogHandler)
+	logger.json = slog.New(slog.NewJSONHandler(writer, options))
 	jsonEnabled = true
 }
 
@@ -165,12 +185,7 @@ func SetLevelFatal() {
 	levelVar.Set(LevelFatal)
 }
 
-// GetHandler 返回当前的 slog.Handler 实例。
-func GetHandler() slog.Handler {
-	return slogHandler
-}
-
-// Println 记录调试消息。
+// Println 记录调试消息，为了兼容fmt.Println风格输出
 //
 //	log.Println("hello world")
 //	log.Println("hello world", "age", 18, "name", "foo")
@@ -185,7 +200,7 @@ func Println(msg string, args ...any) {
 	handle(nil, r, slog.LevelInfo)
 }
 
-// Printf 记录调试消息。
+// Printf 记录打印消息，为了兼容fmt.Printf风格输出
 //
 //	log.Printf("hello world")
 //	log.Printf("hello world", "age", 18, "name", "foo")
@@ -276,11 +291,11 @@ func Trace(msg string, args ...any) {
 	handle(nil, r, LevelTrace)
 }
 
-// Panic 记录错误消息并以 `1` 错误代码退出当前程序。
+// Fatal 记录错误消息并以 `1` 错误代码退出当前程序。
 //
-//	log.Panic("hello world")
-//	log.Panic("hello world", "age", 18, "name", "foo")
-func Panic(msg string, args ...any) {
+//	log.Fatal("hello world")
+//	log.Fatal("hello world", "age", 18, "name", "foo")
+func Fatal(msg string, args ...any) {
 	var r slog.Record
 	if formatLog(msg, args...) {
 		r = newRecord(LevelFatal, msg, args...)
@@ -337,14 +352,19 @@ func Tracef(format string, args ...any) {
 	handle(nil, r, LevelTrace)
 }
 
-// Panicf 记录并格式化错误消息并以 `1` 错误代码退出当前程序。不能使用属性。
+// Fatalf 记录并格式化错误消息并以 `1` 错误代码退出当前程序。不能使用属性。
 //
-//	log.Panicf("hello world")
-//	log.Panicf("hello %s", "world")
-func Panicf(format string, args ...any) {
+//	log.Fatalf("hello world")
+//	log.Fatalf("hello %s", "world")
+func Fatalf(format string, args ...any) {
 	r := newRecord(LevelFatal, format, args...)
 	handle(nil, r, LevelFatal)
 	os.Exit(1)
+}
+
+func Prefix(key string) *Logger {
+	logger.With("$service", key)
+	return Default()
 }
 
 // GetChannel 获取通道数据，若通道不存在则自动初始化。

@@ -27,6 +27,7 @@ const (
 
 var (
 	defaultLevel   = LevelError
+	prefixKeys     = []string{"$service"}
 	TimeFormat     = "2006/01/02 03:04.05.000"
 	LevelTextNames = map[slog.Leveler]string{
 		LevelInfo:  "I",
@@ -46,12 +47,13 @@ type handler struct {
 	attrs              string
 	timeFormat         string
 	replaceAttr        func(groups []string, a slog.Attr) slog.Attr
+	prefixes           []slog.Value // Cached list of prefix values.
 	addSource, noColor bool
 }
 
-// NewHandler returns a [log/slog.Handler] using the receiver's options.
+// NewConsoleHandler returns a [log/slog.Handler] using the receiver's options.
 // Default options are used if opts is nil.
-func NewHandler(w io.Writer, opts *slog.HandlerOptions) slog.Handler {
+func NewConsoleHandler(w io.Writer, opts *slog.HandlerOptions) slog.Handler {
 	if opts == nil {
 		opts = &slog.HandlerOptions{}
 	}
@@ -61,6 +63,7 @@ func NewHandler(w io.Writer, opts *slog.HandlerOptions) slog.Handler {
 		level:       opts.Level,
 		replaceAttr: opts.ReplaceAttr,
 		addSource:   opts.AddSource,
+		prefixes:    make([]slog.Value, len(prefixKeys)),
 	}
 	h.groups = make([]string, 0, 10)
 
@@ -110,6 +113,23 @@ func (h *handler) Handle(_ context.Context, r slog.Record) error {
 		buf.WriteByte(' ')
 	}
 
+	prefixes := h.prefixes
+
+	if r.NumAttrs() > 0 {
+		nr := slog.NewRecord(r.Time, r.Level, r.Message, r.PC)
+		attrs := make([]slog.Attr, 0, r.NumAttrs())
+		r.Attrs(func(a slog.Attr) bool {
+			attrs = append(attrs, a)
+			return true
+		})
+		if p, changed := h.extractPrefixes(attrs); changed {
+			nr.AddAttrs(attrs...)
+			r = nr
+			prefixes = p
+		}
+	}
+	h.formatterPrefix(buf, prefixes)
+	buf.WriteString(" ")
 	buf.WriteString(r.Message)
 	buf.WriteString(" ")
 	if h.attrs != "" {
@@ -132,6 +152,7 @@ func (h *handler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	if len(attrs) == 0 {
 		return h
 	}
+	h.prefixes, _ = h.extractPrefixes(attrs)
 	h2 := h.clone()
 	buf := newBuffer()
 	defer buf.Free()
@@ -169,7 +190,7 @@ func (h *handler) clone() *handler {
 func (h *handler) appendLevel(buf *buffer, level slog.Level) {
 	switch {
 	case level == LevelDebug:
-		buf.WriteStringIf(!h.noColor, ansiCyan)
+		buf.WriteStringIf(!h.noColor, ansiBrightBlue)
 		buf.WriteString("[")
 		buf.WriteString(LevelTextNames[LevelDebug])
 		buf.WriteString("]")
@@ -187,13 +208,13 @@ func (h *handler) appendLevel(buf *buffer, level slog.Level) {
 		buf.WriteString("]")
 		buf.WriteStringIf(!h.noColor, ansiReset)
 	case level == LevelWarn:
-		buf.WriteStringIf(!h.noColor, ansiPurple)
+		buf.WriteStringIf(!h.noColor, ansiBrightYellow)
 		buf.WriteString("[")
 		buf.WriteString(LevelTextNames[LevelWarn])
 		buf.WriteString("]")
 		buf.WriteStringIf(!h.noColor, ansiReset)
 	case level == LevelTrace:
-		buf.WriteStringIf(!h.noColor, ansiBrightYellow)
+		buf.WriteStringIf(!h.noColor, ansiBrightPurple)
 		buf.WriteString("[")
 		buf.WriteString(LevelTextNames[LevelTrace])
 		buf.WriteString("]")
@@ -315,6 +336,40 @@ func (h *handler) newSourceAttr(pc uintptr) string {
 	//dir, file := filepath.Split(source.File)
 	//filepath.Join(filepath.Base(dir), file)
 	return fmt.Sprintf("[%s:%d]", filepath.Base(source.File), source.Line)
+}
+
+func (h *handler) extractPrefixes(attrs []slog.Attr) (prefixes []slog.Value, changed bool) {
+	prefixes = h.prefixes
+	for i, attr := range attrs {
+		idx := slices.IndexFunc(prefixKeys, func(s string) bool { return s == attr.Key })
+		if idx >= 0 {
+			if !changed {
+				// make a copy of prefixes:
+				prefixes = make([]slog.Value, len(h.prefixes))
+				copy(prefixes, h.prefixes)
+			}
+			prefixes[idx] = attr.Value
+			attrs[i] = slog.Attr{} // remove the prefix attribute
+			changed = true
+		}
+	}
+	return
+}
+
+func (h *handler) formatterPrefix(buf *buffer, prefixes []slog.Value) {
+	p := make([]string, 0, len(prefixes))
+	for _, prefix := range prefixes {
+		if prefix.Any() == nil || prefix.String() == "" {
+			continue // skip empty prefixes
+		}
+		p = append(p, prefix.String())
+	}
+	if len(p) == 0 {
+		return
+	}
+	buf.WriteString("[")
+	buf.WriteString(strings.Join(p, ":"))
+	buf.WriteString("]")
 }
 
 func frame(pc uintptr) runtime.Frame {

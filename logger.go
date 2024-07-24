@@ -15,69 +15,108 @@ type Logger struct {
 
 // Debug 方法用于记录调试级别的日志。
 func (l *Logger) Debug(msg string, args ...any) {
-	r := newRecord(slog.LevelDebug, msg) // 创建一个新的记录
-	r.Add(args...)                       // 添加参数到记录
-	handle(l, r, slog.LevelDebug)        // 处理记录
+	var r slog.Record
+	if formatLog(msg, args...) {
+		r = newRecord(LevelDebug, msg, args...)
+	} else {
+		r = newRecord(LevelDebug, msg)
+		r.Add(args...)
+	}
+	handle(l, r, LevelDebug) // 处理记录
 }
 
 // Info 方法用于记录信息级别的日志。
 func (l *Logger) Info(msg string, args ...any) {
-	r := newRecord(slog.LevelInfo, msg)
-	r.Add(args...)
-	handle(l, r, slog.LevelInfo)
+	var r slog.Record
+	if formatLog(msg, args...) {
+		r = newRecord(LevelInfo, msg, args...)
+	} else {
+		r = newRecord(LevelInfo, msg)
+		r.Add(args...)
+	}
+	handle(l, r, LevelInfo)
 }
 
 // Warn 方法用于记录警告级别的日志。
 func (l *Logger) Warn(msg string, args ...any) {
-	r := newRecord(slog.LevelWarn, msg)
-	r.Add(args...)
-	handle(l, r, slog.LevelWarn)
+	var r slog.Record
+	if formatLog(msg, args...) {
+		r = newRecord(LevelWarn, msg, args...)
+	} else {
+		r = newRecord(LevelWarn, msg)
+		r.Add(args...)
+	}
+	handle(l, r, LevelWarn)
 }
 
 // Error 方法用于记录错误级别的日志。
 func (l *Logger) Error(msg string, args ...any) {
-	r := newRecord(slog.LevelError, msg)
-	r.Add(args...)
-	handle(l, r, slog.LevelError)
+	var r slog.Record
+	if formatLog(msg, args...) {
+		r = newRecord(LevelError, msg, args...)
+	} else {
+		r = newRecord(LevelError, msg)
+		r.Add(args...)
+	}
+	handle(l, r, LevelError)
 }
 
-// Panic 方法用于记录严重错误级别的日志，并终止程序。
-func (l *Logger) Panic(msg string, args ...any) {
-	r := newRecord(LevelFatal, msg)
-	r.Add(args...)
+// Fatal 方法用于记录严重错误级别的日志，并终止程序。
+func (l *Logger) Fatal(msg string, args ...any) {
+	var r slog.Record
+	if formatLog(msg, args...) {
+		r = newRecord(LevelFatal, msg, args...)
+	} else {
+		r = newRecord(LevelFatal, msg)
+		r.Add(args...)
+	}
 	handle(l, r, LevelFatal)
 	os.Exit(1) // 终止程序
 }
 
 // Debugf 方法用于格式化并记录调试级别的日志。
 func (l *Logger) Debugf(format string, args ...any) {
-	r := newRecord(slog.LevelDebug, format, args...)
-	handle(l, r, slog.LevelDebug)
+	r := newRecord(LevelDebug, format, args...)
+	handle(l, r, LevelDebug)
 }
 
 // Infof 方法用于格式化并记录信息级别的日志。
 func (l *Logger) Infof(format string, args ...any) {
-	r := newRecord(slog.LevelInfo, format, args...)
-	handle(l, r, slog.LevelInfo)
+	r := newRecord(LevelInfo, format, args...)
+	handle(l, r, LevelInfo)
 }
 
 // Warnf 方法用于格式化并记录警告级别的日志。
 func (l *Logger) Warnf(format string, args ...any) {
-	r := newRecord(slog.LevelWarn, format, args...)
-	handle(l, r, slog.LevelWarn)
+	r := newRecord(LevelWarn, format, args...)
+	handle(l, r, LevelWarn)
 }
 
 // Errorf 方法用于格式化并记录错误级别的日志。
 func (l *Logger) Errorf(format string, args ...any) {
-	r := newRecord(slog.LevelError, format, args...)
-	handle(l, r, slog.LevelError)
+	r := newRecord(LevelError, format, args...)
+	handle(l, r, LevelError)
 }
 
-// Panicf 方法用于格式化并记录严重错误级别的日志，并终止程序。
-func (l *Logger) Panicf(format string, args ...any) {
+// Fatalf 方法用于格式化并记录严重错误级别的日志，并终止程序。
+func (l *Logger) Fatalf(format string, args ...any) {
 	r := newRecord(LevelFatal, format, args...)
 	handle(l, r, LevelFatal)
 	os.Exit(1) // 终止程序
+}
+
+// Printf 为了兼容fmt.Printf风格输出
+func (l *Logger) Printf(msg string, args ...any) {
+	r := newRecord(LevelInfo, msg)
+	r.Add(args...)
+	handle(l, r, LevelInfo)
+}
+
+// Println 为了兼容fmt.Println风格输出
+func (l *Logger) Println(msg string, args ...any) {
+	r := newRecord(LevelInfo, msg)
+	r.Add(args...)
+	handle(l, r, LevelInfo)
 }
 
 // With 方法返回一个新的 Logger，其中包含给定的参数。
@@ -113,6 +152,11 @@ func (l *Logger) WithGroup(name string) *Logger {
 	return &Logger{text: text, json: json}
 }
 
+// WithValue 在上下文中存储一个键值对，并返回新的上下文
+func (l *Logger) WithValue(parent context.Context, key string, val any) context.Context {
+	return WithValue(parent, key, val)
+}
+
 // Log 方法用于记录指定级别的日志。
 func (l *Logger) Log(parent context.Context, level slog.Level, msg string, args ...any) {
 	lv := level
@@ -132,10 +176,10 @@ func (l *Logger) Log(parent context.Context, level slog.Level, msg string, args 
 }
 
 // LogAttrs 方法用于记录具有指定属性的日志。
-func (l *Logger) LogAttrs(ctx context.Context, level slog.Level, msg string, attrs ...Attr) {
+func (l *Logger) LogAttrs(parent context.Context, level slog.Level, msg string, attrs ...Attr) {
 	lv := level
-	if ctx == nil {
-		ctx = context.Background() // 如果上下文为空，则使用默认上下文
+	if parent != nil {
+		ctx = parent // 使用给定的上下文
 	}
 
 	r := newRecord(lv, msg)

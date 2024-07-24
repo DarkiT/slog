@@ -5,15 +5,15 @@ log 包封装了 slog 包，提供了更简单的接口。并且提供了一个�
 # Example
 
 ```go
-log.SetLevelInfo()
-log.Debugf("hello %s", "world")
-log.Infof("hello %s", "world")
-log.Warnf("hello %s", "world")
-log.Errorf("hello world")
-log.Debug("hello world", "age", 18)
-log.Info("hello world", "age", 18)
-log.Warn("hello world", "age", 18)
-log.Error("hello world", "age", 18)
+slog.SetLevelInfo()
+slog.Debugf("hello %s", "world")
+slog.Infof("hello %s", "world")
+slog.Warnf("hello %s", "world")
+slog.Errorf("hello world")
+slog.Debug("hello world", "age", 18)
+slog.Info("hello world", "age", 18)
+slog.Warn("hello world", "age", 18)
+slog.Error("hello world", "age", 18)
 
 l := log.Default()
 l.LogAttrs(context.Background(), log.LevelInfo, "hello world", log.Int("age", 22))
