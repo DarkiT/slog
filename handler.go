@@ -49,9 +49,9 @@ type handler struct {
 	addSource, noColor bool
 }
 
-// NewConsoleHandler returns a [log/slog.Handler] using the receiver's options.
+// NewHandler returns a [log/slog.Handler] using the receiver's options.
 // Default options are used if opts is nil.
-func NewConsoleHandler(w io.Writer, opts *slog.HandlerOptions) slog.Handler {
+func NewHandler(w io.Writer, opts *slog.HandlerOptions) slog.Handler {
 	if opts == nil {
 		opts = &slog.HandlerOptions{}
 	}
@@ -169,7 +169,7 @@ func (h *handler) clone() *handler {
 func (h *handler) appendLevel(buf *buffer, level slog.Level) {
 	switch {
 	case level == LevelDebug:
-		buf.WriteStringIf(!h.noColor, ansiBrightBlue)
+		buf.WriteStringIf(!h.noColor, ansiCyan)
 		buf.WriteString("[")
 		buf.WriteString(LevelTextNames[LevelDebug])
 		buf.WriteString("]")
@@ -187,7 +187,7 @@ func (h *handler) appendLevel(buf *buffer, level slog.Level) {
 		buf.WriteString("]")
 		buf.WriteStringIf(!h.noColor, ansiReset)
 	case level == LevelWarn:
-		buf.WriteStringIf(!h.noColor, ansiBrightPurple)
+		buf.WriteStringIf(!h.noColor, ansiPurple)
 		buf.WriteString("[")
 		buf.WriteString(LevelTextNames[LevelWarn])
 		buf.WriteString("]")

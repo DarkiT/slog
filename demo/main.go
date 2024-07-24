@@ -8,27 +8,7 @@ import (
 	log "github.com/darkit/slog"
 )
 
-var ctx = context.Background()
-
 func main() {
-	opts := log.NewOptions(nil)
-	opts.AddSource = true
-	//opts.ReplaceAttr = func(groups []string, a log.Attr) log.Attr {
-	//	if a.Key == log.LevelKey {
-	//		level := a.Value.Any().(log.Level)
-	//		levelLabel, exists := log.LevelTextNames[level]
-	//		if !exists {
-	//			a.Value = log.StringValue(level.String())
-	//		} else {
-	//			a.Value = log.StringValue(levelLabel)
-	//		}
-	//	}
-	//	return a
-	//}
-	slog := log.New(log.NewJSONHandler(os.Stdout, opts))
-	//log.SetLevelDebug()
-	slog.Info("测试", log.String("abc", "def"))
-	slog.Debug("xxxx", "xxxx", "xxxx")
 
 	ch := log.GetChannel()
 	defer close(ch)
@@ -37,8 +17,8 @@ func main() {
 	//log.SetJsonLogger(os.Stdout, true)
 	log.SetLevelDebug()
 
-	ctx = log.WithValue(ctx, "context", "value")
-	ctx = log.WithValue(ctx, "user", "zishuo")
+	log.WithValue("context", "value")
+	log.WithValue("user", "zishuo")
 	log.Info("这是一个信息日志")
 	log.Debug("这是一个调试日志", log.Group("data",
 		log.Int("width", 4000),
@@ -58,7 +38,6 @@ func main() {
 	log.Trace("这是一个路由日志: %s -> %d", "sss", 88888)
 	//log.Panic("这是一个致命错误日志", "age", 18, "name", "foo")
 
-	log.Context(context.Background())
 	log.Printf("这是一个格式化打印消息: %s -> %d", "sss", 88888)
 	log.Trace("这是一条路由消息: %s -> %d", "sss", 88888)
 	log.Info("这是一个测试消息", "aaa", "demo", "bbb", "ddd")
@@ -78,9 +57,8 @@ func main() {
 		case <-tk.C:
 			return
 		case d := <-ch:
-			log.WithValue(ctx, "time", time.Now())
-			slog.Handler().Enabled(ctx, log.LevelDebug)
-			slog.Handler().Handle(ctx, d)
+			log.WithValue("time", time.Now())
+			log.GetHandler().Handle(context.Background(), d)
 		default:
 			log.Warn("这是一个测试消息->: %d", time.Now().UnixMicro())
 			time.Sleep(time.Second)

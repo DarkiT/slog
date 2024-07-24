@@ -80,20 +80,6 @@ func (l *Logger) Panicf(format string, args ...any) {
 	os.Exit(1) // 终止程序
 }
 
-// Printf 为了兼容fmt.Printf风格输出
-func (l *Logger) Printf(msg string, args ...any) {
-	r := newRecord(LevelInfo, msg)
-	r.Add(args...)
-	handle(l, r, LevelInfo)
-}
-
-// Println 为了兼容fmt.Println风格输出
-func (l *Logger) Println(msg string, args ...any) {
-	r := newRecord(LevelInfo, msg)
-	r.Add(args...)
-	handle(l, r, LevelInfo)
-}
-
 // With 方法返回一个新的 Logger，其中包含给定的参数。
 func (l *Logger) With(args ...any) *Logger {
 	if l.text == nil && l.json == nil {
@@ -127,11 +113,6 @@ func (l *Logger) WithGroup(name string) *Logger {
 	return &Logger{text: text, json: json}
 }
 
-// WithValue 在上下文中存储一个键值对，并返回新的上下文
-func (l *Logger) WithValue(parent context.Context, key string, val any) context.Context {
-	return WithValue(parent, key, val)
-}
-
 // Log 方法用于记录指定级别的日志。
 func (l *Logger) Log(parent context.Context, level slog.Level, msg string, args ...any) {
 	lv := level
@@ -151,10 +132,10 @@ func (l *Logger) Log(parent context.Context, level slog.Level, msg string, args 
 }
 
 // LogAttrs 方法用于记录具有指定属性的日志。
-func (l *Logger) LogAttrs(parent context.Context, level slog.Level, msg string, attrs ...Attr) {
+func (l *Logger) LogAttrs(ctx context.Context, level slog.Level, msg string, attrs ...Attr) {
 	lv := level
-	if parent != nil {
-		ctx = parent // 使用给定的上下文
+	if ctx == nil {
+		ctx = context.Background() // 如果上下文为空，则使用默认上下文
 	}
 
 	r := newRecord(lv, msg)

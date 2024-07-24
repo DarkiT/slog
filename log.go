@@ -15,6 +15,7 @@ import (
 var (
 	logger                            Logger
 	levelVar                          slog.LevelVar
+	slogHandler                       slog.Handler
 	textEnabled, jsonEnabled, noColor bool
 )
 
@@ -65,26 +66,6 @@ func DisableJsonLogger() {
 	jsonEnabled = false
 }
 
-func NewOptions(options *HandlerOptions) *HandlerOptions {
-	if options == nil {
-		options = &HandlerOptions{
-			Level: &levelVar,
-		}
-	}
-
-	if levelVar.Level() <= LevelDebug {
-		options.AddSource = true
-	}
-
-	AddSource(options)
-
-	return options
-}
-
-func New(handler slog.Handler) *slog.Logger {
-	return slog.New(handler)
-}
-
 // Default 返回默认记录器。
 func Default() *Logger {
 	return &logger
@@ -97,9 +78,6 @@ func setDefaultSlogHandlerOptions(l *slog.HandlerOptions) {
 
 // AddSource 将源添加到 slog 处理程序选项。
 func AddSource(options *slog.HandlerOptions) {
-	if options.Level == nil {
-		options.Level = &levelVar
-	}
 	options.ReplaceAttr = func(groups []string, a slog.Attr) slog.Attr {
 		if a.Key == slog.SourceKey {
 			source := a.Value.Any().(*slog.Source)
@@ -116,10 +94,10 @@ func AddSource(options *slog.HandlerOptions) {
 			} else {
 				levelLabel, exists = LevelTextNames[level]
 			}
-			if !exists {
-				a.Value = slog.StringValue(level.String())
-			} else {
+			if exists {
 				a.Value = slog.StringValue(levelLabel)
+			} else {
+				levelLabel = level.String()
 			}
 
 		}
@@ -138,7 +116,8 @@ func SetTextLogger(writer io.Writer, addSource bool) {
 		options.AddSource = true
 	}
 
-	logger.text = slog.New(NewConsoleHandler(writer, options))
+	slogHandler = NewHandler(writer, options)
+	logger.text = slog.New(slogHandler)
 	textEnabled = true
 }
 
@@ -151,7 +130,8 @@ func SetJsonLogger(writer io.Writer, addSource bool) {
 	if levelVar.Level() <= LevelDebug || addSource {
 		options.AddSource = true
 	}
-	logger.json = slog.New(slog.NewJSONHandler(writer, options))
+	slogHandler = slog.NewJSONHandler(writer, options)
+	logger.json = slog.New(slogHandler)
 	jsonEnabled = true
 }
 
@@ -185,7 +165,12 @@ func SetLevelFatal() {
 	levelVar.Set(LevelFatal)
 }
 
-// Println 记录调试消息，为了兼容fmt.Println风格输出
+// GetHandler 返回当前的 slog.Handler 实例。
+func GetHandler() slog.Handler {
+	return slogHandler
+}
+
+// Println 记录调试消息。
 //
 //	log.Println("hello world")
 //	log.Println("hello world", "age", 18, "name", "foo")
@@ -200,7 +185,7 @@ func Println(msg string, args ...any) {
 	handle(nil, r, slog.LevelInfo)
 }
 
-// Printf 记录打印消息，为了兼容fmt.Printf风格输出
+// Printf 记录调试消息。
 //
 //	log.Printf("hello world")
 //	log.Printf("hello world", "age", 18, "name", "foo")
