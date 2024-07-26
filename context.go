@@ -13,8 +13,8 @@ var (
 	fields contextKey = "slog_fields"        // 定义一个用于存储字段的上下文键
 )
 
-// Context 使用给定的上下文
-func Context(parent context.Context) context.Context {
+// WithContext 使用给定的上下文
+func WithContext(parent context.Context) context.Context {
 	if parent != nil {
 		ctx = parent
 	}

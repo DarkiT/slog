@@ -129,7 +129,7 @@ func (h *handler) Handle(_ context.Context, r slog.Record) error {
 		}
 	}
 	h.formatterPrefix(buf, prefixes)
-	buf.WriteString(" ")
+
 	buf.WriteString(r.Message)
 	buf.WriteString(" ")
 	if h.attrs != "" {
@@ -370,6 +370,7 @@ func (h *handler) formatterPrefix(buf *buffer, prefixes []slog.Value) {
 	buf.WriteString("[")
 	buf.WriteString(strings.Join(p, ":"))
 	buf.WriteString("]")
+	buf.WriteString(" ")
 }
 
 func frame(pc uintptr) runtime.Frame {

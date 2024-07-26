@@ -65,7 +65,7 @@ func main() {
 	log.Trace("这是一个路由日志: %s -> %d", "sss", 88888)
 	//log.Panic("这是一个致命错误日志", "age", 18, "name", "foo")
 
-	log.Context(context.Background())
+	log.WithContext(context.Background())
 	log.Printf("这是一个格式化打印消息: %s -> %d", "sss", 88888)
 	log.Trace("这是一条路由消息: %s -> %d", "sss", 88888)
 	log.Info("这是一个测试消息", "aaa", "demo", "bbb", "ddd")
