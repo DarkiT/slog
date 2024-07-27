@@ -26,10 +26,11 @@ const (
 )
 
 var (
+	disableColor   = false
+	TimeFormat     = "2006/01/02 03:04.05.000"
 	defaultLevel   = LevelError
 	prefixKeys     = []string{"$service"}
-	TimeFormat     = "2006/01/02 03:04.05.000"
-	LevelTextNames = map[slog.Leveler]string{
+	levelTextNames = map[slog.Leveler]string{
 		LevelInfo:  "I",
 		LevelDebug: "D",
 		LevelWarn:  "W",
@@ -73,7 +74,7 @@ func NewConsoleHandler(w io.Writer, opts *slog.HandlerOptions) slog.Handler {
 	if h.timeFormat == "" {
 		h.timeFormat = TimeFormat
 	}
-	if noColor {
+	if disableColor {
 		h.noColor = true
 	}
 	return h
@@ -192,37 +193,37 @@ func (h *handler) appendLevel(buf *buffer, level slog.Level) {
 	case level == LevelDebug:
 		buf.WriteStringIf(!h.noColor, ansiBrightBlue)
 		buf.WriteString("[")
-		buf.WriteString(LevelTextNames[LevelDebug])
+		buf.WriteString(levelTextNames[LevelDebug])
 		buf.WriteString("]")
 		buf.WriteStringIf(!h.noColor, ansiReset)
 	case level == LevelInfo:
 		buf.WriteStringIf(!h.noColor, ansiBrightGreen)
 		buf.WriteString("[")
-		buf.WriteString(LevelTextNames[LevelInfo])
+		buf.WriteString(levelTextNames[LevelInfo])
 		buf.WriteString("]")
 		buf.WriteStringIf(!h.noColor, ansiReset)
 	case level == LevelError:
 		buf.WriteStringIf(!h.noColor, ansiBrightRed)
 		buf.WriteString("[")
-		buf.WriteString(LevelTextNames[LevelError])
+		buf.WriteString(levelTextNames[LevelError])
 		buf.WriteString("]")
 		buf.WriteStringIf(!h.noColor, ansiReset)
 	case level == LevelWarn:
 		buf.WriteStringIf(!h.noColor, ansiBrightYellow)
 		buf.WriteString("[")
-		buf.WriteString(LevelTextNames[LevelWarn])
+		buf.WriteString(levelTextNames[LevelWarn])
 		buf.WriteString("]")
 		buf.WriteStringIf(!h.noColor, ansiReset)
 	case level == LevelTrace:
 		buf.WriteStringIf(!h.noColor, ansiBrightPurple)
 		buf.WriteString("[")
-		buf.WriteString(LevelTextNames[LevelTrace])
+		buf.WriteString(levelTextNames[LevelTrace])
 		buf.WriteString("]")
 		buf.WriteStringIf(!h.noColor, ansiReset)
 	case level == LevelFatal:
 		buf.WriteStringIf(!h.noColor, ansiBrightRed)
 		buf.WriteString("[")
-		buf.WriteString(LevelTextNames[LevelFatal])
+		buf.WriteString(levelTextNames[LevelFatal])
 		buf.WriteString("]")
 		buf.WriteStringIf(!h.noColor, ansiReset)
 	default:

@@ -13,14 +13,11 @@ import (
 )
 
 var (
-	logger                            Logger
-	levelVar                          slog.LevelVar
-	textEnabled, jsonEnabled, noColor bool
-)
-
-var (
-	ch             chan slog.Record
-	LevelJsonNames = map[slog.Leveler]string{
+	logger                   Logger
+	levelVar                 slog.LevelVar
+	textEnabled, jsonEnabled bool
+	ch                       chan slog.Record
+	levelJsonNames           = map[slog.Leveler]string{
 		LevelInfo:  "Info",
 		LevelDebug: "Debug",
 		LevelWarn:  "Warn",
@@ -31,12 +28,7 @@ var (
 )
 
 func init() {
-	SetTextLogger(os.Stdout, true)
-}
-
-// DisableColor 禁用颜色
-func DisableColor(b bool) {
-	noColor = b
+	SetTextLogger(os.Stdout, true, false)
 }
 
 // EnableTextLogger 启用文本记录器。
@@ -112,9 +104,9 @@ func AddSource(options *slog.HandlerOptions) {
 				exists     bool
 			)
 			if jsonEnabled {
-				levelLabel, exists = LevelJsonNames[level]
+				levelLabel, exists = levelJsonNames[level]
 			} else {
-				levelLabel, exists = LevelTextNames[level]
+				levelLabel, exists = levelJsonNames[level]
 			}
 			if !exists {
 				a.Value = slog.StringValue(level.String())
@@ -128,7 +120,7 @@ func AddSource(options *slog.HandlerOptions) {
 }
 
 // SetTextLogger 设置并启用文本记录器。
-func SetTextLogger(writer io.Writer, addSource bool) {
+func SetTextLogger(writer io.Writer, noColor, addSource bool) {
 	options := &slog.HandlerOptions{}
 
 	setDefaultSlogHandlerOptions(options)
@@ -138,6 +130,7 @@ func SetTextLogger(writer io.Writer, addSource bool) {
 		options.AddSource = true
 	}
 
+	disableColor = noColor
 	logger.text = slog.New(NewConsoleHandler(writer, options))
 	textEnabled = true
 }
@@ -364,7 +357,7 @@ func Fatalf(format string, args ...any) {
 
 func Prefix(key string) *Logger {
 	logger.With("$service", key)
-	return Default()
+	return &logger
 }
 
 // GetChannel 获取通道数据，若通道不存在则自动初始化。

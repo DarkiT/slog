@@ -33,6 +33,7 @@ func StringValue(value string) Value {
 	return slog.StringValue(value)
 
 }
+
 func Any(key string, value any) Attr {
 	return slog.Any(key, value)
 }

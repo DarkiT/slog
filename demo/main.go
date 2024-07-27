@@ -7,26 +7,19 @@ import (
 	"time"
 
 	log "github.com/darkit/slog"
+	"github.com/darkit/slog/multi"
 )
 
 var ctx = context.Background()
 
 func main() {
-	opts := log.NewOptions(nil)
-	opts.AddSource = false
-	opts.ReplaceAttr = func(groups []string, a log.Attr) log.Attr {
-		if a.Key == log.LevelKey {
-			level := a.Value.Any().(log.Level)
-			levelLabel, exists := log.LevelTextNames[level]
-			if !exists {
-				a.Value = log.StringValue(level.String())
-			} else {
-				a.Value = log.StringValue(levelLabel)
-			}
-		}
-		return a
-	}
-	slog := log.New(log.NewConsoleHandler(os.Stdout, opts))
+	conn, _ := multi.Dial("tcp", "127.0.0.1:1900")
+	slog := log.New(
+		multi.Fanout(
+			log.NewConsoleHandler(conn, log.NewOptions(nil)),
+			// ...
+		),
+	)
 	//log.SetLevelDebug()
 
 	slog.Info("测试", log.String("abc", "def"))
@@ -37,7 +30,7 @@ func main() {
 
 	log.Printf("Pid: %d 服务已经初始化完成, %d 个协程被创建.", os.Getpid(), runtime.NumGoroutine())
 
-	log.SetTextLogger(os.Stdout, false)
+	log.SetTextLogger(os.Stdout, false, true)
 	//log.SetLevelTrace()
 
 	ctx = log.WithValue(ctx, "context", "value")
@@ -85,7 +78,8 @@ func main() {
 		case <-tk.C:
 			return
 		case d := <-ch:
-			log.WithValue(ctx, "time", time.Now())
+			ctx = log.WithValue(ctx, "time", time.Now())
+			log.WithValue(ctx, "goroutine", runtime.NumGoroutine())
 			slog.Handler().Enabled(ctx, log.LevelDebug)
 			slog.Handler().Handle(ctx, d)
 		default:
