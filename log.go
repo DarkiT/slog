@@ -28,7 +28,11 @@ var (
 )
 
 func init() {
-	SetTextLogger(os.Stdout, true, false)
+	if isTerminal() {
+		SetTextLogger(os.Stdout, false, false)
+	} else {
+		SetJsonLogger(os.Stdout, true)
+	}
 }
 
 // EnableTextLogger 启用文本记录器。
@@ -424,4 +428,12 @@ func formatLog(msg string, args ...any) bool {
 		return true
 	}
 	return false
+}
+
+func isTerminal() bool {
+	stat, err := os.Stdin.Stat()
+	if err != nil {
+		return false
+	}
+	return stat.Mode()&os.ModeCharDevice != 0
 }

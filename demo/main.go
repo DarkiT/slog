@@ -16,7 +16,7 @@ func main() {
 	conn, _ := multi.Dial("tcp", "127.0.0.1:1900")
 	slog := log.New(
 		multi.Fanout(
-			log.NewConsoleHandler(conn, log.NewOptions(nil)),
+			log.NewJSONHandler(conn, log.NewOptions(nil)),
 			// ...
 		),
 	)
@@ -30,7 +30,7 @@ func main() {
 
 	log.Printf("Pid: %d 服务已经初始化完成, %d 个协程被创建.", os.Getpid(), runtime.NumGoroutine())
 
-	log.SetTextLogger(os.Stdout, false, true)
+	//log.SetTextLogger(os.Stdout, false, true)
 	//log.SetLevelTrace()
 
 	ctx = log.WithValue(ctx, "context", "value")
