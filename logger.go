@@ -61,6 +61,18 @@ func (l *Logger) Error(msg string, args ...any) {
 	handle(l, r, LevelError)
 }
 
+// Trace 方法用于记录跟踪级别的日志。
+func (l *Logger) Trace(msg string, args ...any) {
+	var r slog.Record
+	if formatLog(msg, args...) {
+		r = newRecord(LevelTrace, msg, args...)
+	} else {
+		r = newRecord(LevelTrace, msg)
+		r.Add(args...)
+	}
+	handle(l, r, LevelTrace)
+}
+
 // Fatal 方法用于记录严重错误级别的日志，并终止程序。
 func (l *Logger) Fatal(msg string, args ...any) {
 	var r slog.Record
@@ -98,6 +110,12 @@ func (l *Logger) Errorf(format string, args ...any) {
 	handle(l, r, LevelError)
 }
 
+// Tracef 方法用于记录跟踪级别的日志。
+func (l *Logger) Tracef(msg string, args ...any) {
+	r := newRecord(LevelTrace, msg, args...)
+	handle(l, r, LevelTrace)
+}
+
 // Fatalf 方法用于格式化并记录严重错误级别的日志，并终止程序。
 func (l *Logger) Fatalf(format string, args ...any) {
 	r := newRecord(LevelFatal, format, args...)
@@ -107,16 +125,12 @@ func (l *Logger) Fatalf(format string, args ...any) {
 
 // Printf 为了兼容fmt.Printf风格输出
 func (l *Logger) Printf(msg string, args ...any) {
-	r := newRecord(LevelInfo, msg)
-	r.Add(args...)
-	handle(l, r, LevelInfo)
+	l.Info(msg, args...)
 }
 
 // Println 为了兼容fmt.Println风格输出
 func (l *Logger) Println(msg string, args ...any) {
-	r := newRecord(LevelInfo, msg)
-	r.Add(args...)
-	handle(l, r, LevelInfo)
+	l.Info(msg, args...)
 }
 
 // With 方法返回一个新的 Logger，其中包含给定的参数。

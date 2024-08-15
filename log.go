@@ -187,14 +187,7 @@ func SetLevelFatal() {
 //	log.Println("hello world")
 //	log.Println("hello world", "age", 18, "name", "foo")
 func Println(msg string, args ...any) {
-	var r slog.Record
-	if formatLog(msg, args...) {
-		r = newRecord(slog.LevelInfo, msg, args...)
-	} else {
-		r = newRecord(slog.LevelInfo, msg)
-		r.Add(args...)
-	}
-	handle(nil, r, slog.LevelInfo)
+	Info(msg, args...)
 }
 
 // Printf 记录打印消息，为了兼容fmt.Printf风格输出
@@ -202,14 +195,7 @@ func Println(msg string, args ...any) {
 //	log.Printf("hello world")
 //	log.Printf("hello world", "age", 18, "name", "foo")
 func Printf(msg string, args ...any) {
-	var r slog.Record
-	if formatLog(msg, args...) {
-		r = newRecord(slog.LevelInfo, msg, args...)
-	} else {
-		r = newRecord(slog.LevelInfo, msg)
-		r.Add(args...)
-	}
-	handle(nil, r, slog.LevelInfo)
+	Info(msg, args...)
 }
 
 // Debug 记录调试消息。
