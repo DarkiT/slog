@@ -6,4 +6,5 @@
 /dist
 *.log
 *.exe
+*.zip
 vendor/

@@ -33,7 +33,6 @@ func NewJSONHandler(w io.Writer, opts *HandlerOptions) *slog.JSONHandler {
 
 func StringValue(value string) Value {
 	return slog.StringValue(value)
-
 }
 
 func Any(key string, value any) Attr {

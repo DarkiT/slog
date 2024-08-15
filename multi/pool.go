@@ -2,10 +2,9 @@ package multi
 
 import (
 	"context"
+	"log/slog"
 	"math/rand"
 	"time"
-
-	"log/slog"
 
 	"github.com/darkit/slog/common"
 )

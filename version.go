@@ -1,4 +1,6 @@
 package slog
 
-const Name = "slog"
-const Version = "v1.0.0"
+const (
+	Name    = "slog"
+	Version = "v1.0.0"
+)

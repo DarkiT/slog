@@ -2,7 +2,6 @@ package multi
 
 import (
 	"context"
-
 	"log/slog"
 )
 

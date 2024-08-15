@@ -14,13 +14,13 @@ import (
 )
 
 var (
-	one                      sync.Once
-	logger                   Logger
+	once                     sync.Once
 	modules                  map[string]*Logger
 	levelVar                 slog.LevelVar
 	textEnabled, jsonEnabled bool
 	ch                       chan slog.Record
-	levelJsonNames           = map[slog.Leveler]string{
+	defaultLogger            = new(Logger)
+	levelJsonNames           = map[Level]string{
 		LevelInfo:  "Info",
 		LevelDebug: "Debug",
 		LevelWarn:  "Warn",
@@ -36,37 +36,15 @@ func init() {
 	} else {
 		SetJsonLogger(os.Stdout, true)
 	}
+
+	defaultLogger = Default()
+	defaultLogger.ctx = context.Background()
 }
 
-// EnableTextLogger 启用文本记录器。
-func EnableTextLogger() {
-	textEnabled = true
-}
-
-// EnableJsonLogger 启用 JSON 记录器。
-func EnableJsonLogger() {
-	jsonEnabled = true
-}
-
-// DisableTextLogger 禁用文本记录器。
-func DisableTextLogger() {
-	if !jsonEnabled {
-		return
-	}
-	textEnabled = false
-}
-
-// DisableJsonLogger 禁用 JSON 记录器。
-func DisableJsonLogger() {
-	if !textEnabled {
-		return
-	}
-	jsonEnabled = false
-}
-
-func NewOptions(options *HandlerOptions) *HandlerOptions {
+// NewOptions 创建新的处理程序选项。
+func NewOptions(options *slog.HandlerOptions) *slog.HandlerOptions {
 	if options == nil {
-		options = &HandlerOptions{
+		options = &slog.HandlerOptions{
 			Level: &levelVar,
 		}
 	}
@@ -84,24 +62,23 @@ func New(handler slog.Handler) *slog.Logger {
 	return slog.New(handler)
 }
 
-// Default 返回默认记录器。
 func Default(module ...string) *Logger {
-	if len(module) > 0 {
-		one.Do(func() {
-			modules = make(map[string]*Logger)
-		})
-		mod := module[0]
-		log, ok := modules[mod]
-		if !ok {
-			log = &logger
-			log.prefix = mod
-			log.fields = fields
-			log.ctx = context.Background()
-		}
+	once.Do(func() {
+		modules = make(map[string]*Logger)
+	})
+
+	mod := strings.Join(module, ":")
+	if log, ok := modules[mod]; ok {
 		return log
 	}
 
-	return &logger
+	newLogger := defaultLogger
+	newLogger.prefix = mod
+	newLogger.ctx = context.Background()
+
+	modules[mod] = newLogger
+
+	return newLogger
 }
 
 func setDefaultSlogHandlerOptions(l *slog.HandlerOptions) {
@@ -109,327 +86,97 @@ func setDefaultSlogHandlerOptions(l *slog.HandlerOptions) {
 	l.Level = &levelVar
 }
 
-// AddSource 将源添加到 slog 处理程序选项。
 func AddSource(options *slog.HandlerOptions) {
-	if options.Level == nil {
-		options.Level = &levelVar
-	}
+	options.Level = &levelVar
 	options.ReplaceAttr = func(groups []string, a slog.Attr) slog.Attr {
-		if a.Key == slog.SourceKey {
+		switch a.Key {
+		case slog.SourceKey:
 			source := a.Value.Any().(*slog.Source)
 			source.File = filepath.Base(source.File)
-		}
-		if a.Key == slog.LevelKey {
-			level := a.Value.Any().(slog.Level)
-			var (
-				levelLabel string
-				exists     bool
-			)
-			if jsonEnabled {
-				levelLabel, exists = levelJsonNames[level]
-			} else {
-				levelLabel, exists = levelJsonNames[level]
-			}
-			if !exists {
-				a.Value = slog.StringValue(level.String())
-			} else {
-				a.Value = slog.StringValue(levelLabel)
-			}
-
+		case LevelKey:
+			level := a.Value.Any().(Level)
+			a.Value = slog.StringValue(levelJsonNames[level])
 		}
 		return a
 	}
 }
 
-// SetTextLogger 设置并启用文本记录器。
 func SetTextLogger(writer io.Writer, noColor, addSource bool) {
-	options := &slog.HandlerOptions{}
+	options := NewOptions(nil)
+	options.AddSource = addSource || levelVar.Level() <= LevelDebug
 
-	setDefaultSlogHandlerOptions(options)
+	logger := New(NewConsoleHandler(writer, options))
+	defaultLogger.setTextLogger(logger)
+}
 
-	AddSource(options)
-	if levelVar.Level() <= LevelDebug || addSource {
-		options.AddSource = true
-	}
+func SetJsonLogger(writer io.Writer, addSource bool) {
+	options := NewOptions(nil)
+	options.AddSource = addSource || levelVar.Level() <= LevelDebug
 
-	disableColor = noColor
-	logger.text = slog.New(NewConsoleHandler(writer, options))
-	logger.ctx = context.Background()
+	logger := New(slog.NewJSONHandler(writer, options))
+	defaultLogger.setJsonLogger(logger)
+}
+
+func (l *Logger) setTextLogger(logger *slog.Logger) {
+	l.text = logger
 	textEnabled = true
 }
 
-// SetJsonLogger 设置并启用 JSON 记录器。
-func SetJsonLogger(writer io.Writer, addSource bool) {
-	options := &slog.HandlerOptions{}
-	setDefaultSlogHandlerOptions(options)
-
-	AddSource(options)
-	if levelVar.Level() <= LevelDebug || addSource {
-		options.AddSource = true
-	}
-	logger.json = slog.New(slog.NewJSONHandler(writer, options))
-	logger.ctx = context.Background()
+func (l *Logger) setJsonLogger(logger *slog.Logger) {
+	l.json = logger
 	jsonEnabled = true
 }
 
-// LevelTrace 将默认记录器的级别设置为跟踪。
-func SetLevelTrace() {
-	levelVar.Set(LevelTrace)
-}
-
-// SetLevelDebug 将默认记录器的级别设置为调试。
-func SetLevelDebug() {
-	levelVar.Set(LevelDebug)
-}
-
-// SetLevelInfo 将默认记录器的级别设置为信息。
-func SetLevelInfo() {
-	levelVar.Set(LevelInfo)
-}
-
-// SetLevelWarn 将默认记录器的级别设置为警告。
-func SetLevelWarn() {
-	levelVar.Set(LevelWarn)
-}
-
-// SetLevelError 将默认记录器的级别设置为错误。
-func SetLevelError() {
-	levelVar.Set(LevelError)
-}
-
-// SetLevelFatal 将默认记录器的级别设置为错误。
-func SetLevelFatal() {
-	levelVar.Set(LevelFatal)
-}
-
-// Println 记录调试消息，为了兼容fmt.Println风格输出
-//
-//	log.Println("hello world")
-//	log.Println("hello world", "age", 18, "name", "foo")
-func Println(msg string, args ...any) {
-	Info(msg, args...)
-}
-
-// Printf 记录打印消息，为了兼容fmt.Printf风格输出
-//
-//	log.Printf("hello world")
-//	log.Printf("hello world", "age", 18, "name", "foo")
-func Printf(msg string, args ...any) {
-	Info(msg, args...)
-}
-
-// Debug 记录调试消息。
-//
-//	log.Debug("hello world")
-//	log.Debug("hello world", "age", 18, "name", "foo")
-func Debug(msg string, args ...any) {
+func (l *Logger) log(level Level, msg string, args ...any) {
 	var r slog.Record
 	if formatLog(msg, args...) {
-		r = newRecord(slog.LevelDebug, msg, args...)
+		r = newRecord(level, msg, args...)
 	} else {
-		r = newRecord(slog.LevelDebug, msg)
+		r = newRecord(level, msg)
 		r.Add(args...)
 	}
-	handle(&logger, r, slog.LevelDebug)
+	handle(l, r, level)
 }
 
-// Info 记录信息消息。
-//
-//	log.Info("hello world")
-//	log.Info("hello world", "age", 18, "name", "foo")
-func Info(msg string, args ...any) {
-	var r slog.Record
-	if formatLog(msg, args...) {
-		r = newRecord(slog.LevelInfo, msg, args...)
-	} else {
-		r = newRecord(slog.LevelInfo, msg)
-		r.Add(args...)
-	}
-
-	handle(&logger, r, slog.LevelInfo)
-}
-
-// Warn 记录警告消息。
-//
-//	log.Warn("hello world")
-//	log.Warn("hello world", "age", 18, "name", "foo")
-func Warn(msg string, args ...any) {
-	var r slog.Record
-	if formatLog(msg, args...) {
-		r = newRecord(slog.LevelWarn, msg, args...)
-	} else {
-		r = newRecord(slog.LevelWarn, msg)
-		r.Add(args...)
-	}
-	handle(&logger, r, slog.LevelWarn)
-}
-
-// Error 记录错误消息。
-//
-//	log.Error("hello world")
-//	log.Error("hello world", "age", 18, "name", "foo")
-func Error(msg string, args ...any) {
-	var r slog.Record
-	if formatLog(msg, args...) {
-		r = newRecord(slog.LevelError, msg, args...)
-	} else {
-		r = newRecord(slog.LevelError, msg)
-		r.Add(args...)
-	}
-	handle(&logger, r, slog.LevelError)
-}
-
-// Trace 记录跟踪消息。
-//
-//	log.Trace("hello world")
-//	log.Trace("hello world", "age", 18, "name", "foo")
-func Trace(msg string, args ...any) {
-	var r slog.Record
-	if formatLog(msg, args...) {
-		r = newRecord(LevelTrace, msg, args...)
-	} else {
-		r = newRecord(LevelTrace, msg)
-		r.Add(args...)
-	}
-	handle(&logger, r, LevelTrace)
-}
-
-// Fatal 记录错误消息并以 `1` 错误代码退出当前程序。
-//
-//	log.Fatal("hello world")
-//	log.Fatal("hello world", "age", 18, "name", "foo")
-func Fatal(msg string, args ...any) {
-	var r slog.Record
-	if formatLog(msg, args...) {
-		r = newRecord(LevelFatal, msg, args...)
-	} else {
-		r = newRecord(LevelFatal, msg)
-		r.Add(args...)
-	}
-	handle(&logger, r, LevelFatal)
-	os.Exit(1)
-}
-
-// Debugf 记录并格式化调试消息。不能使用属性。
-//
-//	log.Debugf("hello world")
-//	log.Debugf("hello %s", "world")
-func Debugf(format string, args ...any) {
-	r := newRecord(slog.LevelDebug, format, args...)
-	handle(&logger, r, slog.LevelDebug)
-}
-
-// Infof 记录并格式化信息消息。不能使用属性。
-//
-//	log.Infof("hello world")
-//	log.Infof("hello %s", "world")
-func Infof(format string, args ...any) {
-	r := newRecord(slog.LevelInfo, format, args...)
-	handle(&logger, r, slog.LevelInfo)
-}
-
-// Warnf 记录并格式化警告消息。不能使用属性。
-//
-//	log.Warnf("hello world")
-//	log.Warnf("hello %s", "world")
-func Warnf(format string, args ...any) {
-	r := newRecord(slog.LevelWarn, format, args...)
-	handle(&logger, r, slog.LevelWarn)
-}
-
-// Errorf 记录并格式化错误消息。不能使用属性。
-//
-//	log.Errorf("hello world")
-//	log.Errorf("hello %s", "world")
-func Errorf(format string, args ...any) {
-	r := newRecord(slog.LevelError, format, args...)
-	handle(&logger, r, slog.LevelError)
-}
-
-// Tracef 记录并格式化跟踪消息。不能使用属性。
-//
-//	log.Tracef("hello world")
-//	log.Tracef("hello %s", "world")
-func Tracef(format string, args ...any) {
-	r := newRecord(LevelTrace, format, args...)
-	handle(&logger, r, LevelTrace)
-}
-
-// Fatalf 记录并格式化错误消息并以 `1` 错误代码退出当前程序。不能使用属性。
-//
-//	log.Fatalf("hello world")
-//	log.Fatalf("hello %s", "world")
-func Fatalf(format string, args ...any) {
-	r := newRecord(LevelFatal, format, args...)
-	handle(&logger, r, LevelFatal)
-	os.Exit(1)
-}
-
-// GetChannel 获取通道数据，若通道不存在则自动初始化。
-func GetChannel() chan slog.Record {
-	if ch == nil {
-		ch = make(chan slog.Record, 200)
-	}
-	return ch
-}
-
-func newRecord(level slog.Level, format string, args ...any) slog.Record {
-	t := time.Now()
-
-	var pcs [1]uintptr
-	runtime.Callers(3, pcs[:]) // skip [runtime.Callers, this function, this function's caller]
-
-	if args == nil {
-		return slog.NewRecord(t, level, format, pcs[0])
-	}
-	return slog.NewRecord(t, level, fmt.Sprintf(format, args...), pcs[0])
+func (l *Logger) logf(level Level, format string, args ...any) {
+	r := newRecord(level, format, args...)
+	handle(l, r, level)
 }
 
 func handle(l *Logger, r slog.Record, level slog.Level) {
 	r.AddAttrs(slog.String("$service", l.prefix))
+
 	if v, ok := l.ctx.Value(fields).(*sync.Map); ok {
 		v.Range(func(key, val any) bool {
-			if keyString, ok := key.(string); ok {
-				r.AddAttrs(slog.Any(keyString, val))
-			}
+			r.AddAttrs(slog.Any(key.(string), val))
 			return true
 		})
 	}
 
-	if l == nil {
-		if textEnabled && logger.text.Enabled(l.ctx, level) {
-			_ = logger.text.Handler().Handle(l.ctx, r)
-		}
-		if jsonEnabled && logger.json.Enabled(l.ctx, level) {
-			_ = logger.json.Handler().Handle(l.ctx, r)
-		}
-	} else {
-		if textEnabled && l.text.Enabled(l.ctx, level) {
-			_ = l.text.Handler().Handle(l.ctx, r)
-		}
-		if jsonEnabled && l.json.Enabled(l.ctx, level) {
-			_ = l.json.Handler().Handle(l.ctx, r)
-		}
+	if textEnabled && l.text != nil && l.text.Enabled(l.ctx, level) {
+		_ = l.text.Handler().Handle(l.ctx, r)
+	}
+	if jsonEnabled && l.json != nil && l.json.Enabled(l.ctx, level) {
+		_ = l.json.Handler().Handle(l.ctx, r)
 	}
 
-	// 使用通道发送
 	if ch != nil {
 		select {
 		case ch <- r:
 		default:
 		}
 	}
-
 }
 
-func formatLog(msg string, args ...any) bool {
-	if len(args) == 0 {
-		return false
+func newRecord(level Level, format string, args ...any) slog.Record {
+	t := time.Now()
+	var pcs [1]uintptr
+	runtime.Callers(4, pcs[:]) // skip [runtime.Callers, this function, this function's caller]
+
+	if args == nil {
+		return slog.NewRecord(t, level, format, pcs[0])
 	}
-	if strings.Contains(msg, "%") && !strings.Contains(msg, "%%") {
-		return true
-	}
-	return false
+	return slog.NewRecord(t, level, fmt.Sprintf(format, args...), pcs[0])
 }
 
 func isTerminal() bool {
@@ -438,4 +185,49 @@ func isTerminal() bool {
 		return false
 	}
 	return stat.Mode()&os.ModeCharDevice != 0
+}
+
+// 对外公开的接口
+func Debug(msg string, args ...any)     { defaultLogger.log(LevelDebug, msg, args...) }
+func Info(msg string, args ...any)      { defaultLogger.log(LevelInfo, msg, args...) }
+func Warn(msg string, args ...any)      { defaultLogger.log(LevelWarn, msg, args...) }
+func Error(msg string, args ...any)     { defaultLogger.log(LevelError, msg, args...) }
+func Trace(msg string, args ...any)     { defaultLogger.log(LevelTrace, msg, args...) }
+func Fatal(msg string, args ...any)     { defaultLogger.log(LevelFatal, msg, args...); os.Exit(1) }
+func Debugf(format string, args ...any) { defaultLogger.logf(LevelDebug, format, args...) }
+func Infof(format string, args ...any)  { defaultLogger.logf(LevelInfo, format, args...) }
+func Warnf(format string, args ...any)  { defaultLogger.logf(LevelWarn, format, args...) }
+func Errorf(format string, args ...any) { defaultLogger.logf(LevelError, format, args...) }
+func Tracef(format string, args ...any) { defaultLogger.logf(LevelTrace, format, args...) }
+func Fatalf(format string, args ...any) {
+	defaultLogger.logf(LevelFatal, format, args...)
+	os.Exit(1)
+}
+func Println(msg string, args ...any)   { defaultLogger.log(LevelInfo, msg, args...) }
+func Printf(format string, args ...any) { defaultLogger.log(LevelInfo, format, args...) }
+func SetLevelTrace()                    { levelVar.Set(LevelTrace) }
+func SetLevelDebug()                    { levelVar.Set(LevelDebug) }
+func SetLevelInfo()                     { levelVar.Set(LevelInfo) }
+func SetLevelWarn()                     { levelVar.Set(LevelWarn) }
+func SetLevelError()                    { levelVar.Set(LevelError) }
+func SetLevelFatal()                    { levelVar.Set(LevelFatal) }
+func EnableTextLogger()                 { textEnabled = true }
+func EnableJsonLogger()                 { jsonEnabled = true }
+func DisableTextLogger() {
+	if jsonEnabled {
+		textEnabled = false
+	}
+}
+
+func DisableJsonLogger() {
+	if textEnabled {
+		jsonEnabled = false
+	}
+}
+
+func GetChannel() chan slog.Record {
+	if ch == nil {
+		ch = make(chan slog.Record, 200)
+	}
+	return ch
 }

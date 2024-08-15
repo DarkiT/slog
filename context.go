@@ -5,51 +5,42 @@ import (
 	"sync"
 )
 
-var (
-	fields = "slog_fields"
-)
+var fields = "slog_fields"
 
 // WithContext 使用给定的上下文
-func WithContext(parent context.Context) context.Context {
-	if parent != nil {
-		logger.ctx = parent
-	}
-	return logger.ctx
+func WithContext(ctx context.Context) *Logger {
+	defaultLogger.ctx = ctx
+	return defaultLogger
+}
+
+// WithValue 在上下文中存储一个键值对，并返回新的上下文
+func WithValue(key string, val any) *Logger {
+	ctx := withValue(defaultLogger, key, val)
+	defaultLogger.WithContext(ctx)
+	return defaultLogger
 }
 
 // WithContext 使用给定的上下文
-func (l *Logger) WithContext(parent context.Context) *Logger {
-	if parent != nil {
-		l.ctx = parent
-	}
+func (l *Logger) WithContext(ctx context.Context) *Logger {
+	l.ctx = ctx
 	return l
 }
 
 // WithValue 在上下文中存储一个键值对，并返回新的上下文
-func WithValue(key string, val any) context.Context {
-	ctx := withValue(&logger, key, val)
-	logger.WithContext(ctx)
-	return ctx
-}
-
-// WithValue 在上下文中存储一个键值对，并返回新的上下文
-func (l *Logger) WithValue(key string, val any) context.Context {
-	ctx := withValue(l, key, val)
-	//l.WithContext(ctx)
-	return ctx
+func (l *Logger) WithValue(key string, val any) *Logger {
+	l.ctx = withValue(l, key, val)
+	return l
 }
 
 func withValue(l *Logger, key string, val any) context.Context {
-	if v, ok := l.ctx.Value(fields).(*sync.Map); ok { // 检查当前上下文中是否已经有 sync.Map
-		mapCopy := copySyncMap(v)                         // 复制现有的 sync.Map
-		mapCopy.Store(key, val)                           // 在复制的 sync.Map 中存储新的键值对
-		l.ctx = context.WithValue(l.ctx, fields, mapCopy) // 将更新后的 sync.Map 存储在新的上下文中
-		return l.ctx
+	if v, ok := l.ctx.Value(fields).(*sync.Map); ok {
+		mapCopy := copySyncMap(v)
+		mapCopy.Store(key, val)
+		return context.WithValue(l.ctx, fields, mapCopy)
 	}
-	v := &sync.Map{}                            // 如果没有现有的 sync.Map，创建一个新的
-	v.Store(key, val)                           // 在新创建的 sync.Map 中存储键值对
-	l.ctx = context.WithValue(l.ctx, fields, v) // 将新的 sync.Map 存储在上下文中
-	return l.ctx
+	v := &sync.Map{}
+	v.Store(key, val)
+	return context.WithValue(l.ctx, fields, v)
 }
 
 // copySyncMap 复制一个 sync.Map 并返回

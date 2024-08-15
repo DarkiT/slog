@@ -86,8 +86,8 @@ func NewConsoleHandler(w io.Writer, opts *slog.HandlerOptions) slog.Handler {
 
 // Enabled indicates whether the receiver logs at the given level.
 func (h *handler) Enabled(_ context.Context, l slog.Level) bool {
-	//level := h.level.Level()
-	//return level <= LevelDebug || l >= level
+	// level := h.level.Level()
+	// return level <= LevelDebug || l >= level
 	return l.Level() >= h.level.Level()
 }
 
@@ -333,8 +333,8 @@ func appendString(buf *buffer, s string) {
 
 func (h *handler) newSourceAttr(pc uintptr) string {
 	source := frame(pc)
-	//dir, file := filepath.Split(source.File)
-	//filepath.Join(filepath.Base(dir), file)
+	// dir, file := filepath.Split(source.File)
+	// filepath.Join(filepath.Base(dir), file)
 	return fmt.Sprintf("[%s:%d]", filepath.Base(source.File), source.Line)
 }
 

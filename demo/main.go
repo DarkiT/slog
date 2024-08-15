@@ -11,19 +11,18 @@ import (
 	"github.com/darkit/slog/multi"
 )
 
-var (
-	ctx    = context.Background()
-	l1, l2 *slog.Logger
-)
+var ctx = context.Background()
 
 func main() {
 	ch := slog.GetChannel()
 	defer close(ch)
 
-	slog.SetLevelTrace()
+	slog.SetTextLogger(os.Stdout, false, false)
 
-	slog.Infof("Pid: %d 服务已经初始化完成, %d 个协程被创建.", os.Getpid(), runtime.NumGoroutine())
+	slog.SetLevelTrace()
+	slog.WithValue("os", runtime.GOARCH)
 	slog.WithValue("Slog", runtime.NumGoroutine())
+	slog.Infof("Pid: %d 服务已经初始化完成, %d 个协程被创建.", os.Getpid(), runtime.NumGoroutine())
 	slog.Warn("这是一个警告日志", "aaaa", "bbbb")
 	slog.Error("这是一个错误日志", "aaaa", "bbbb")
 	slog.Info("这是一个信息日志: %s -> %d", "sss", 88888)
@@ -39,13 +38,15 @@ func main() {
 		slog.Time("time", time.Now()),
 		slog.Duration("time1", time.Duration(333)),
 	))
-
 	go iChan(ch)
 XXX:
 	fmt.Println("================分隔符==================")
-	l1 = slog.Default("L1")
+	l1 := slog.Default("L1")
+	l1.With("L1", runtime.NumGoroutine())
+	l1.WithValue("os", runtime.GOARCH)
+	l1.WithValue("Slog", runtime.NumGoroutine())
 	l1.Infof("Pid: %d 服务已经初始化完成, %d 个协程被创建.", os.Getpid(), runtime.NumGoroutine())
-	l1.WithValue("L1", runtime.NumGoroutine())
+	l1.Infof("lv: %s", l1.GetLevel().String())
 	l1.Warn("这是一个警告日志", "aaaa", "bbbb")
 	l1.Error("这是一个错误日志", "aaaa", "bbbb")
 	l1.Info("这是一个信息日志: %s -> %d", "sss", 88888)
@@ -63,9 +64,12 @@ XXX:
 	))
 
 	fmt.Println("================分隔符==================")
-	l2 = slog.Default("L2")
+	l2 := slog.Default("L2")
+	l2.With("L2", runtime.NumGoroutine())
+	l2.WithValue("os", runtime.GOARCH)
+	l2.WithValue("Slog", runtime.NumGoroutine())
 	l2.Infof("Pid: %d 服务已经初始化完成, %d 个协程被创建.", os.Getpid(), runtime.NumGoroutine())
-	l2.WithValue("L2", runtime.NumGoroutine())
+	l2.Info("Level", "Level", l2.GetLevel().String())
 	l2.Warn("这是一个警告日志", "aaaa", "bbbb")
 	l2.Error("这是一个错误日志", "aaaa", "bbbb")
 	l2.Info("这是一个信息日志: %s -> %d", "sss", 88888)
@@ -89,7 +93,6 @@ XXX:
 }
 
 func iChan(ch chan slog.Record) {
-
 	conn, _ := multi.Dial("tcp", "127.0.0.1:1900")
 	mlog := slog.New(
 		multi.Fanout(
