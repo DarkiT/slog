@@ -171,6 +171,14 @@ func (l *Logger) WithValue(parent context.Context, key string, val any) context.
 	return WithValue(parent, key, val)
 }
 
+// WithContext 使用给定的上下文
+func (l *Logger) WithContext(parent context.Context) *Logger {
+	if parent != nil {
+		ctx = parent
+	}
+	return l
+}
+
 // Log 方法用于记录指定级别的日志。
 func (l *Logger) Log(parent context.Context, level slog.Level, msg string, args ...any) {
 	lv := level
