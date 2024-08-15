@@ -1,6 +1,7 @@
 package slog
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"log/slog"
@@ -13,7 +14,9 @@ import (
 )
 
 var (
+	one                      sync.Once
 	logger                   Logger
+	modules                  map[string]*Logger
 	levelVar                 slog.LevelVar
 	textEnabled, jsonEnabled bool
 	ch                       chan slog.Record
@@ -82,7 +85,22 @@ func New(handler slog.Handler) *slog.Logger {
 }
 
 // Default 返回默认记录器。
-func Default() *Logger {
+func Default(module ...string) *Logger {
+	if len(module) > 0 {
+		one.Do(func() {
+			modules = make(map[string]*Logger)
+		})
+		mod := module[0]
+		log, ok := modules[mod]
+		if !ok {
+			log = &logger
+			log.prefix = mod
+			log.fields = fields
+			log.ctx = context.Background()
+		}
+		return log
+	}
+
 	return &logger
 }
 
@@ -136,6 +154,7 @@ func SetTextLogger(writer io.Writer, noColor, addSource bool) {
 
 	disableColor = noColor
 	logger.text = slog.New(NewConsoleHandler(writer, options))
+	logger.ctx = context.Background()
 	textEnabled = true
 }
 
@@ -149,6 +168,7 @@ func SetJsonLogger(writer io.Writer, addSource bool) {
 		options.AddSource = true
 	}
 	logger.json = slog.New(slog.NewJSONHandler(writer, options))
+	logger.ctx = context.Background()
 	jsonEnabled = true
 }
 
@@ -210,7 +230,7 @@ func Debug(msg string, args ...any) {
 		r = newRecord(slog.LevelDebug, msg)
 		r.Add(args...)
 	}
-	handle(nil, r, slog.LevelDebug)
+	handle(&logger, r, slog.LevelDebug)
 }
 
 // Info 记录信息消息。
@@ -226,7 +246,7 @@ func Info(msg string, args ...any) {
 		r.Add(args...)
 	}
 
-	handle(nil, r, slog.LevelInfo)
+	handle(&logger, r, slog.LevelInfo)
 }
 
 // Warn 记录警告消息。
@@ -241,7 +261,7 @@ func Warn(msg string, args ...any) {
 		r = newRecord(slog.LevelWarn, msg)
 		r.Add(args...)
 	}
-	handle(nil, r, slog.LevelWarn)
+	handle(&logger, r, slog.LevelWarn)
 }
 
 // Error 记录错误消息。
@@ -256,7 +276,7 @@ func Error(msg string, args ...any) {
 		r = newRecord(slog.LevelError, msg)
 		r.Add(args...)
 	}
-	handle(nil, r, slog.LevelError)
+	handle(&logger, r, slog.LevelError)
 }
 
 // Trace 记录跟踪消息。
@@ -271,7 +291,7 @@ func Trace(msg string, args ...any) {
 		r = newRecord(LevelTrace, msg)
 		r.Add(args...)
 	}
-	handle(nil, r, LevelTrace)
+	handle(&logger, r, LevelTrace)
 }
 
 // Fatal 记录错误消息并以 `1` 错误代码退出当前程序。
@@ -286,7 +306,7 @@ func Fatal(msg string, args ...any) {
 		r = newRecord(LevelFatal, msg)
 		r.Add(args...)
 	}
-	handle(nil, r, LevelFatal)
+	handle(&logger, r, LevelFatal)
 	os.Exit(1)
 }
 
@@ -296,7 +316,7 @@ func Fatal(msg string, args ...any) {
 //	log.Debugf("hello %s", "world")
 func Debugf(format string, args ...any) {
 	r := newRecord(slog.LevelDebug, format, args...)
-	handle(nil, r, slog.LevelDebug)
+	handle(&logger, r, slog.LevelDebug)
 }
 
 // Infof 记录并格式化信息消息。不能使用属性。
@@ -305,7 +325,7 @@ func Debugf(format string, args ...any) {
 //	log.Infof("hello %s", "world")
 func Infof(format string, args ...any) {
 	r := newRecord(slog.LevelInfo, format, args...)
-	handle(nil, r, slog.LevelInfo)
+	handle(&logger, r, slog.LevelInfo)
 }
 
 // Warnf 记录并格式化警告消息。不能使用属性。
@@ -314,7 +334,7 @@ func Infof(format string, args ...any) {
 //	log.Warnf("hello %s", "world")
 func Warnf(format string, args ...any) {
 	r := newRecord(slog.LevelWarn, format, args...)
-	handle(nil, r, slog.LevelWarn)
+	handle(&logger, r, slog.LevelWarn)
 }
 
 // Errorf 记录并格式化错误消息。不能使用属性。
@@ -323,7 +343,7 @@ func Warnf(format string, args ...any) {
 //	log.Errorf("hello %s", "world")
 func Errorf(format string, args ...any) {
 	r := newRecord(slog.LevelError, format, args...)
-	handle(nil, r, slog.LevelError)
+	handle(&logger, r, slog.LevelError)
 }
 
 // Tracef 记录并格式化跟踪消息。不能使用属性。
@@ -332,7 +352,7 @@ func Errorf(format string, args ...any) {
 //	log.Tracef("hello %s", "world")
 func Tracef(format string, args ...any) {
 	r := newRecord(LevelTrace, format, args...)
-	handle(nil, r, LevelTrace)
+	handle(&logger, r, LevelTrace)
 }
 
 // Fatalf 记录并格式化错误消息并以 `1` 错误代码退出当前程序。不能使用属性。
@@ -341,13 +361,8 @@ func Tracef(format string, args ...any) {
 //	log.Fatalf("hello %s", "world")
 func Fatalf(format string, args ...any) {
 	r := newRecord(LevelFatal, format, args...)
-	handle(nil, r, LevelFatal)
+	handle(&logger, r, LevelFatal)
 	os.Exit(1)
-}
-
-func Prefix(key string) *Logger {
-	logger.With("$service", key)
-	return &logger
 }
 
 // GetChannel 获取通道数据，若通道不存在则自动初始化。
@@ -371,7 +386,8 @@ func newRecord(level slog.Level, format string, args ...any) slog.Record {
 }
 
 func handle(l *Logger, r slog.Record, level slog.Level) {
-	if v, ok := ctx.Value(fields).(*sync.Map); ok {
+	r.AddAttrs(slog.String("$service", l.prefix))
+	if v, ok := l.ctx.Value(fields).(*sync.Map); ok {
 		v.Range(func(key, val any) bool {
 			if keyString, ok := key.(string); ok {
 				r.AddAttrs(slog.Any(keyString, val))
@@ -381,18 +397,18 @@ func handle(l *Logger, r slog.Record, level slog.Level) {
 	}
 
 	if l == nil {
-		if textEnabled && logger.text.Enabled(ctx, level) {
-			_ = logger.text.Handler().Handle(ctx, r)
+		if textEnabled && logger.text.Enabled(l.ctx, level) {
+			_ = logger.text.Handler().Handle(l.ctx, r)
 		}
-		if jsonEnabled && logger.json.Enabled(ctx, level) {
-			_ = logger.json.Handler().Handle(ctx, r)
+		if jsonEnabled && logger.json.Enabled(l.ctx, level) {
+			_ = logger.json.Handler().Handle(l.ctx, r)
 		}
 	} else {
-		if textEnabled && l.text.Enabled(ctx, level) {
-			_ = l.text.Handler().Handle(ctx, r)
+		if textEnabled && l.text.Enabled(l.ctx, level) {
+			_ = l.text.Handler().Handle(l.ctx, r)
 		}
-		if jsonEnabled && l.json.Enabled(ctx, level) {
-			_ = l.json.Handler().Handle(ctx, r)
+		if jsonEnabled && l.json.Enabled(l.ctx, level) {
+			_ = l.json.Handler().Handle(l.ctx, r)
 		}
 	}
 

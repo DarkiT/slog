@@ -19,6 +19,8 @@ type Attr = slog.Attr
 
 type Value = slog.Value
 
+type Record = slog.Record
+
 type HandlerOptions = slog.HandlerOptions
 
 func NewTextHandler(w io.Writer, opts *HandlerOptions) *slog.TextHandler {

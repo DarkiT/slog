@@ -8,9 +8,11 @@ import (
 
 // Logger 结构体定义了两个不同格式的日志记录器：文本记录器和 JSON 记录器。
 type Logger struct {
-	text *slog.Logger         // 用于文本格式的日志记录器
-	json *slog.Logger         // 用于 JSON 格式的日志记录器
-	opts *slog.HandlerOptions // 处理程序选项
+	prefix, fields string
+	ctx            context.Context
+	text           *slog.Logger         // 用于文本格式的日志记录器
+	json           *slog.Logger         // 用于 JSON 格式的日志记录器
+	opts           *slog.HandlerOptions // 处理程序选项
 }
 
 // Debug 方法用于记录调试级别的日志。
@@ -166,34 +168,21 @@ func (l *Logger) WithGroup(name string) *Logger {
 	return &Logger{text: text, json: json}
 }
 
-// WithValue 在上下文中存储一个键值对，并返回新的上下文
-func (l *Logger) WithValue(parent context.Context, key string, val any) context.Context {
-	return WithValue(parent, key, val)
-}
-
-// WithContext 使用给定的上下文
-func (l *Logger) WithContext(parent context.Context) *Logger {
-	if parent != nil {
-		ctx = parent
-	}
-	return l
-}
-
 // Log 方法用于记录指定级别的日志。
 func (l *Logger) Log(parent context.Context, level slog.Level, msg string, args ...any) {
 	lv := level
 	if parent != nil {
-		ctx = parent // 使用给定的上下文
+		l.ctx = parent // 使用给定的上下文
 	}
 
 	r := newRecord(lv, msg)
 	r.Add(args...)
-	if textEnabled && l.text.Enabled(ctx, lv) {
-		l.text.Handler().Handle(ctx, r) // 处理文本格式的日志
+	if textEnabled && l.text.Enabled(l.ctx, lv) {
+		l.text.Handler().Handle(l.ctx, r) // 处理文本格式的日志
 	}
 
-	if jsonEnabled && l.json.Enabled(ctx, lv) {
-		l.json.Handler().Handle(ctx, r) // 处理 JSON 格式的日志
+	if jsonEnabled && l.json.Enabled(l.ctx, lv) {
+		l.json.Handler().Handle(l.ctx, r) // 处理 JSON 格式的日志
 	}
 }
 
@@ -201,17 +190,17 @@ func (l *Logger) Log(parent context.Context, level slog.Level, msg string, args 
 func (l *Logger) LogAttrs(parent context.Context, level slog.Level, msg string, attrs ...Attr) {
 	lv := level
 	if parent != nil {
-		ctx = parent // 使用给定的上下文
+		l.ctx = parent // 使用给定的上下文
 	}
 
 	r := newRecord(lv, msg)
 	r.AddAttrs(attrs...)
-	if textEnabled && l.text.Enabled(ctx, lv) {
-		l.text.Handler().Handle(ctx, r)
+	if textEnabled && l.text.Enabled(l.ctx, lv) {
+		l.text.Handler().Handle(l.ctx, r)
 	}
 
-	if jsonEnabled && l.json.Enabled(ctx, lv) {
-		l.json.Handler().Handle(ctx, r)
+	if jsonEnabled && l.json.Enabled(l.ctx, lv) {
+		l.json.Handler().Handle(l.ctx, r)
 	}
 
 }

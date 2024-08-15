@@ -132,7 +132,6 @@ func (h *handler) Handle(_ context.Context, r slog.Record) error {
 	h.formatterPrefix(buf, prefixes)
 
 	buf.WriteString(r.Message)
-	buf.WriteString(" ")
 	if h.attrs != "" {
 		buf.WriteString(h.attrs)
 	}
@@ -366,7 +365,9 @@ func (h *handler) formatterPrefix(buf *buffer, prefixes []slog.Value) {
 		p = append(p, prefix.String())
 	}
 	if len(p) > 0 {
+		buf.WriteString("[")
 		buf.WriteString(strings.Join(p, ":"))
+		buf.WriteString("]")
 		buf.WriteString(" ")
 	}
 }
