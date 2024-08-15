@@ -365,13 +365,10 @@ func (h *handler) formatterPrefix(buf *buffer, prefixes []slog.Value) {
 		}
 		p = append(p, prefix.String())
 	}
-	if len(p) == 0 {
-		return
+	if len(p) > 0 {
+		buf.WriteString(strings.Join(p, ":"))
+		buf.WriteString(" ")
 	}
-	buf.WriteString("[")
-	buf.WriteString(strings.Join(p, ":"))
-	buf.WriteString("]")
-	buf.WriteString(" ")
 }
 
 func frame(pc uintptr) runtime.Frame {
