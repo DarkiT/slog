@@ -10,14 +10,14 @@ var fields = "slog_fields"
 // WithContext 使用给定的上下文
 func WithContext(ctx context.Context) *Logger {
 	defaultLogger.ctx = ctx
-	return defaultLogger
+	return &defaultLogger
 }
 
 // WithValue 在上下文中存储一个键值对，并返回新的上下文
 func WithValue(key string, val any) *Logger {
-	ctx := withValue(defaultLogger, key, val)
+	ctx := withValue(&defaultLogger, key, val)
 	defaultLogger.WithContext(ctx)
-	return defaultLogger
+	return &defaultLogger
 }
 
 // WithContext 使用给定的上下文

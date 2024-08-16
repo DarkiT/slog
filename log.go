@@ -19,7 +19,7 @@ var (
 	levelVar                 slog.LevelVar
 	textEnabled, jsonEnabled bool
 	ch                       chan slog.Record
-	defaultLogger            = new(Logger)
+	defaultLogger            Logger
 	levelJsonNames           = map[Level]string{
 		LevelInfo:  "Info",
 		LevelDebug: "Debug",
@@ -37,7 +37,7 @@ func init() {
 		SetJsonLogger(os.Stdout, true)
 	}
 
-	defaultLogger = Default()
+	defaultLogger = *Default()
 	defaultLogger.ctx = context.Background()
 }
 
@@ -76,9 +76,9 @@ func Default(module ...string) *Logger {
 	newLogger.prefix = mod
 	newLogger.ctx = context.Background()
 
-	modules[mod] = newLogger
+	modules[mod] = &newLogger
 
-	return newLogger
+	return &newLogger
 }
 
 func setDefaultSlogHandlerOptions(l *slog.HandlerOptions) {
@@ -144,8 +144,8 @@ func (l *Logger) logf(level Level, format string, args ...any) {
 }
 
 func handle(l *Logger, r slog.Record, level slog.Level) {
-	r.AddAttrs(slog.String("$service", l.prefix))
-
+	// r.AddAttrs(slog.String("$service", l.prefix))
+	l.With("$service", l.prefix)
 	if v, ok := l.ctx.Value(fields).(*sync.Map); ok {
 		v.Range(func(key, val any) bool {
 			r.AddAttrs(slog.Any(key.(string), val))
