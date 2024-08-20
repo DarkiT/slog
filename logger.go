@@ -105,9 +105,6 @@ func (l *Logger) Fatal(msg string, args ...any) {
 // logfWithLevel 处理格式化日志记录的通用逻辑
 func (l *Logger) logfWithLevel(level Level, format string, args ...any) {
 	r := newRecord(level, format, args...)
-	//if l.level != level {
-	//	level = l.level
-	//}
 	l.handle(r, level)
 }
 
@@ -152,52 +149,15 @@ func (l *Logger) Println(msg string, args ...any) {
 	l.logWithLevel(LevelInfo, msg, args...)
 }
 
-// With 方法返回一个新的 Logger，其中包含给定的参数。
-func (l *Logger) With(args ...any) *Logger {
-	return l.withLogger(nil, args...)
-}
-
-// WithGroup 方法返回一个新的 Logger，其中包含给定的组名。
-func (l *Logger) WithGroup(name string) *Logger {
-	return l.withLogger(&name, nil)
-}
-
-// withLogger 创建新的日志记录器
-func (l *Logger) withLogger(group *string, args ...any) *Logger {
-	if l.text == nil && l.json == nil {
-		return l
-	}
-
-	var text, json *slog.Logger
-	if l.text != nil {
-		l.text.Enabled(l.ctx, l.GetLevel())
-		if group != nil {
-			text = l.text.WithGroup(*group)
-		} else {
-			text = l.text.With(args...)
-		}
-	}
-	if l.json != nil {
-		l.json.Enabled(l.ctx, l.GetLevel())
-		if group != nil {
-			json = l.json.WithGroup(*group)
-		} else {
-			json = l.json.With(args...)
-		}
-	}
-
-	return &Logger{text: text, ctx: l.ctx, json: json}
-}
-
 // Log 方法用于记录指定级别的日志。
-func (l *Logger) Log(parent context.Context, level Level, msg string, args ...any) {
-	l.logWithContext(parent, level, msg, args...)
+func (l *Logger) Log(ctx context.Context, level Level, msg string, args ...any) {
+	l.logWithContext(ctx, level, msg, args...)
 }
 
 // LogAttrs 方法用于记录具有指定属性的日志。
-func (l *Logger) LogAttrs(parent context.Context, level Level, msg string, attrs ...slog.Attr) {
-	if parent != nil {
-		l.ctx = parent
+func (l *Logger) LogAttrs(ctx context.Context, level Level, msg string, attrs ...slog.Attr) {
+	if ctx != nil {
+		l.ctx = ctx
 	}
 
 	r := newRecord(level, msg)
@@ -228,12 +188,78 @@ func (l *Logger) logWithContext(ctx context.Context, level Level, msg string, ar
 	}
 }
 
+// With 方法返回一个新的 Logger，其中包含给定的参数。
+func (l *Logger) With(args ...any) *Logger {
+	return l.withLogger(nil, args...)
+}
+
+// WithGroup 方法返回一个新的 Logger，其中包含给定的组名。
+func (l *Logger) WithGroup(name string) *Logger {
+	return l.withLogger(&name, nil)
+}
+
+// withLogger 创建新的日志记录器
+func (l *Logger) withLogger(group *string, args ...any) *Logger {
+	if l.text == nil && l.json == nil {
+		return l
+	}
+
+	var text, json *slog.Logger
+	if l.text != nil {
+		if group != nil {
+			text = l.text.WithGroup(*group)
+		} else {
+			text = l.text.With(args...)
+		}
+	}
+	if l.json != nil {
+		if group != nil {
+			json = l.json.WithGroup(*group)
+		} else {
+			json = l.json.With(args...)
+		}
+	}
+
+	return &Logger{text: text, ctx: l.ctx, json: json}
+}
+
+func (l *Logger) setTextLogger(logger *slog.Logger) {
+	l.text = logger
+	textEnabled = true
+	jsonEnabled = false
+}
+
+func (l *Logger) setJsonLogger(logger *slog.Logger) {
+	l.json = logger
+	jsonEnabled = true
+	textEnabled = false
+}
+
+func (l *Logger) log(level Level, msg string, args ...any) {
+	var r slog.Record
+	if formatLog(msg, args...) {
+		r = newRecord(level, msg, args...)
+	} else {
+		r = newRecord(level, msg)
+		r.Add(args...)
+	}
+	handle(l, r, level)
+}
+
+func (l *Logger) logf(level Level, format string, args ...any) {
+	r := newRecord(level, format, args...)
+	handle(l, r, level)
+}
+
 func (l *Logger) handle(r slog.Record, level slog.Level) {
+	if l.prefix != "" {
+		r.AddAttrs(slog.String("$service", l.prefix))
+	}
 	if l.text == nil {
-		l.text = defaultLogger.text
+		l.text = logger.text
 	}
 	if l.json == nil {
-		l.json = defaultLogger.json
+		l.json = logger.json
 	}
 	handle(l, r, level)
 }

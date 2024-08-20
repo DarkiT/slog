@@ -14,12 +14,10 @@ import (
 )
 
 var (
-	once                     sync.Once
-	levelVar                 slog.LevelVar
 	textEnabled, jsonEnabled bool
-	ch                       chan slog.Record
-	defaultLogger            = Default()
-	modLogger                map[string]*Logger
+	logger                   Logger
+	levelVar                 slog.LevelVar
+	recordChan               chan slog.Record
 	levelJsonNames           = map[Level]string{
 		LevelInfo:  "Info",
 		LevelDebug: "Debug",
@@ -31,6 +29,9 @@ var (
 )
 
 func init() {
+	logger = Logger{
+		ctx: context.Background(),
+	}
 	if isTerminal() {
 		SetTextLogger(os.Stdout, false, false)
 	} else {
@@ -60,19 +61,14 @@ func New(handler slog.Handler) *slog.Logger {
 }
 
 func Default(module ...string) *Logger {
-	once.Do(func() {
-		modLogger = make(map[string]*Logger)
-	})
-
-	mod := strings.Join(module, ":")
-	log, ok := modLogger[mod]
-	if !ok {
-		log = &Logger{
-			prefix: mod,
-			ctx:    context.Background(),
-		}
-		modLogger[mod] = log
+	if module == nil {
+		return &logger
 	}
+
+	//返回一个新的 Logger，其中包含给定的参数
+	log := logger.With()
+	log.prefix = strings.Join(module, ":")
+	log.ctx = context.Background()
 
 	return log
 }
@@ -101,50 +97,17 @@ func SetTextLogger(writer io.Writer, noColor, addSource bool) {
 	options := NewOptions(nil)
 	options.AddSource = addSource || levelVar.Level() <= LevelDebug
 
-	logger := slog.New(NewConsoleHandler(writer, options))
-	defaultLogger.setTextLogger(logger)
+	logger.setTextLogger(slog.New(NewConsoleHandler(writer, options)))
 }
 
 func SetJsonLogger(writer io.Writer, addSource bool) {
 	options := NewOptions(nil)
 	options.AddSource = addSource || levelVar.Level() <= LevelDebug
 
-	logger := New(slog.NewJSONHandler(writer, options))
-	defaultLogger.setJsonLogger(logger)
-}
-
-func (l *Logger) setTextLogger(logger *slog.Logger) {
-	l.text = logger
-	textEnabled = true
-	jsonEnabled = false
-}
-
-func (l *Logger) setJsonLogger(logger *slog.Logger) {
-	l.json = logger
-	jsonEnabled = true
-	textEnabled = false
-}
-
-func (l *Logger) log(level Level, msg string, args ...any) {
-	var r slog.Record
-	if formatLog(msg, args...) {
-		r = newRecord(level, msg, args...)
-	} else {
-		r = newRecord(level, msg)
-		r.Add(args...)
-	}
-	handle(l, r, level)
-}
-
-func (l *Logger) logf(level Level, format string, args ...any) {
-	r := newRecord(level, format, args...)
-	handle(l, r, level)
+	logger.setJsonLogger(New(slog.NewJSONHandler(writer, options)))
 }
 
 func handle(l *Logger, r slog.Record, level slog.Level) {
-	if l.prefix != "" {
-		r.AddAttrs(slog.String("$service", l.prefix))
-	}
 	if v, ok := l.ctx.Value(fields).(*sync.Map); ok {
 		v.Range(func(key, val any) bool {
 			r.AddAttrs(slog.Any(key.(string), val))
@@ -159,9 +122,9 @@ func handle(l *Logger, r slog.Record, level slog.Level) {
 		_ = l.json.Handler().Handle(l.ctx, r)
 	}
 
-	if ch != nil {
+	if recordChan != nil {
 		select {
-		case ch <- r:
+		case recordChan <- r:
 		default:
 		}
 	}
@@ -187,26 +150,24 @@ func isTerminal() bool {
 }
 
 // 对外公开的接口
-func GetLevel() Level                             { return defaultLogger.GetLevel() }
-func With(args ...any) *Logger                    { return defaultLogger.With(args...) }
-func WithGroup(group string, args ...any) *Logger { return defaultLogger.withLogger(&group, args) }
-func Debug(msg string, args ...any)               { defaultLogger.log(LevelDebug, msg, args...) }
-func Info(msg string, args ...any)                { defaultLogger.log(LevelInfo, msg, args...) }
-func Warn(msg string, args ...any)                { defaultLogger.log(LevelWarn, msg, args...) }
-func Error(msg string, args ...any)               { defaultLogger.log(LevelError, msg, args...) }
-func Trace(msg string, args ...any)               { defaultLogger.log(LevelTrace, msg, args...) }
-func Fatal(msg string, args ...any)               { defaultLogger.log(LevelFatal, msg, args...); os.Exit(1) }
-func Debugf(format string, args ...any)           { defaultLogger.logf(LevelDebug, format, args...) }
-func Infof(format string, args ...any)            { defaultLogger.logf(LevelInfo, format, args...) }
-func Warnf(format string, args ...any)            { defaultLogger.logf(LevelWarn, format, args...) }
-func Errorf(format string, args ...any)           { defaultLogger.logf(LevelError, format, args...) }
-func Tracef(format string, args ...any)           { defaultLogger.logf(LevelTrace, format, args...) }
+func GetLevel() Level                   { return logger.GetLevel() }
+func Debug(msg string, args ...any)     { logger.log(LevelDebug, msg, args...) }
+func Info(msg string, args ...any)      { logger.log(LevelInfo, msg, args...) }
+func Warn(msg string, args ...any)      { logger.log(LevelWarn, msg, args...) }
+func Error(msg string, args ...any)     { logger.log(LevelError, msg, args...) }
+func Trace(msg string, args ...any)     { logger.log(LevelTrace, msg, args...) }
+func Fatal(msg string, args ...any)     { logger.log(LevelFatal, msg, args...); os.Exit(1) }
+func Debugf(format string, args ...any) { logger.logf(LevelDebug, format, args...) }
+func Infof(format string, args ...any)  { logger.logf(LevelInfo, format, args...) }
+func Warnf(format string, args ...any)  { logger.logf(LevelWarn, format, args...) }
+func Errorf(format string, args ...any) { logger.logf(LevelError, format, args...) }
+func Tracef(format string, args ...any) { logger.logf(LevelTrace, format, args...) }
 func Fatalf(format string, args ...any) {
-	defaultLogger.logf(LevelFatal, format, args...)
+	logger.logf(LevelFatal, format, args...)
 	os.Exit(1)
 }
-func Println(msg string, args ...any)   { defaultLogger.log(LevelInfo, msg, args...) }
-func Printf(format string, args ...any) { defaultLogger.log(LevelInfo, format, args...) }
+func Println(msg string, args ...any)   { logger.log(LevelInfo, msg, args...) }
+func Printf(format string, args ...any) { logger.log(LevelInfo, format, args...) }
 func SetLevelTrace()                    { levelVar.Set(LevelTrace) }
 func SetLevelDebug()                    { levelVar.Set(LevelDebug) }
 func SetLevelInfo()                     { levelVar.Set(LevelInfo) }
@@ -219,11 +180,11 @@ func DisableTextLogger()                { textEnabled = false }
 func DisableJsonLogger()                { jsonEnabled = false }
 func GetChannel(num ...uint16) chan slog.Record {
 	var n uint16 = 500
-	if ch == nil {
+	if recordChan == nil {
 		if num != nil {
 			n = num[0]
 		}
-		ch = make(chan slog.Record, n)
+		recordChan = make(chan slog.Record, n)
 	}
-	return ch
+	return recordChan
 }

@@ -39,13 +39,10 @@ func main() {
 		slog.Time("time", time.Now()),
 		slog.Duration("time1", time.Duration(333)),
 	))
-	// go iChan(ch)
+	//go iChan(ch)
 XXX:
 	fmt.Println("================L1分隔符==================")
-	l1 := slog.Default("L1")
-	l1.With("L1", runtime.NumGoroutine())
-	l1.WithValue("os", runtime.GOARCH)
-	l1.WithValue("l1", runtime.NumGoroutine())
+	l1 := slog.Default("L1").WithValue("os", runtime.GOARCH).WithValue("l1", runtime.NumGoroutine())
 	l1.Infof("Pid: %d 服务已经初始化完成, %d 个协程被创建.", os.Getpid(), runtime.NumGoroutine())
 	l1.Infof("lv: %s", l1.GetLevel().String())
 	l1.Warn("这是一个警告日志", "aaaa", "bbbb")
@@ -65,10 +62,7 @@ XXX:
 	))
 
 	fmt.Println("================L2分隔符==================")
-	l2 := slog.Default("L2")
-	l2.With("L2", runtime.NumGoroutine())
-	l2.WithValue("os", runtime.GOARCH)
-	l2.WithValue("l2", runtime.NumGoroutine())
+	l2 := slog.Default("L2").WithValue("os", runtime.GOARCH).WithValue("l2", runtime.NumGoroutine())
 	l2.Infof("Pid: %d 服务已经初始化完成, %d 个协程被创建.", os.Getpid(), runtime.NumGoroutine())
 	l2.Info("Level", "Level", l2.GetLevel().String())
 	l2.Warn("这是一个警告日志", "aaaa", "bbbb")
@@ -89,9 +83,7 @@ XXX:
 
 	fmt.Println("================L3分隔符==================")
 
-	core.Logger.With("L3", runtime.NumGoroutine())
-	core.Logger.WithValue("os", runtime.GOARCH)
-	core.Logger.WithValue("core.Logger", runtime.NumGoroutine())
+	core.Logger.WithValue("os", runtime.GOARCH).WithValue("l3", runtime.NumGoroutine())
 	core.Logger.Infof("Pid: %d 服务已经初始化完成, %d 个协程被创建.", os.Getpid(), runtime.NumGoroutine())
 	core.Logger.Info("Level", "Level", core.Logger.GetLevel().String())
 	core.Logger.Warn("这是一个警告日志", "aaaa", "bbbb")
