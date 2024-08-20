@@ -14,14 +14,14 @@ import (
 var ctx = context.Background()
 
 func main() {
-	ch := slog.GetChannel()
+	ch := slog.GetChannel(100)
 	defer close(ch)
 
 	slog.SetTextLogger(os.Stdout, false, false)
 
 	slog.SetLevelTrace()
 	slog.WithValue("os", runtime.GOARCH)
-	slog.WithValue("Slog", runtime.NumGoroutine())
+	slog.WithValue("main", runtime.NumGoroutine())
 	slog.Infof("Pid: %d 服务已经初始化完成, %d 个协程被创建.", os.Getpid(), runtime.NumGoroutine())
 	slog.Warn("这是一个警告日志", "aaaa", "bbbb")
 	slog.Error("这是一个错误日志", "aaaa", "bbbb")
@@ -44,7 +44,7 @@ XXX:
 	l1 := slog.Default("L1")
 	l1.With("L1", runtime.NumGoroutine())
 	l1.WithValue("os", runtime.GOARCH)
-	l1.WithValue("Slog", runtime.NumGoroutine())
+	l1.WithValue("l1", runtime.NumGoroutine())
 	l1.Infof("Pid: %d 服务已经初始化完成, %d 个协程被创建.", os.Getpid(), runtime.NumGoroutine())
 	l1.Infof("lv: %s", l1.GetLevel().String())
 	l1.Warn("这是一个警告日志", "aaaa", "bbbb")
@@ -67,7 +67,7 @@ XXX:
 	l2 := slog.Default("L2")
 	l2.With("L2", runtime.NumGoroutine())
 	l2.WithValue("os", runtime.GOARCH)
-	l2.WithValue("Slog", runtime.NumGoroutine())
+	l2.WithValue("l2", runtime.NumGoroutine())
 	l2.Infof("Pid: %d 服务已经初始化完成, %d 个协程被创建.", os.Getpid(), runtime.NumGoroutine())
 	l2.Info("Level", "Level", l2.GetLevel().String())
 	l2.Warn("这是一个警告日志", "aaaa", "bbbb")
@@ -115,7 +115,7 @@ func iChan(ch chan slog.Record) {
 		case d := <-ch:
 			mlog.Handler().Handle(ctx, d)
 		default:
-			mlog.With("$service", "Mlog").With("os", runtime.GOARCH).Warn("这是Chan测试消息", "time", time.Now().UnixMicro())
+			mlog.With("os", runtime.GOARCH).Warn("这是Chan测试消息", "time", time.Now().UnixMicro())
 			time.Sleep(time.Second)
 		}
 	}
