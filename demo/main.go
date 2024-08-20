@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/darkit/slog"
+	"github.com/darkit/slog/demo/core"
 	"github.com/darkit/slog/multi"
 )
 
@@ -38,9 +39,9 @@ func main() {
 		slog.Time("time", time.Now()),
 		slog.Duration("time1", time.Duration(333)),
 	))
-	go iChan(ch)
+	// go iChan(ch)
 XXX:
-	fmt.Println("================分隔符==================")
+	fmt.Println("================L1分隔符==================")
 	l1 := slog.Default("L1")
 	l1.With("L1", runtime.NumGoroutine())
 	l1.WithValue("os", runtime.GOARCH)
@@ -63,7 +64,7 @@ XXX:
 		slog.Duration("time1", time.Duration(333)),
 	))
 
-	fmt.Println("================分隔符==================")
+	fmt.Println("================L2分隔符==================")
 	l2 := slog.Default("L2")
 	l2.With("L2", runtime.NumGoroutine())
 	l2.WithValue("os", runtime.GOARCH)
@@ -86,9 +87,29 @@ XXX:
 		slog.Duration("time1", time.Duration(333)),
 	))
 
-	fmt.Println("================分隔符==================")
+	fmt.Println("================L3分隔符==================")
 
-	time.Sleep(5 * time.Second)
+	core.Logger.With("L3", runtime.NumGoroutine())
+	core.Logger.WithValue("os", runtime.GOARCH)
+	core.Logger.WithValue("core.Logger", runtime.NumGoroutine())
+	core.Logger.Infof("Pid: %d 服务已经初始化完成, %d 个协程被创建.", os.Getpid(), runtime.NumGoroutine())
+	core.Logger.Info("Level", "Level", core.Logger.GetLevel().String())
+	core.Logger.Warn("这是一个警告日志", "aaaa", "bbbb")
+	core.Logger.Error("这是一个错误日志", "aaaa", "bbbb")
+	core.Logger.Info("这是一个信息日志: %s -> %d", "sss", 88888)
+	core.Logger.Debug("这是一个调试日志: %s -> %d", "sss", 88888)
+	core.Logger.Warnf("这是一个警告日志: %s -> %d", "sss", 88888)
+	core.Logger.Printf("这是一个信息日志: %s -> %d", "sss", 88888)
+	core.Logger.Trace("这是一个路由日志: %s -> %d", "sss", 88888)
+	core.Logger.Debug("这是一个调试日志", slog.Group("data",
+		slog.Int("width", 4000),
+		slog.Int("height", 3000),
+		slog.String("format", "jpeg png"),
+		slog.Bool("status", true),
+		slog.Time("time", time.Now()),
+		slog.Duration("time1", time.Duration(333)),
+	))
+	time.Sleep(2 * time.Second)
 	goto XXX
 }
 

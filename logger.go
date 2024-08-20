@@ -11,9 +11,8 @@ import (
 type Logger struct {
 	prefix string
 	ctx    context.Context
-	text   *slog.Logger         // 用于文本格式的日志记录器
-	json   *slog.Logger         // 用于 JSON 格式的日志记录器
-	opts   *slog.HandlerOptions // 处理程序选项
+	text   *slog.Logger // 用于文本格式的日志记录器
+	json   *slog.Logger // 用于 JSON 格式的日志记录器
 }
 
 // GetLevel 方法用于获取当前的日志等级
@@ -69,8 +68,7 @@ func (l *Logger) logWithLevel(level Level, msg string, args ...any) {
 		r = newRecord(level, msg)
 		r.Add(args...)
 	}
-
-	handle(l, r, level) // 处理记录
+	l.handle(r, level) // 处理记录
 }
 
 // Debug 方法用于记录调试级别的日志。
@@ -107,7 +105,10 @@ func (l *Logger) Fatal(msg string, args ...any) {
 // logfWithLevel 处理格式化日志记录的通用逻辑
 func (l *Logger) logfWithLevel(level Level, format string, args ...any) {
 	r := newRecord(level, format, args...)
-	handle(l, r, level)
+	//if l.level != level {
+	//	level = l.level
+	//}
+	l.handle(r, level)
 }
 
 // Debugf 方法用于格式化并记录调试级别的日志。
@@ -225,6 +226,16 @@ func (l *Logger) logWithContext(ctx context.Context, level Level, msg string, ar
 	if jsonEnabled && l.json.Enabled(l.ctx, level) {
 		l.json.Handler().Handle(l.ctx, r)
 	}
+}
+
+func (l *Logger) handle(r slog.Record, level slog.Level) {
+	if l.text == nil {
+		l.text = defaultLogger.text
+	}
+	if l.json == nil {
+		l.json = defaultLogger.json
+	}
+	handle(l, r, level)
 }
 
 func formatLog(msg string, args ...any) bool {

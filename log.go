@@ -101,7 +101,7 @@ func SetTextLogger(writer io.Writer, noColor, addSource bool) {
 	options := NewOptions(nil)
 	options.AddSource = addSource || levelVar.Level() <= LevelDebug
 
-	logger := New(NewConsoleHandler(writer, options))
+	logger := slog.New(NewConsoleHandler(writer, options))
 	defaultLogger.setTextLogger(logger)
 }
 
@@ -145,7 +145,6 @@ func handle(l *Logger, r slog.Record, level slog.Level) {
 	if l.prefix != "" {
 		r.AddAttrs(slog.String("$service", l.prefix))
 	}
-	//l.With("$service", l.prefix)
 	if v, ok := l.ctx.Value(fields).(*sync.Map); ok {
 		v.Range(func(key, val any) bool {
 			r.AddAttrs(slog.Any(key.(string), val))
