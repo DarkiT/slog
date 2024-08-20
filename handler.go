@@ -348,9 +348,7 @@ func (h *handler) extractPrefixes(attrs []slog.Attr) (prefixes []slog.Value, cha
 				prefixes = make([]slog.Value, len(h.prefixes))
 				copy(prefixes, h.prefixes)
 			}
-			if len(attr.Value.String()) > 0 {
-				prefixes[idx] = attr.Value
-			}
+			prefixes[idx] = attr.Value
 			attrs[i] = slog.Attr{} // remove the prefix attribute
 			changed = true
 		}

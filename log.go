@@ -142,7 +142,9 @@ func (l *Logger) logf(level Level, format string, args ...any) {
 }
 
 func handle(l *Logger, r slog.Record, level slog.Level) {
-	r.AddAttrs(slog.String("$service", l.prefix))
+	if l.prefix != "" {
+		r.AddAttrs(slog.String("$service", l.prefix))
+	}
 	//l.With("$service", l.prefix)
 	if v, ok := l.ctx.Value(fields).(*sync.Map); ok {
 		v.Range(func(key, val any) bool {
