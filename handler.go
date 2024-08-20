@@ -27,7 +27,7 @@ const (
 
 var (
 	disableColor   = false
-	TimeFormat     = "2006/01/02 03:04.05.000"
+	TimeFormat     = "2006/01/02 15:04.05.000"
 	defaultLevel   = LevelError
 	prefixKeys     = []string{"$service"}
 	levelTextNames = map[slog.Leveler]string{
