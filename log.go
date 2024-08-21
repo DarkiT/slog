@@ -2,42 +2,71 @@ package slog
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
-	"sync"
 	"time"
 )
 
 var (
-	textEnabled, jsonEnabled bool
-	logger                   Logger
 	levelVar                 slog.LevelVar
 	recordChan               chan slog.Record
-	levelJsonNames           = map[Level]string{
-		LevelInfo:  "Info",
-		LevelDebug: "Debug",
-		LevelWarn:  "Warn",
-		LevelError: "Error",
-		LevelTrace: "Trace",
-		LevelFatal: "Fatal",
+	textEnabled, jsonEnabled = true, false
+	slogPfx                  = &addons{
+		PrefixKeys: []string{"module"},
 	}
 )
 
 func init() {
-	logger = Logger{
-		ctx: context.Background(),
-	}
-	if isTerminal() {
-		SetTextLogger(os.Stdout, false, false)
-	} else {
-		SetJsonLogger(os.Stdout, true)
-	}
+	NewLogger(os.Stdout, false, false)
 }
+
+func New(handler Handler) *slog.Logger {
+	return slog.New(handler)
+}
+
+// NewLogger 创建一个包含文本和JSON格式的日志记录器
+func NewLogger(writer io.Writer, noColor, addSource bool) Logger {
+	options := NewOptions(nil)
+	options.AddSource = addSource || levelVar.Level() < LevelDebug
+	logger = Logger{
+		noColor: noColor,
+		level:   levelVar.Level(),
+		ctx:     context.Background(),
+		text:    slog.New(newAddonsHandler(NewConsoleHandler(writer, noColor, options), slogPfx)),
+		json:    slog.New(newAddonsHandler(NewJSONHandler(writer, options), slogPfx)),
+	}
+
+	return logger
+}
+
+/*
+// NewLoggerWithText 创建一个文本格式的日志记录器
+func NewLoggerWithText(writer io.Writer, noColor, addSource bool) Logger {
+	options := NewOptions(nil)
+	options.AddSource = addSource || levelVar.Level() < LevelDebug
+	logger = Logger{
+		noColor: noColor,
+		ctx:     context.Background(),
+		text:    slog.New(newAddonsHandler(NewConsoleHandler(writer, noColor, options), slogPfx)),
+	}
+
+	return logger
+}
+
+// NewLoggerWithJson 创建一个JSON格式的日志记录器
+func NewLoggerWithJson(writer io.Writer, addSource bool) Logger {
+	options := NewOptions(nil)
+	options.AddSource = addSource || levelVar.Level() < LevelDebug
+	logger = Logger{
+		ctx:  context.Background(),
+		json: slog.New(newAddonsHandler(slog.NewJSONHandler(writer, options), slogPfx)),
+	}
+	return logger
+}
+*/
 
 // NewOptions 创建新的处理程序选项。
 func NewOptions(options *slog.HandlerOptions) *slog.HandlerOptions {
@@ -47,38 +76,10 @@ func NewOptions(options *slog.HandlerOptions) *slog.HandlerOptions {
 		}
 	}
 
-	if levelVar.Level() <= LevelDebug {
+	if levelVar.Level() < LevelDebug {
 		options.AddSource = true
 	}
 
-	AddSource(options)
-
-	return options
-}
-
-func New(handler slog.Handler) *slog.Logger {
-	return slog.New(handler)
-}
-
-func Default(module ...string) *Logger {
-	if module == nil {
-		return &logger
-	}
-
-	//返回一个新的 Logger，其中包含给定的参数
-	log := logger.With()
-	log.prefix = strings.Join(module, ":")
-	log.ctx = context.Background()
-
-	return log
-}
-
-func setDefaultSlogHandlerOptions(l *slog.HandlerOptions) {
-	l.AddSource = false
-	l.Level = &levelVar
-}
-
-func AddSource(options *slog.HandlerOptions) {
 	options.Level = &levelVar
 	options.ReplaceAttr = func(groups []string, a slog.Attr) slog.Attr {
 		switch a.Key {
@@ -88,97 +89,102 @@ func AddSource(options *slog.HandlerOptions) {
 		case LevelKey:
 			level := a.Value.Any().(Level)
 			a.Value = slog.StringValue(levelJsonNames[level])
+		case TimeKey:
+			if t, ok := a.Value.Any().(time.Time); ok {
+				a.Value = slog.StringValue(t.Format(TimeFormat))
+			}
 		}
 		return a
 	}
+
+	return options
 }
 
-func SetTextLogger(writer io.Writer, noColor, addSource bool) {
-	options := NewOptions(nil)
-	options.AddSource = addSource || levelVar.Level() <= LevelDebug
+// Default 返回一个新的带前缀的日志记录器
+func Default(modules ...string) *Logger {
+	if modules == nil {
+		return &logger
+	}
 
-	logger.setTextLogger(slog.New(NewConsoleHandler(writer, options)))
+	// 返回一个新的 Logger，其中包含给定的参数
+	module := strings.Join(modules, ".")
+	return logger.With("module", module)
 }
 
-func SetJsonLogger(writer io.Writer, addSource bool) {
-	options := NewOptions(nil)
-	options.AddSource = addSource || levelVar.Level() <= LevelDebug
+// GetLevel 获取全局日志级别。
+func GetLevel() Level { return logger.GetLevel() }
 
-	logger.setJsonLogger(New(slog.NewJSONHandler(writer, options)))
-}
+// Debug 记录全局Debug级别的日志。
+func Debug(msg string, args ...any) { logger.logWithLevel(LevelDebug, msg, args...) }
 
-func handle(l *Logger, r slog.Record, level slog.Level) {
-	if v, ok := l.ctx.Value(fields).(*sync.Map); ok {
-		v.Range(func(key, val any) bool {
-			r.AddAttrs(slog.Any(key.(string), val))
-			return true
-		})
-	}
+// Info 记录全局Info级别的日志。
+func Info(msg string, args ...any) { logger.logWithLevel(LevelInfo, msg, args...) }
 
-	if textEnabled && l.text != nil && l.text.Enabled(l.ctx, level) {
-		_ = l.text.Handler().Handle(l.ctx, r)
-	}
-	if jsonEnabled && l.json != nil && l.json.Enabled(l.ctx, level) {
-		_ = l.json.Handler().Handle(l.ctx, r)
-	}
+// Warn 记录全局Warn级别的日志。
+func Warn(msg string, args ...any) { logger.logWithLevel(LevelWarn, msg, args...) }
 
-	if recordChan != nil {
-		select {
-		case recordChan <- r:
-		default:
-		}
-	}
-}
+// Error 记录全局Error级别的日志。
+func Error(msg string, args ...any) { logger.logWithLevel(LevelError, msg, args...) }
 
-func newRecord(level Level, format string, args ...any) slog.Record {
-	t := time.Now()
-	var pcs [1]uintptr
-	runtime.Callers(4, pcs[:]) // skip [runtime.Callers, this function, this function's caller]
+// Trace 记录全局Trace级别的日志。
+func Trace(msg string, args ...any) { logger.logWithLevel(LevelTrace, msg, args...) }
 
-	if args == nil {
-		return slog.NewRecord(t, level, format, pcs[0])
-	}
-	return slog.NewRecord(t, level, fmt.Sprintf(format, args...), pcs[0])
-}
+// Fatal 记录全局Fatal级别的日志，并退出程序。
+func Fatal(msg string, args ...any) { logger.logWithLevel(LevelFatal, msg, args...); os.Exit(1) }
 
-func isTerminal() bool {
-	stat, err := os.Stdin.Stat()
-	if err != nil {
-		return false
-	}
-	return stat.Mode()&os.ModeCharDevice != 0
-}
+// Debugf 记录格式化的全局Debug级别的日志。
+func Debugf(format string, args ...any) { logger.logWithLevel(LevelDebug, format, args...) }
 
-// 对外公开的接口
-func GetLevel() Level                   { return logger.GetLevel() }
-func Debug(msg string, args ...any)     { logger.log(LevelDebug, msg, args...) }
-func Info(msg string, args ...any)      { logger.log(LevelInfo, msg, args...) }
-func Warn(msg string, args ...any)      { logger.log(LevelWarn, msg, args...) }
-func Error(msg string, args ...any)     { logger.log(LevelError, msg, args...) }
-func Trace(msg string, args ...any)     { logger.log(LevelTrace, msg, args...) }
-func Fatal(msg string, args ...any)     { logger.log(LevelFatal, msg, args...); os.Exit(1) }
-func Debugf(format string, args ...any) { logger.logf(LevelDebug, format, args...) }
-func Infof(format string, args ...any)  { logger.logf(LevelInfo, format, args...) }
-func Warnf(format string, args ...any)  { logger.logf(LevelWarn, format, args...) }
-func Errorf(format string, args ...any) { logger.logf(LevelError, format, args...) }
-func Tracef(format string, args ...any) { logger.logf(LevelTrace, format, args...) }
+// Infof 记录格式化的全局Info级别的日志。
+func Infof(format string, args ...any) { logger.logWithLevel(LevelInfo, format, args...) }
+
+// Warnf 记录格式化的全局Warn级别的日志。
+func Warnf(format string, args ...any) { logger.logWithLevel(LevelWarn, format, args...) }
+
+// Errorf 记录格式化的全局Error级别的日志。
+func Errorf(format string, args ...any) { logger.logWithLevel(LevelError, format, args...) }
+
+// Tracef 记录格式化的全局Trace级别的日志。
+func Tracef(format string, args ...any) { logger.logWithLevel(LevelTrace, format, args...) }
+
+// Fatalf 记录格式化的全局Fatal级别的日志，并退出程序。
 func Fatalf(format string, args ...any) {
-	logger.logf(LevelFatal, format, args...)
+	logger.logWithLevel(LevelFatal, format, args...)
 	os.Exit(1)
 }
-func Println(msg string, args ...any)   { logger.log(LevelInfo, msg, args...) }
-func Printf(format string, args ...any) { logger.log(LevelInfo, format, args...) }
-func SetLevelTrace()                    { levelVar.Set(LevelTrace) }
-func SetLevelDebug()                    { levelVar.Set(LevelDebug) }
-func SetLevelInfo()                     { levelVar.Set(LevelInfo) }
-func SetLevelWarn()                     { levelVar.Set(LevelWarn) }
-func SetLevelError()                    { levelVar.Set(LevelError) }
-func SetLevelFatal()                    { levelVar.Set(LevelFatal) }
-func EnableTextLogger()                 { textEnabled = true }
-func EnableJsonLogger()                 { jsonEnabled = true }
-func DisableTextLogger()                { textEnabled = false }
-func DisableJsonLogger()                { jsonEnabled = false }
-func GetChannel(num ...uint16) chan slog.Record {
+
+// Println 记录信息级别的日志。
+func Println(msg string, args ...any) { logger.logWithLevel(LevelInfo, msg, args...) }
+
+// Printf 记录信息级别的格式化日志。
+func Printf(format string, args ...any) { logger.logWithLevel(LevelInfo, format, args...) }
+
+// With 创建一个新的日志记录器，带有指定的属性。
+func With(args ...any) *Logger { return logger.With(args...) }
+
+// With 创建一个新的日志记录器，带有指定的属性。
+func WithGroup(name string) *Logger { return logger.WithGroup(name) }
+
+// SetLevelTrace 设置全局日志级别为Trace。
+func SetLevelTrace() { levelVar.Set(LevelTrace) }
+
+// SetLevelDebug 设置全局日志级别为Debug。
+func SetLevelDebug() { levelVar.Set(LevelDebug) }
+
+// SetLevelInfo 设置全局日志级别为Info。
+func SetLevelInfo() { levelVar.Set(LevelInfo) }
+
+// SetLevelWarn 设置全局日志级别为Warn。
+func SetLevelWarn() { levelVar.Set(LevelWarn) }
+
+// SetLevelError 设置全局日志级别为Error。
+func SetLevelError() { levelVar.Set(LevelError) }
+
+// SetLevelFatal 设置全局日志级别为Fatal。
+func SetLevelFatal() { levelVar.Set(LevelFatal) }
+
+// GetChanRecord 使用通道获取日志信息
+func GetChanRecord(num ...uint16) chan slog.Record {
 	var n uint16 = 500
 	if recordChan == nil {
 		if num != nil {
@@ -187,4 +193,24 @@ func GetChannel(num ...uint16) chan slog.Record {
 		recordChan = make(chan slog.Record, n)
 	}
 	return recordChan
+}
+
+// EnableTextLogger 启用文本日志记录器。
+func EnableTextLogger() {
+	textEnabled = true
+}
+
+// EnableJsonLogger 启用 JSON 日志记录器。
+func EnableJsonLogger() {
+	jsonEnabled = true
+}
+
+// DisableTextLogger 禁用文本日志记录器。
+func DisableTextLogger() {
+	textEnabled = false
+}
+
+// DisableJsonLogger 禁用 JSON 日志记录器。
+func DisableJsonLogger() {
+	jsonEnabled = false
 }

@@ -21,6 +21,8 @@ type Value = slog.Value
 
 type Record = slog.Record
 
+type Handler = slog.Handler
+
 type HandlerOptions = slog.HandlerOptions
 
 func NewTextHandler(w io.Writer, opts *HandlerOptions) *slog.TextHandler {
@@ -35,8 +37,12 @@ func StringValue(value string) Value {
 	return slog.StringValue(value)
 }
 
-func Any(key string, value any) Attr {
-	return slog.Any(key, value)
+func String(key string, v string) Attr {
+	return slog.String(key, v)
+}
+
+func Any(key string, v any) Attr {
+	return slog.Any(key, v)
 }
 
 func Bool(key string, v bool) Attr {
@@ -63,14 +69,10 @@ func Int64(key string, v int64) Attr {
 	return slog.Int64(key, v)
 }
 
-func String(key string, v string) Attr {
-	return slog.String(key, v)
+func Uint64(key string, v uint64) Attr {
+	return slog.Uint64(key, v)
 }
 
 func Time(key string, v time.Time) Attr {
 	return slog.Time(key, v)
-}
-
-func Uint64(key string, v uint64) Attr {
-	return slog.Uint64(key, v)
 }

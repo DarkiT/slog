@@ -4,4 +4,4 @@ import (
 	"github.com/darkit/slog"
 )
 
-var Logger = slog.Default("core")
+var Logger = slog.Default("main", "module")

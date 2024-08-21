@@ -2,141 +2,183 @@ package slog
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
+	"runtime"
 	"strings"
+	"time"
 )
 
-// Logger 结构体定义了两个不同格式的日志记录器：文本记录器和 JSON 记录器。
+const (
+	LevelTrace Level = -8
+	LevelDebug Level = -4
+	LevelInfo  Level = 0
+	LevelWarn  Level = 4
+	LevelError Level = 8
+	LevelFatal Level = 12
+)
+
+var (
+	logger         Logger
+	TimeFormat     = "2006/01/02 15:04.05.000"
+	levelJsonNames = map[Level]string{
+		LevelInfo:  "Info",
+		LevelDebug: "Debug",
+		LevelWarn:  "Warn",
+		LevelError: "Error",
+		LevelTrace: "Trace",
+		LevelFatal: "Fatal",
+	}
+)
+
 type Logger struct {
-	prefix string
-	ctx    context.Context
-	text   *slog.Logger // 用于文本格式的日志记录器
-	json   *slog.Logger // 用于 JSON 格式的日志记录器
+	text    *slog.Logger
+	json    *slog.Logger
+	ctx     context.Context
+	noColor bool
+	level   Level
 }
 
-// GetLevel 方法用于获取当前的日志等级
-func (l *Logger) GetLevel() Level {
-	if l.text != nil {
-		if l.text.Enabled(l.ctx, LevelDebug) {
-			return LevelDebug
-		}
-		if l.text.Enabled(l.ctx, LevelInfo) {
-			return LevelInfo
-		}
-		if l.text.Enabled(l.ctx, LevelWarn) {
-			return LevelWarn
-		}
-		if l.text.Enabled(l.ctx, LevelError) {
-			return LevelError
-		}
-		if l.text.Enabled(l.ctx, LevelFatal) {
-			return LevelFatal
-		}
-		if l.text.Enabled(l.ctx, LevelTrace) {
-			return LevelTrace
-		}
-	} else if l.json != nil {
-		if l.json.Enabled(l.ctx, LevelDebug) {
-			return LevelDebug
-		}
-		if l.json.Enabled(l.ctx, LevelInfo) {
-			return LevelInfo
-		}
-		if l.json.Enabled(l.ctx, LevelWarn) {
-			return LevelWarn
-		}
-		if l.json.Enabled(l.ctx, LevelError) {
-			return LevelError
-		}
-		if l.json.Enabled(l.ctx, LevelFatal) {
-			return LevelFatal
-		}
-		if l.json.Enabled(l.ctx, LevelTrace) {
-			return LevelTrace
+// getEffectiveLevel 获取日志的有效级别。
+func (l *Logger) getEffectiveLevel() Level {
+	loggers := []*slog.Logger{l.text, l.json}
+	for _, lg := range loggers {
+		if lg != nil {
+			if lg.Enabled(l.ctx, LevelDebug) {
+				return LevelDebug
+			}
+			if lg.Enabled(l.ctx, LevelInfo) {
+				return LevelInfo
+			}
+			if lg.Enabled(l.ctx, LevelWarn) {
+				return LevelWarn
+			}
+			if lg.Enabled(l.ctx, LevelError) {
+				return LevelError
+			}
+			if lg.Enabled(l.ctx, LevelFatal) {
+				return LevelFatal
+			}
+			if lg.Enabled(l.ctx, LevelTrace) {
+				return LevelTrace
+			}
 		}
 	}
 	return LevelInfo
 }
 
-// logWithLevel 处理日志记录的通用逻辑
-func (l *Logger) logWithLevel(level Level, msg string, args ...any) {
-	var r slog.Record
-	if formatLog(msg, args...) {
-		r = newRecord(level, msg, args...)
-	} else {
-		r = newRecord(level, msg)
-		r.Add(args...)
-	}
-	l.handle(r, level) // 处理记录
+// GetLevel 获取当前日志级别。
+func (l *Logger) GetLevel() Level {
+	return l.getEffectiveLevel()
 }
 
-// Debug 方法用于记录调试级别的日志。
+// SetLevel 动态设置日志打印级别。
+func (l *Logger) SetLevel(level Level) *Logger {
+	l.level = level
+	return l
+}
+
+// logWithLevel 记录指定级别的日志。
+func (l *Logger) logWithLevel(level Level, msg string, args ...any) {
+	l.logRecord(level, msg, false, args...)
+}
+
+// logfWithLevel 记录格式化的日志。
+func (l *Logger) logfWithLevel(level Level, format string, args ...any) {
+	l.logRecord(level, fmt.Sprintf(format, args...), true, args...)
+}
+
+// withLogger 创建一个新的日志记录器，包含指定的分组或属性。
+func (l *Logger) withLogger(group *string, args ...any) *Logger {
+	newLogger := *l
+	// 根据是否分组来初始化新的日志记录器
+	if l.text != nil {
+		if group != nil {
+			newLogger.text = l.text.WithGroup(*group)
+		} else {
+			newLogger.text = l.text.With(args...)
+		}
+	}
+	if l.json != nil {
+		if group != nil {
+			newLogger.json = l.json.WithGroup(*group)
+		} else {
+			newLogger.json = l.json.With(args...)
+		}
+	}
+	return &newLogger
+}
+
+// With 创建一个新的日志记录器，带有指定的属性。
+func (l *Logger) With(args ...any) *Logger {
+	return l.withLogger(nil, args...)
+}
+
+// WithGroup 创建一个新的日志记录器，带有指定的分组。
+func (l *Logger) WithGroup(name string) *Logger {
+	return l.withLogger(&name)
+}
+
+// Debug 记录Debug级别的日志。
 func (l *Logger) Debug(msg string, args ...any) {
 	l.logWithLevel(LevelDebug, msg, args...)
 }
 
-// Info 方法用于记录信息级别的日志。
+// Info 记录Info级别的日志。
 func (l *Logger) Info(msg string, args ...any) {
 	l.logWithLevel(LevelInfo, msg, args...)
 }
 
-// Warn 方法用于记录警告级别的日志。
+// Warn 记录Warn级别的日志。
 func (l *Logger) Warn(msg string, args ...any) {
 	l.logWithLevel(LevelWarn, msg, args...)
 }
 
-// Error 方法用于记录错误级别的日志。
+// Error 记录Error级别的日志。
 func (l *Logger) Error(msg string, args ...any) {
 	l.logWithLevel(LevelError, msg, args...)
 }
 
-// Trace 方法用于记录跟踪级别的日志。
+// Fatal 记录Fatal级别的日志，并退出程序。
+func (l *Logger) Fatal(msg string, args ...any) {
+	l.logWithLevel(LevelFatal, msg, args...)
+}
+
+// Trace 记录Trace级别的日志。
 func (l *Logger) Trace(msg string, args ...any) {
 	l.logWithLevel(LevelTrace, msg, args...)
 }
 
-// Fatal 方法用于记录严重错误级别的日志，并终止程序。
-func (l *Logger) Fatal(msg string, args ...any) {
-	l.logWithLevel(LevelFatal, msg, args...)
-	os.Exit(1) // 终止程序
-}
-
-// logfWithLevel 处理格式化日志记录的通用逻辑
-func (l *Logger) logfWithLevel(level Level, format string, args ...any) {
-	r := newRecord(level, format, args...)
-	l.handle(r, level)
-}
-
-// Debugf 方法用于格式化并记录调试级别的日志。
+// Debugf 记录格式化的Debug级别的日志。
 func (l *Logger) Debugf(format string, args ...any) {
 	l.logfWithLevel(LevelDebug, format, args...)
 }
 
-// Infof 方法用于格式化并记录信息级别的日志。
+// Infof 记录格式化的Info级别的日志。
 func (l *Logger) Infof(format string, args ...any) {
 	l.logfWithLevel(LevelInfo, format, args...)
 }
 
-// Warnf 方法用于格式化并记录警告级别的日志。
+// Warnf 记录格式化的Warn级别的日志。
 func (l *Logger) Warnf(format string, args ...any) {
 	l.logfWithLevel(LevelWarn, format, args...)
 }
 
-// Errorf 方法用于格式化并记录错误级别的日志。
+// Errorf 记录格式化的Error级别的日志。
 func (l *Logger) Errorf(format string, args ...any) {
 	l.logfWithLevel(LevelError, format, args...)
 }
 
-// Tracef 方法用于记录跟踪级别的日志。
-func (l *Logger) Tracef(format string, args ...any) {
-	l.logfWithLevel(LevelTrace, format, args...)
-}
-
-// Fatalf 方法用于格式化并记录严重错误级别的日志，并终止程序。
+// Fatalf 记录格式化的Fatal级别的日志，并退出程序。
 func (l *Logger) Fatalf(format string, args ...any) {
 	l.logfWithLevel(LevelFatal, format, args...)
-	os.Exit(1) // 终止程序
+	os.Exit(1)
+}
+
+// Tracef 记录格式化的Trace级别的日志。
+func (l *Logger) Tracef(format string, args ...any) {
+	l.logfWithLevel(LevelTrace, format, args...)
 }
 
 // Printf 为了兼容fmt.Printf风格输出
@@ -149,127 +191,68 @@ func (l *Logger) Println(msg string, args ...any) {
 	l.logWithLevel(LevelInfo, msg, args...)
 }
 
-// Log 方法用于记录指定级别的日志。
-func (l *Logger) Log(ctx context.Context, level Level, msg string, args ...any) {
-	l.logWithContext(ctx, level, msg, args...)
-}
-
-// LogAttrs 方法用于记录具有指定属性的日志。
-func (l *Logger) LogAttrs(ctx context.Context, level Level, msg string, attrs ...slog.Attr) {
-	if ctx != nil {
-		l.ctx = ctx
-	}
-
+// logRecord 创建并记录日志记录。
+func (l *Logger) logRecord(level Level, msg string, sprintf bool, args ...any) {
 	r := newRecord(level, msg)
-	r.AddAttrs(attrs...)
-	if textEnabled && l.text.Enabled(l.ctx, level) {
-		l.text.Handler().Handle(l.ctx, r)
-	}
-
-	if jsonEnabled && l.json.Enabled(l.ctx, level) {
-		l.json.Handler().Handle(l.ctx, r)
-	}
-}
-
-// logWithContext 处理带有上下文的日志记录
-func (l *Logger) logWithContext(ctx context.Context, level Level, msg string, args ...any) {
-	if ctx != nil {
-		l.ctx = ctx
-	}
-
-	r := newRecord(level, msg)
-	r.Add(args...)
-	if textEnabled && l.text.Enabled(l.ctx, level) {
-		l.text.Handler().Handle(l.ctx, r)
-	}
-
-	if jsonEnabled && l.json.Enabled(l.ctx, level) {
-		l.json.Handler().Handle(l.ctx, r)
-	}
-}
-
-// With 方法返回一个新的 Logger，其中包含给定的参数。
-func (l *Logger) With(args ...any) *Logger {
-	return l.withLogger(nil, args...)
-}
-
-// WithGroup 方法返回一个新的 Logger，其中包含给定的组名。
-func (l *Logger) WithGroup(name string) *Logger {
-	return l.withLogger(&name, nil)
-}
-
-// withLogger 创建新的日志记录器
-func (l *Logger) withLogger(group *string, args ...any) *Logger {
-	if l.text == nil && l.json == nil {
-		return l
-	}
-
-	var text, json *slog.Logger
-	if l.text != nil {
-		if group != nil {
-			text = l.text.WithGroup(*group)
-		} else {
-			text = l.text.With(args...)
-		}
-	}
-	if l.json != nil {
-		if group != nil {
-			json = l.json.WithGroup(*group)
-		} else {
-			json = l.json.With(args...)
-		}
-	}
-
-	return &Logger{text: text, ctx: l.ctx, json: json}
-}
-
-func (l *Logger) setTextLogger(logger *slog.Logger) {
-	l.text = logger
-	textEnabled = true
-	jsonEnabled = false
-}
-
-func (l *Logger) setJsonLogger(logger *slog.Logger) {
-	l.json = logger
-	jsonEnabled = true
-	textEnabled = false
-}
-
-func (l *Logger) log(level Level, msg string, args ...any) {
-	var r slog.Record
-	if formatLog(msg, args...) {
+	if !sprintf && formatLog(msg, args...) {
 		r = newRecord(level, msg, args...)
-	} else {
-		r = newRecord(level, msg)
+	} else if !sprintf {
 		r.Add(args...)
 	}
-	handle(l, r, level)
+	l.handleRecord(r, level)
 }
 
-func (l *Logger) logf(level Level, format string, args ...any) {
-	r := newRecord(level, format, args...)
-	handle(l, r, level)
+// handleRecord 处理并记录日志记录。
+func (l *Logger) handleRecord(r slog.Record, level slog.Level) {
+	if l.text == nil || l.json == nil {
+		return
+	}
+	if l.level != level {
+		levelVar.Set(l.level)
+	}
+	if textEnabled && l.text.Enabled(l.ctx, level) {
+		_ = l.text.Handler().Handle(l.ctx, r)
+	}
+	if jsonEnabled && l.json.Enabled(l.ctx, level) {
+		_ = l.json.Handler().Handle(l.ctx, r)
+	}
 }
 
-func (l *Logger) handle(r slog.Record, level slog.Level) {
-	if l.prefix != "" {
-		r.AddAttrs(slog.String("$service", l.prefix))
-	}
-	if l.text == nil {
-		l.text = logger.text
-	}
-	if l.json == nil {
-		l.json = logger.json
-	}
-	handle(l, r, level)
-}
-
-func formatLog(msg string, args ...any) bool {
-	if len(args) == 0 {
+// isTerminal 判断当前是否在终端环境中运行。
+func isTerminal() bool {
+	stat, err := os.Stdin.Stat()
+	if err != nil {
 		return false
 	}
-	if strings.Contains(msg, "%") && !strings.Contains(msg, "%%") {
-		return true
+	return stat.Mode()&os.ModeCharDevice != 0
+}
+
+// formatLog 判断消息是否需要格式化。
+func formatLog(msg string, args ...any) bool {
+	//placeholders := []string{
+	//	"%v", "%+v", "%#v", "%T", "%t", // 通用占位符
+	//	"%b", "%c", "%d", "%o", "%O", "%q", "%x", "%X", // 整数占位符
+	//	"%U", "%e", "%E", "%f", "%F", "%g", "%G", // 浮点数占位符
+	//	"%s", "%q", "%x", "%X", // 字符串占位符
+	//	"%p", // 指针占位符
+	//}
+	//
+	//for _, ph := range placeholders {
+	//	if strings.Contains(msg, ph) {
+	//		return true
+	//	}
+	//}
+	return len(args) > 0 && strings.Contains(msg, "%") && !strings.Contains(msg, "%%")
+}
+
+// newRecord 创建一个新的日志记录。
+func newRecord(level Level, format string, args ...any) slog.Record {
+	t := time.Now()
+	var pcs [1]uintptr
+	runtime.Callers(5, pcs[:]) // skip [runtime.Callers, this function, this function's caller]
+
+	if args == nil {
+		return slog.NewRecord(t, level, format, pcs[0])
 	}
-	return false
+	return slog.NewRecord(t, level, fmt.Sprintf(format, args...), pcs[0])
 }
