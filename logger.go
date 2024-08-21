@@ -43,6 +43,12 @@ type Logger struct {
 // getEffectiveLevel 获取日志的有效级别。
 func (l *Logger) getEffectiveLevel() Level {
 	loggers := []*slog.Logger{l.text, l.json}
+	if textEnabled && !jsonEnabled {
+		loggers = []*slog.Logger{l.text}
+	} else if jsonEnabled && !textEnabled {
+		loggers = []*slog.Logger{l.json}
+	}
+
 	for _, lg := range loggers {
 		if lg != nil {
 			if lg.Enabled(l.ctx, LevelDebug) {
@@ -65,7 +71,7 @@ func (l *Logger) getEffectiveLevel() Level {
 			}
 		}
 	}
-	return LevelInfo
+	return levelVar.Level()
 }
 
 // GetLevel 获取当前日志级别。
