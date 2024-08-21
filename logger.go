@@ -116,6 +116,14 @@ func (l *Logger) withLogger(group *string, args ...any) *Logger {
 	return &newLogger
 }
 
+// GetSlogLogger 返回原始log/slog的日志记录器
+func (l *Logger) GetSlogLogger() *slog.Logger {
+	if jsonEnabled && !textEnabled {
+		return l.json
+	}
+	return l.text
+}
+
 // With 创建一个新的日志记录器，带有指定的属性。
 func (l *Logger) With(args ...any) *Logger {
 	return l.withLogger(nil, args...)

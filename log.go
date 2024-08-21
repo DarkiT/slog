@@ -111,6 +111,11 @@ func Default(modules ...string) *Logger {
 	return logger.With("module", module)
 }
 
+// GetSlogLogger 返回原始log/slog的日志记录器
+func GetSlogLogger() *slog.Logger {
+	return logger.GetSlogLogger()
+}
+
 // GetLevel 获取全局日志级别。
 func GetLevel() Level { return logger.GetLevel() }
 
