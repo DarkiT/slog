@@ -1,0 +1,341 @@
+{
+  "Global": {
+    "Date": "2021-10-27",
+    "ApiVersion": "v2",
+    "Mode": "release",
+    "AllowRPC": false,
+    "EnableRules": [],
+    "DisableRules": [],
+    "MaxLogInput": 4096,
+    "MaxRegexRuleID": 0
+  },
+  "MaskRules": [
+    {
+      "RuleName": "ExampleCHAR",
+      "MaskType": "CHAR",
+      "Value": "*",
+      "Offset": 1,
+      "Padding": 0,
+      "Length": 5,
+      "Reverse": true,
+      "IgnoreCharSet": "@",
+      "IgnoreKind": ["NUMERIC"]
+    },
+    {
+      "RuleName": "ALL",
+      "MaskType": "CHAR",
+      "Value": "*"
+    },
+    {
+      "RuleName": "ExampleTAG",
+      "MaskType": "TAG"
+    },
+    {
+      "RuleName": "ExampleREPLACE",
+      "MaskType": "REPLACE",
+      "Value": "<REPLACED>"
+    },
+    {
+      "RuleName": "ExampleEMPTY",
+      "MaskType": "REPLACE",
+      "Value": ""
+    },
+    {
+      "RuleName": "ExampleBASE64",
+      "MaskType": "ALGO",
+      "Value": "BASE64"
+    },
+    {
+      "RuleName": "ExampleMD5",
+      "MaskType": "ALGO",
+      "Value": "MD5"
+    },
+    {
+      "RuleName": "DEIDENTIFY",
+      "MaskType": "ALGO",
+      "Value": "DEIDENTIFY"
+    },
+    {
+      "RuleName": "NULL",
+      "MaskType": "REPLACE",
+      "Value": "NULL"
+    },
+    {
+      "RuleName": "CHINAPHONE",
+      "MaskType": "CHAR",
+      "Value": "*",
+      "Offset": 3,
+      "Length": 6,
+      "IgnoreCharSet": "-"
+    },
+    {
+      "RuleName": "PHONE",
+      "MaskType": "CHAR",
+      "Value": "*",
+      "Offset": 2,
+      "Padding": 2,
+      "IgnoreCharSet": "-"
+    },
+    {
+      "RuleName": "CHINAID",
+      "MaskType": "CHAR",
+      "Value": "*",
+      "Offset": 1,
+      "Padding": 1
+    },
+    {
+      "RuleName": "IDCARD",
+      "MaskType": "CHAR",
+      "Value": "*",
+      "Offset": 1,
+      "Padding": 1
+    },
+    {
+      "RuleName": "EMAIL",
+      "MaskType": "CHAR",
+      "Value": "*",
+      "Offset": 1,
+      "IgnoreCharSet": "@"
+    },
+    {
+      "RuleName": "UID",
+      "MaskType": "CHAR",
+      "Value": "*",
+      "Offset": 1
+    },
+    {
+      "RuleName": "BANK",
+      "MaskType": "CHAR",
+      "Value": "*",
+      "Offset": 4,
+      "Reverse": true
+    },
+    {
+      "RuleName": "PASSPORT",
+      "MaskType": "CHAR",
+      "Value": "*",
+      "Offset": 2,
+      "Padding": 2
+    },
+    {
+      "RuleName": "ADDRESS",
+      "MaskType": "ALGO",
+      "Value": "ADDRESS"
+    },
+    {
+      "RuleName": "NAME",
+      "MaskType": "CHAR",
+      "Value": "*",
+      "Offset": 3
+    },
+    {
+      "RuleName": "NUMBER",
+      "MaskType": "ALGO",
+      "Value": "NUMBER"
+    },
+    {
+      "RuleName": "MACADDR",
+      "MaskType": "CHAR",
+      "Value": "*",
+      "Reverse": true,
+      "Length": 8,
+      "IgnoreCharSet": ":-"
+    },
+    {
+      "RuleName": "ABA",
+      "MaskType": "CHAR",
+      "Value": "*",
+      "Reverse": true,
+      "Length": 6,
+      "IgnoreCharSet": "-"
+    },
+    {
+      "RuleName": "BITCOIN",
+      "MaskType": "CHAR",
+      "Value": "*",
+      "Length": 24,
+      "Offset": 5
+    },
+    {
+      "RuleName": "CAR",
+      "MaskType": "CHAR",
+      "Value": "*",
+      "Offset": 4,
+      "Padding": 2
+    },
+    {
+      "RuleName": "DID",
+      "MaskType": "CHAR",
+      "Value": "*",
+      "Offset": 4,
+      "Padding": 4,
+      "IgnoreCharSet": "-"
+    },
+    {
+      "RuleName": "BIRTH",
+      "MaskType": "CHAR",
+      "Value": "*",
+      "Reverse": true,
+      "Length": 2,
+      "IgnoreCharSet": "-"
+    },
+    {
+      "RuleName": "AGE",
+      "MaskType": "CHAR",
+      "Value": "*",
+      "Reverse": true,
+      "Length": 1
+    },
+    {
+      "RuleName": "EDU",
+      "MaskType": "CHAR",
+      "Value": "*",
+      "Padding": 6
+    },
+    {
+      "RuleName": "URL",
+      "MaskType": "CHAR",
+      "Value": "*",
+      "Offset": 1,
+      "IgnoreCharSet": "@"
+    },
+    {
+      "RuleName": "GODLP",
+      "MaskType": "REPLACE",
+      "Value": "<GODLP Copyright 2021>"
+    }
+  ],
+  "Rules": [
+    {
+      "RuleID": 1,
+      "InfoType": "PHONE",
+      "Description": "手机号",
+      "EnName": "telephone_number",
+      "CnName": "电话号码",
+      "Level": "L4",
+      "Detect": {
+        "KReg": [],
+        "KDict": [],
+        "VReg": [
+          "1(?:(((3[0-9])|(4[5-9])|(5[0-35-9])|(6[2,5-7])|(7[0135-8])|(8[0-9])|(9[0-35-9]))[ -]?\\d{4}[ -]?\\d{4})|((74)[ -]?[0-5]\\d{3}[ -]?\\d{4}))\\b"
+        ],
+        "VDict": []
+      },
+      "Filter": {
+        "BAlgo": ["MASKED"],
+        "BDict": [],
+        "BReg": []
+      },
+      "Verify": {
+        "CDict": [
+          "contact_phone",
+          "remark_mobiles",
+          "ContactPhone",
+          "phone",
+          "phones",
+          "number",
+          "telephone",
+          "telephones",
+          "cell",
+          "mobile",
+          "office",
+          "call",
+          "cellphone",
+          "cellphones",
+          "smartphone",
+          "smartphones",
+          "num",
+          "no",
+          "tel",
+          "linktel",
+          "contact",
+          "contactinfo",
+          "phoneno",
+          "phonenum",
+          "phonenumber",
+          "telephone_no",
+          "telephoneno",
+          "telephonenum",
+          "telephonenumber",
+          "mobilephoneno",
+          "mobliephonenum",
+          "mobilephonenumber",
+          "mobileno",
+          "moblieenum",
+          "mobilenumber",
+          "mobilecode",
+          "手机号",
+          "传真",
+          "手机",
+          "号码",
+          "联系",
+          "电话"
+        ],
+        "CReg": [],
+        "VAlgo": []
+      },
+      "Mask": "CHINAPHONE",
+      "ExtInfo": {
+        "EnGroup": "user_data",
+        "CnGroup": "用户数据"
+      }
+    },
+    {
+      "RuleID": 2,
+      "InfoType": "EMAIL",
+      "Description": "电子邮件地址",
+      "EnName": "EMAIL_address",
+      "CnName": "电子邮箱",
+      "GroupName": "user_data",
+      "Level": "L4",
+      "Detect": {
+        "VReg": [
+          "\\b(((([*+\\-=?^_{|}~\\w])|([*+\\-=?^_{|}~\\w][*+\\-=?^_{|}~\\.\\w]{0,}[*+\\-=?^_{|}~\\w]))[@]\\w+([-.]\\w+)*\\.[A-Za-z]{2,8}))\\b"
+        ]
+      },
+      "Filter": {
+        "BAlgo": ["MASKED"]
+      },
+      "Verify": {
+        "VAlgo": ["DOMAIN"]
+      },
+      "Mask": "EMAIL",
+      "ExtInfo": {
+        "EnGroup": "user_data",
+        "CnGroup": "用户数据"
+      }
+    },
+    {
+      "RuleID": 4,
+      "InfoType": "CHINA_IDCARD",
+      "Description": "中国身份证，只支持18位，需要通过校验算法",
+      "EnName": "china_id_card",
+      "CnName": "中国身份证",
+      "Level": "L4",
+      "Detect": {
+        "VReg": [
+          "\\b((1[1-5]|2[1-3]|3[1-7]|4[1-6]|5[0-4]|6[1-5]|[7-9]1)\\d{4}(18|19|20)\\d{2}(0[1-9]|1[0-2])([0-2][0-9]|3[0-1])\\d{3}[0-9xX])\\b"
+        ]
+      },
+      "Filter": {
+        "BAlgo": ["MASKED"]
+      },
+      "Verify": {
+        "CReg": [
+          "身份证",
+          "身份证号码",
+          "ID",
+          "身份证号"
+        ],
+        "VAlgo": ["ALGO"]
+      },
+      "Mask": "CHINAID",
+      "ExtInfo": {
+        "EnGroup": "user_data",
+        "CnGroup": "用户数据"
+      }
+    }
+  ],
+  "EnGroup": "user_data",
+  "CnGroup": "用户数据"
+}

@@ -3,13 +3,17 @@ package slog
 import (
 	"context"
 	"log/slog"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
+
+	"github.com/darkit/slog/formatter"
 )
 
 type addons struct {
 	PrefixKeys []string
+	formatters []formatter.Formatter
 }
 
 // eHandler 是一个自定义的 slog 处理器，用于在日志消息前添加前缀，并将其传递给下一个处理器。
@@ -18,6 +22,7 @@ type eHandler struct {
 	handler  slog.Handler // 链中的下一个日志处理器。
 	opts     addons       // 此处理器的配置选项。
 	prefixes []slog.Value // 前缀值的缓存列表。
+	groups   []string
 }
 
 // newAddonsHandler 创建一个新的前缀日志处理器。
@@ -31,6 +36,7 @@ func newAddonsHandler(next slog.Handler, opts *addons) *eHandler {
 	return &eHandler{
 		handler:  next,
 		opts:     *opts,
+		groups:   []string{},
 		prefixes: make([]slog.Value, len(opts.PrefixKeys)),
 	}
 }
@@ -44,6 +50,7 @@ func (h *eHandler) Handle(ctx context.Context, r slog.Record) error {
 	if v, ok := ctx.Value(fields).(*sync.Map); ok {
 		v.Range(func(key, val any) bool {
 			if keyString, ok := key.(string); ok {
+				// r.AddAttrs(h.transformAttr(h.groups, slog.Any(keyString, val)))
 				r.AddAttrs(slog.Any(keyString, val))
 			}
 			return true
@@ -55,17 +62,22 @@ func (h *eHandler) Handle(ctx context.Context, r slog.Record) error {
 	if r.NumAttrs() > 0 {
 		nr := slog.NewRecord(r.Time, r.Level, r.Message, r.PC)
 		attrs := make([]slog.Attr, 0, r.NumAttrs())
-		r.Attrs(func(a slog.Attr) bool {
-			attrs = append(attrs, a)
+		r.Attrs(func(attr slog.Attr) bool {
+			nr.AddAttrs(h.transformAttr(h.groups, attr))
+			attrs = append(attrs, attr)
 			return true
 		})
 		if p, changed := h.extractPrefixes(attrs); changed {
 			nr.AddAttrs(attrs...)
-			r = nr
 			prefixes = p
 		}
+		r = nr
 	}
 
+	// fmt.Println("xxxx", h.opts.DlpEngine)
+	if dlpEngine != nil {
+		r.Message = h.opts.Mask(r.Message)
+	}
 	r.Message = defaultPrefixFormatter(prefixes) + r.Message
 
 	if recordChan != nil {
@@ -79,16 +91,24 @@ func (h *eHandler) Handle(ctx context.Context, r slog.Record) error {
 }
 
 func (h *eHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	attrs = h.transformAttrs(h.groups, attrs)
 	p, _ := h.extractPrefixes(attrs)
 	return &eHandler{
 		handler:  h.handler.WithAttrs(attrs),
+		groups:   h.groups,
 		opts:     h.opts,
 		prefixes: p,
 	}
 }
 
 func (h *eHandler) WithGroup(name string) slog.Handler {
+	// https://cs.opensource.google/go/x/exp/+/46b07846:slog/handler.go;l=247
+	if name == "" {
+		return h
+	}
+
 	return &eHandler{
+		groups:   append(h.groups, name),
 		handler:  h.handler.WithGroup(name),
 		opts:     h.opts,
 		prefixes: h.prefixes,
@@ -101,7 +121,9 @@ func (h *eHandler) WithGroup(name string) slog.Handler {
 func (h *eHandler) extractPrefixes(attrs []slog.Attr) (prefixes []slog.Value, changed bool) {
 	prefixes = h.prefixes
 	for i, attr := range attrs {
-		idx := slices.IndexFunc(h.opts.PrefixKeys, func(s string) bool { return s == attr.Key })
+		idx := slices.IndexFunc(h.opts.PrefixKeys, func(s string) bool {
+			return s == attr.Key
+		})
 		if idx >= 0 {
 			if !changed {
 				// 复制前缀列表：
@@ -114,6 +136,27 @@ func (h *eHandler) extractPrefixes(attrs []slog.Attr) (prefixes []slog.Value, ch
 		}
 	}
 	return
+}
+
+func (h *eHandler) transformAttrs(groups []string, attrs []slog.Attr) []slog.Attr {
+	for i := range attrs {
+		attrs[i] = h.transformAttr(groups, attrs[i])
+	}
+	return attrs
+}
+
+func (h *eHandler) transformAttr(groups []string, attr slog.Attr) slog.Attr {
+	for attr.Value.Kind() == slog.KindLogValuer {
+		attr.Value = attr.Value.LogValuer().LogValue()
+	}
+
+	for _, formatter := range h.opts.formatters {
+		if v, ok := formatter(groups, attr); ok {
+			attr.Value = v
+		}
+	}
+
+	return attr
 }
 
 // defaultPrefixFormatter 通过使用 ":" 连接所有检测到的前缀值来构造前缀字符串。
@@ -129,4 +172,18 @@ func defaultPrefixFormatter(prefixes []slog.Value) string {
 		return ""
 	}
 	return "[" + strings.Join(p, ":") + "] "
+}
+
+// 自定义脱敏处理函数
+func customSanitize(data string) string {
+	reg := "(https?|rtsps?|rtmps?|mqtts?|mysql|redis|ftp|sftp)"
+	// 扩展正则表达式匹配更多协议的URL中的账号密码部分 (例如: https://user:password@domain.com)
+	reCredentials := regexp.MustCompile(reg + `:\/\/([^:@]+):([^@]+)@`)
+	data = reCredentials.ReplaceAllString(data, "${1}://user:password@")
+
+	// 扩展正则表达式匹配更多协议的URL中的IP地址部分 (例如: https://192.168.1.1)
+	reIP := regexp.MustCompile(reg + `:\/\/([^:@]*:[^:@]+@)?(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})`)
+	data = reIP.ReplaceAllString(data, "${1}://${2}$3.xxx.xxx.$6")
+
+	return data
 }

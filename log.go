@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/darkit/slog/formatter"
 )
 
 var (
@@ -198,6 +200,17 @@ func GetChanRecord(num ...uint16) chan slog.Record {
 		recordChan = make(chan slog.Record, n)
 	}
 	return recordChan
+}
+
+// EnableFormatters 启用日志脱敏处理器。
+func EnableFormatters(formatters ...formatter.Formatter) {
+	slogPfx.formatters = formatters
+	slogPfx.dlpInit()
+}
+
+// DisableDlpLogger 禁用日志脱敏处理器。
+func DisableDlpLogger() {
+	dlpEngine = nil
 }
 
 // EnableTextLogger 启用文本日志记录器。
