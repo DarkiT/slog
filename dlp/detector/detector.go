@@ -7,13 +7,13 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"unicode/utf8"
 
 	"github.com/darkit/slog/dlp/conf"
 	"github.com/darkit/slog/dlp/dlpheader"
 	"github.com/darkit/slog/dlp/errlist"
-	"github.com/darkit/slog/dlp/regexp2"
 )
 
 // RuleType is different with ResultType, bacause for input string contains KV object, KV rule will generate Value Detect Type
@@ -43,21 +43,21 @@ type Detector struct {
 	rule     conf.RuleItem // rule item in conf
 	RuleType int           // VALUE if there is no KReg and KDict
 	// Detect section in conf
-	KReg          []*regexp2.Regexp   // regex list for Key
+	KReg          []*regexp.Regexp    // regex list for Key
 	KDict         map[string]struct{} // Dict for Key
-	VReg          []*regexp2.Regexp   // Regex list for Value
+	VReg          []*regexp.Regexp    // Regex list for Value
 	VDict         []string            // Dict for Value
 	KRelation     string
 	VRelation     string
 	KAndVRelation string
 	// Filter section in conf
-	BAlgo []string          // algorithm for blacklist, supports MASKED
-	BDict []string          // Dict for blacklist
-	BReg  []*regexp2.Regexp // Regex list for blacklist
+	BAlgo []string         // algorithm for blacklist, supports MASKED
+	BDict []string         // Dict for blacklist
+	BReg  []*regexp.Regexp // Regex list for blacklist
 	// Verify section in conf
-	CDict []string          // Dict for Context Verification
-	CReg  []*regexp2.Regexp // Regex List for Context Verification
-	VAlgo []string          // algorithm for Verifycation, such as IDCARD
+	CDict []string         // Dict for Context Verification
+	CReg  []*regexp.Regexp // Regex List for Context Verification
+	VAlgo []string         // algorithm for Verifycation, such as IDCARD
 }
 
 type KVItem struct {
@@ -140,7 +140,7 @@ func (I *Detector) DetectKey(kvItem *KVItem) (*dlpheader.DetectResult, error) {
 		// 如果KDict没有命中会匹配KReg
 		if !hit {
 			for _, re := range I.KReg {
-				if match, _ := re.MatchString(lastKey); match {
+				if match := re.MatchString(lastKey); match {
 					hit = true
 					break
 				}
@@ -167,7 +167,7 @@ func (I *Detector) DetectKey(kvItem *KVItem) (*dlpheader.DetectResult, error) {
 			}
 			// 匹配KReg
 			for _, re := range I.KReg {
-				if match, _ := re.MatchString(lastKey); !match {
+				if match := re.MatchString(lastKey); !match {
 					return nil, nil
 				}
 			}
@@ -178,7 +178,7 @@ func (I *Detector) DetectKey(kvItem *KVItem) (*dlpheader.DetectResult, error) {
 				}
 			}
 			for _, re := range I.KReg {
-				if match, _ := re.MatchString(kvItem.Key); !match {
+				if match := re.MatchString(kvItem.Key); !match {
 					return nil, nil
 				}
 			}
@@ -431,17 +431,17 @@ func (I *Detector) setRuleType() {
 }
 
 // releaseReg will set item of list as nil
-func (I *Detector) releaseReg(list []*regexp2.Regexp) {
+func (I *Detector) releaseReg(list []*regexp.Regexp) {
 	for i := range list {
 		list[i] = nil
 	}
 }
 
 // preCompile compiles regex string list then return regex list
-func (I *Detector) preCompile(reList []string) []*regexp2.Regexp {
-	list := make([]*regexp2.Regexp, 0, DEF_RESULT_SIZE)
+func (I *Detector) preCompile(reList []string) []*regexp.Regexp {
+	list := make([]*regexp.Regexp, 0, DEF_RESULT_SIZE)
 	for _, reStr := range reList {
-		if re, err := regexp2.Compile(reStr, 0); err == nil {
+		if re, err := regexp.Compile(reStr); err == nil {
 			list = append(list, re)
 		} else {
 			// log.Errorf("Regex %s ,error: %w", reStr, err)
@@ -471,12 +471,12 @@ func lowerStringList2Map(dictList []string) map[string]struct{} {
 }
 
 // regexDetectBytes use regex to detect inputBytes
-func (I *Detector) regexDetectBytes(re *regexp2.Regexp, inputBytes []byte) ([]*dlpheader.DetectResult, error) {
+func (I *Detector) regexDetectBytes(re *regexp.Regexp, inputBytes []byte) ([]*dlpheader.DetectResult, error) {
 	if re == nil {
 		return nil, errlist.ERR_RE_EMPTY
 	}
 	results := make([]*dlpheader.DetectResult, 0, DEF_RESULT_SIZE)
-	if ret := regexp2FindAllIndex(re, string(inputBytes)); ret != nil {
+	if ret := re.FindAllIndex(inputBytes, -1); ret != nil {
 		for i := range ret {
 			pos := ret[i]
 			if res, err := I.createValueResult(inputBytes, pos); err == nil {
@@ -484,6 +484,14 @@ func (I *Detector) regexDetectBytes(re *regexp2.Regexp, inputBytes []byte) ([]*d
 			}
 		}
 	}
+	//if ret := regexp2FindAllIndex(re, string(inputBytes)); ret != nil {
+	//	for i := range ret {
+	//		pos := ret[i]
+	//		if res, err := I.createValueResult(inputBytes, pos); err == nil {
+	//			results = append(results, res)
+	//		}
+	//	}
+	//}
 	return results, nil
 }
 
@@ -562,7 +570,7 @@ func (I *Detector) filter(in []*dlpheader.DetectResult) []*dlpheader.DetectResul
 		if found == false {
 			for _, re := range I.BReg {
 				// Found in BlackList BReg
-				if match, _ := re.MatchString(res.Text); match {
+				if match := re.MatchString(res.Text); match {
 					found = true
 					break
 				}
@@ -675,7 +683,7 @@ func (I *Detector) verifyByContext(inputBytes []byte, res *dlpheader.DetectResul
 	}
 	if !found {
 		for _, re := range I.CReg {
-			if match, _ := re.MatchString(string(subInput)); match {
+			if match := re.MatchString(string(subInput)); match {
 				found = true
 				break
 			}
@@ -897,18 +905,6 @@ func (I *Detector) getLastKey(path string) (string, bool) {
 			return path[pos+1:], true
 		}
 	}
-}
-
-func regexp2FindAllIndex(re *regexp2.Regexp, s string) [][]int {
-	result := make([][]int, 0, 10)
-	runes, idxMap := getRunesAndMap(s)
-	m, _ := re.FindRunesMatch(runes)
-	for m != nil {
-		size := len(m.String())
-		result = append(result, []int{idxMap[m.Index], idxMap[m.Index] + size})
-		m, _ = re.FindNextMatch(m)
-	}
-	return result
 }
 
 func getRunesAndMap(in string) ([]rune, map[int]int) {

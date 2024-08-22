@@ -61,6 +61,10 @@ func Group(key string, args ...any) Attr {
 	return slog.Group(key, args...)
 }
 
+func GroupValue(args ...Attr) Value {
+	return slog.GroupValue(args...)
+}
+
 func Int(key string, v int) Attr {
 	return slog.Int(key, v)
 }

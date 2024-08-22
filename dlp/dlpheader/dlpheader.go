@@ -27,7 +27,7 @@ type DetectResult struct {
 	ExtInfo   map[string]string `json:"ext_info,omitempty"`
 }
 
-var (
+const (
 	ExampleCHAR    = "ExampleCHAR"
 	ExampleTAG     = "ExampleTAG"
 	ExampleREPLACE = "ExampleREPLACE"
@@ -52,7 +52,10 @@ var (
 	DID            = "DID"
 	BIRTH          = "BIRTH"
 	AGE            = "AGE"
-	EDU            = "EDU"
+	USERNAME       = "USERNAME"
+	PASSWORD       = "PASSWORD"
+	URL            = "URL"
+	IP             = "IP"
 )
 
 type Processor func(rawLog string, kvs ...interface{}) (string, []interface{}, bool)
@@ -79,7 +82,7 @@ type EngineAPI interface {
 	// 对json string 进行敏感信息识别
 	DetectJSON(jsonText string) ([]*DetectResult, error)
 
-	// DeidentifyJSONFromDetectResults  returns masked json object in string format from the passed-in []*DetectResult.
+	// DeidentifyJSONByResult returns masked json object in string format from the passed-in []*DetectResult.
 	// You may want to call DetectJSON first to obtain the []*DetectResult.
 	// 根据传入的 []*DetectResult 对 Json 进行打码，返回打码后的JSON string
 	DeidentifyJSONByResult(jsonText string, detectResults []*DetectResult) (outStr string, retErr error)
@@ -117,11 +120,11 @@ type EngineAPI interface {
 	// 关闭，释放内部变量
 	Close()
 
-	// Get Dlp SDK version string
+	// GetVersion Get Dlp SDK version string
 	// 获取版本号
 	GetVersion() string
 
-	// Register DIY Masker
+	// RegisterMasker Register DIY Masker
 	// 注册自定义打码函数
 	RegisterMasker(maskName string, maskFunc func(string) (string, error)) error
 
@@ -133,13 +136,14 @@ type EngineAPI interface {
 	// 业务禁止使用
 	DisableAllRules() error
 
-	// NewEmptyLogProcesser will new a log processer which will do nothing
+	// NewEmptyLogProcessor  will new a log processer which will do nothing
 	// 业务禁止使用
 	NewEmptyLogProcessor() Processor
 
 	// ShowDlpConf will print config file
 	// 打印配置文件
 	ShowDlpConf() error
+
 	// GetDefaultConf will return default config string
 	// 返回默认的conf string
 	GetDefaultConf() []byte

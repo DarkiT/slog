@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/darkit/slog"
+	"github.com/darkit/slog/dlp/dlpheader"
 	"github.com/darkit/slog/example/core"
 	"github.com/darkit/slog/formatter"
 	"github.com/darkit/slog/multi"
@@ -20,11 +21,13 @@ func main() {
 	defer close(ch)
 
 	formatter1 := formatter.FormatByKey("server", func(v slog.Value) slog.Value {
-		return slog.StringValue("10.xx.xx.10")
+		return slog.StringValue(slog.DlpMask(v.String(), dlpheader.IP))
 	})
-	formatter2 := formatter.ErrorFormatter("error")
-	formatter3 := formatter.FormatByKey("mobile", func(v slog.Value) slog.Value {
-		return slog.StringValue("13800123456")
+	formatter2 := formatter.FormatByKey("mobile", func(v slog.Value) slog.Value {
+		return slog.StringValue(slog.DlpMask(v.String(), dlpheader.CHINAPHONE))
+	})
+	formatter3 := formatter.FormatByKey("url", func(v slog.Value) slog.Value {
+		return slog.StringValue(slog.DlpMask(v.String(), dlpheader.URL))
 	})
 	slog.SetLevelTrace()
 	slog.EnableFormatters(formatter1, formatter2, formatter3)
@@ -34,8 +37,9 @@ func main() {
 
 	slog.WithContext(ctx)
 
+	core.Init()
 	// go iChan(ch)
-	// XXX:
+XXX:
 	fmt.Println("================默认日志记录器==================")
 	slog.Error("HTTP请求消息", "code", 403, "status", "server not response", "server", "10.10.121.88")
 	slog.Infof("Pid: %d 服务已经初始化完成, %d 个协程被创建.", os.Getpid(), runtime.NumGoroutine())
@@ -46,13 +50,12 @@ func main() {
 	slog.Warnf("这是一个警告日志: %s -> %d", "Warnf", 88888)
 	slog.Printf("这是一个信息日志: %s -> %d", "Printf", 88888)
 	slog.Trace("这是一个路由日志: %s -> %d", "Trace", 88888)
-	slog.Infof("这是一个脱敏测试日志: %s -> %s", "HTTP", "https://user:123456@www.zishuo.net/live/demo")
-	slog.Infof("这是一个脱敏测试日志: %s -> %s", "RTSP", "rtsp://user:123456@192.168.1.123/live/demo")
-	slog.WithValue("mobile", "13800139000").Info("我的Email: abcd@abcd.com 手机号 13800138000")
+	slog.With("url", "https://user:123456@www.zishuo.net/live/demo").Infof("这是一个脱敏测试日志")
+	slog.With("url", "rtsp://user:123456@192.168.1.123/live/demo").Infof("这是一个脱敏测试日志")
+	slog.WithValue("mobile", "13800139000").Info("我的Email: abcd@abcd.com 手机号 13800138000 家庭住址：我家住在北京市海淀区北三环西路43号")
 	slog.WithGroup("slog").Debug("这是一个调试日志", slog.Group("data",
+		slog.String("mobile", "13800138000"),
 		slog.Int("width", 4000),
-		slog.Int("height", 3000),
-		slog.String("format", "jpeg png"),
 		slog.Bool("status", true),
 		slog.Time("time", time.Now()),
 		slog.Duration("duration", time.Duration(333)),
@@ -69,16 +72,17 @@ func main() {
 	l1.Warnf("这是一个警告日志: %s -> %d", "sss", 88888)
 	l1.Printf("这是一个信息日志: %s -> %d", "sss", 88888)
 	l1.Trace("这是一个路由日志: %s -> %d", "sss", 88888)
-	l1.Infof("这是一个脱敏测试日志: %s -> %s", "HTTP", "https://user:123456@www.zishuo.net/live/demo")
-	l1.Infof("这是一个脱敏测试日志: %s -> %s", "RTSP", "rtsp://user:123456@192.168.1.123/live/demo")
-	l1.Info("我的Email: abcd@abcd.com 手机号 13800138000")
+	l1.With("url", "https://user:123456@www.zishuo.net/live/demo").Infof("这是一个脱敏测试日志")
+	l1.With("url", "rtsp://user:123456@192.168.1.123/live/demo").Infof("这是一个脱敏测试日志")
+	l1.Infof("这是一个脱敏测试日志 %s: %s", "用户", "admin")
+	l1.Infof("这是一个脱敏测试日志 %s: %s", "密码", "12345678")
+	l1.Info("我的Email: abcd@abcd.com 手机号 13800138000", slog.String("mobile", "13800138000"))
 	l1.Debug("这是一个调试日志", slog.Group("data",
+		slog.String("mobile", "13800138000"),
 		slog.Int("width", 4000),
-		slog.Int("height", 3000),
-		slog.String("format", "jpeg png"),
 		slog.Bool("status", true),
 		slog.Time("time", time.Now()),
-		slog.Duration("time1", time.Duration(333)),
+		slog.Duration("duration", time.Duration(333)),
 	))
 
 	fmt.Println("================L2分隔符==================")
@@ -92,42 +96,44 @@ func main() {
 	l2.Warnf("这是一个警告日志: %s -> %d", "sss", 88888)
 	l2.Printf("这是一个信息日志: %s -> %d", "sss", 88888)
 	l2.Trace("这是一个路由日志: %s -> %d", "sss", 88888)
-	l2.Infof("这是一个脱敏测试日志: %s -> %s", "HTTP", "https://user:123456@www.zishuo.net/live/demo")
-	l2.Infof("这是一个脱敏测试日志: %s -> %s", "RTSP", "rtsp://user:123456@192.168.1.123/live/demo")
+	l2.Infof("这是一个脱敏测试日志: %s -> %s", "RTSP", "rtsp://192.168.1.123/live/demo")
+	l2.Infof("这是一个脱敏测试日志: %s -> %s", "RTSP", "rtsp://admin:password@192.168.1.123/live/demo")
+	l2.Infof("这是一个脱敏测试日志: %s -> %s", "HTTP", "https://admin:123456@www.baidu.com/live/demo")
+	l2.With("url", "https://user:123456@www.zishuo.net/live/demo").Infof("这是一个脱敏测试日志")
+	l2.With("url", "rtsp://user:123456@192.168.1.123/live/demo").Infof("这是一个脱敏测试日志")
 	l2.WithValue("mobile", "13800139000").Info("我的Email: abcd@abcd.com 手机号 13800138000")
 	l2.Debug("这是一个调试日志", slog.Group("data",
+		slog.String("mobile", "13800138000"),
 		slog.Int("width", 4000),
-		slog.Int("height", 3000),
-		slog.String("format", "jpeg png"),
-		slog.Bool("status", true),
-		slog.Time("time", time.Now()),
-		slog.Duration("time1", time.Duration(333)),
-	))
-
-	fmt.Println("================L3分隔符==================")
-	core.Logger.WithValue("os", runtime.GOARCH).WithValue("l3", runtime.NumGoroutine())
-	core.Logger.Info("当前日志等级", "Level", core.Logger.GetLevel().String())
-	core.Logger.Warn("这是一个警告日志", "aaaa", "bbbb")
-	core.Logger.Error("这是一个错误日志", "aaaa", "bbbb")
-	core.Logger.Info("这是一个信息日志: %s -> %d", "sss", 88888)
-	core.Logger.Debug("这是一个调试日志: %s -> %d", "sss", 88888)
-	core.Logger.Warnf("这是一个警告日志: %s -> %d", "sss", 88888)
-	core.Logger.Printf("这是一个信息日志: %s -> %d", "sss", 88888)
-	core.Logger.Trace("这是一个路由日志: %s -> %d", "sss", 88888)
-	core.Logger.Infof("这是一个脱敏测试日志: %s -> %s", "RTSP", "rtsp://admin:password@192.168.1.123/live/demo")
-	core.Logger.Infof("Pid: %d 服务已经初始化完成, %d 个协程被创建.", os.Getpid(), runtime.NumGoroutine())
-	core.Logger.Info("我的Email: abcd@abcd.com 手机号 13800138000", slog.String("mobile", "13800138000"))
-	core.Logger.WithGroup("Demo").Debug("这是一个调试日志", slog.Group("data",
-		slog.Int("width", 4000),
-		slog.Int("height", 3000),
-		slog.String("format", "jpeg png"),
 		slog.Bool("status", true),
 		slog.Time("time", time.Now()),
 		slog.Duration("duration", time.Duration(333)),
 	))
 
-	time.Sleep(8 * time.Second)
-	// goto XXX
+	fmt.Println("================L3分隔符==================")
+	l3 := core.Logger.WithValue("os", runtime.GOARCH).WithValue("l3", runtime.NumGoroutine())
+	l3.Info("当前日志等级", "Level", core.Logger.GetLevel().String())
+	l3.Warn("这是一个警告日志", "aaaa", "bbbb")
+	l3.Error("这是一个错误日志", "aaaa", "bbbb")
+	l3.Info("这是一个信息日志: %s -> %d", "sss", 88888)
+	l3.Debug("这是一个调试日志: %s -> %d", "sss", 88888)
+	l3.Warnf("这是一个警告日志: %s -> %d", "sss", 88888)
+	l3.Printf("这是一个信息日志: %s -> %d", "sss", 88888)
+	l3.Trace("这是一个路由日志: %s -> %d", "sss", 88888)
+	l3.Infof("这是一个脱敏测试日志: %s -> %s", "RTSP", "rtsp://admin:password@192.168.1.123/live/demo")
+	l3.Infof("这是一个脱敏测试日志: %s -> %s", "HTTP", "https://admin:123456@www.baidu.com/live/demo")
+	l3.Infof("Pid: %d 服务已经初始化完成, %d 个协程被创建.", os.Getpid(), runtime.NumGoroutine())
+	l3.WithValue("mobile", "13800138000").Info("我的Email: abcd@abcd.com 手机号 13800138000")
+	l3.WithGroup("Demo").Debug("这是一个调试日志", slog.Group("data",
+		slog.String("mobile", "13800138000"),
+		slog.Int("width", 4000),
+		slog.Bool("status", true),
+		slog.Time("time", time.Now()),
+		slog.Duration("duration", time.Duration(333)),
+	))
+
+	time.Sleep(4 * time.Second)
+	goto XXX
 }
 
 func iChan(ch chan slog.Record) {

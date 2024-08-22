@@ -3,12 +3,19 @@ package slog
 import (
 	"context"
 	"log/slog"
-	"regexp"
 	"slices"
 	"strings"
 	"sync"
 
+	"github.com/darkit/slog/dlp"
+
+	"github.com/darkit/slog/dlp/dlpheader"
 	"github.com/darkit/slog/formatter"
+)
+
+var (
+	once      sync.Once
+	dlpEngine dlpheader.EngineAPI
 )
 
 type addons struct {
@@ -47,6 +54,15 @@ func (h *eHandler) Enabled(ctx context.Context, level slog.Level) bool {
 
 // Handle 处理日志记录，如果需要，将前缀添加到消息，并将记录传递给下一个处理器。
 func (h *eHandler) Handle(ctx context.Context, r slog.Record) error {
+	once.Do(func() {
+		// 自动初始化DLP脱敏引擎
+		if h.opts.formatters != nil {
+			if engine, err := dlp.DlpInit("slog.caller"); err == nil {
+				dlpEngine = engine
+			}
+		}
+	})
+
 	if v, ok := ctx.Value(fields).(*sync.Map); ok {
 		v.Range(func(key, val any) bool {
 			if keyString, ok := key.(string); ok {
@@ -74,9 +90,8 @@ func (h *eHandler) Handle(ctx context.Context, r slog.Record) error {
 		r = nr
 	}
 
-	// fmt.Println("xxxx", h.opts.DlpEngine)
 	if dlpEngine != nil {
-		r.Message = h.opts.Mask(r.Message)
+		r.Message = DlpMask(r.Message)
 	}
 	r.Message = defaultPrefixFormatter(prefixes) + r.Message
 
@@ -159,6 +174,27 @@ func (h *eHandler) transformAttr(groups []string, attr slog.Attr) slog.Attr {
 	return attr
 }
 
+// DlpMask 脱敏传入的字符串并且返回脱敏后的结果,这里用godlp实现，所有的识别及脱敏算法全都用godlp的开源内容，当然也可以自己写或者扩展
+func DlpMask(inStr string, model ...string) (outStr string) {
+	if dlpEngine == nil {
+		return inStr
+	}
+	var err error
+	if len(model) > 0 {
+		outStr, err = dlpEngine.Mask(inStr, model[0])
+		if err != nil {
+			outStr = inStr
+		}
+		return
+	}
+
+	outStr, _, err = dlpEngine.Deidentify(inStr)
+	if err != nil {
+		outStr = inStr
+	}
+	return
+}
+
 // defaultPrefixFormatter 通过使用 ":" 连接所有检测到的前缀值来构造前缀字符串。
 func defaultPrefixFormatter(prefixes []slog.Value) string {
 	p := make([]string, 0, len(prefixes))
@@ -172,18 +208,4 @@ func defaultPrefixFormatter(prefixes []slog.Value) string {
 		return ""
 	}
 	return "[" + strings.Join(p, ":") + "] "
-}
-
-// 自定义脱敏处理函数
-func customSanitize(data string) string {
-	reg := "(https?|rtsps?|rtmps?|mqtts?|mysql|redis|ftp|sftp)"
-	// 扩展正则表达式匹配更多协议的URL中的账号密码部分 (例如: https://user:password@domain.com)
-	reCredentials := regexp.MustCompile(reg + `:\/\/([^:@]+):([^@]+)@`)
-	data = reCredentials.ReplaceAllString(data, "${1}://user:password@")
-
-	// 扩展正则表达式匹配更多协议的URL中的IP地址部分 (例如: https://192.168.1.1)
-	reIP := regexp.MustCompile(reg + `:\/\/([^:@]*:[^:@]+@)?(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})`)
-	data = reIP.ReplaceAllString(data, "${1}://${2}$3.xxx.xxx.$6")
-
-	return data
 }

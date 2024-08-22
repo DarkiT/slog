@@ -2,7 +2,8 @@
 package conf
 
 import (
-	"encoding/json"
+	"bytes"
+	"encoding/gob"
 	"fmt"
 	"os"
 	"strings"
@@ -72,8 +73,6 @@ type DlpConf struct {
 	Rules     []RuleItem     `yaml:"Rules"`
 }
 
-// public func
-
 // NewDlpConf creates DlpConf object by conf content string
 func NewDlpConf(confString []byte) (*DlpConf, error) {
 	return newDlpConfImpl(confString)
@@ -100,8 +99,6 @@ var (
 )
 
 func (I *DlpConf) Verify() error {
-	// Global
-
 	// ApiVersion
 	if !strings.HasPrefix(I.Global.ApiVersion, defAPIVersionPrefix) {
 		return fmt.Errorf("%w, Global.APIVersion:%s failed", errlist.ERR_CONF_VERIFY_FAILED, I.Global.ApiVersion)
@@ -153,7 +150,7 @@ func newDlpConfImpl(confString []byte) (*DlpConf, error) {
 		return nil, errlist.ERR_CONF_EMPTY
 	}
 	confObj := new(DlpConf)
-	if err := json.Unmarshal(confString, &confObj); err == nil {
+	if err := gob.NewDecoder(bytes.NewReader(confString)).Decode(confObj); err == nil {
 		if err := confObj.Verify(); err == nil {
 			return confObj, nil
 		} else {
@@ -162,6 +159,19 @@ func newDlpConfImpl(confString []byte) (*DlpConf, error) {
 	} else {
 		return nil, err
 	}
+
+	//if err := yaml.Unmarshal(confString, &confObj); err == nil {
+	//	if err := confObj.Verify(); err == nil {
+	//		buffer := new(bytes.Buffer)
+	//		gob.NewEncoder(buffer).Encode(confObj)
+	//		os.WriteFile("conf/dlp.db", buffer.Bytes(), 0644)
+	//		return confObj, nil
+	//	} else {
+	//		return nil, err
+	//	}
+	//} else {
+	//	return nil, err
+	//}
 }
 
 // inList finds item in list

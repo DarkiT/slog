@@ -77,7 +77,7 @@ func (I *Engine) DetectJSON(jsonText string) (retResults []*dlpheader.DetectResu
 
 // detectImpl works for the Detect API
 func (I *Engine) detectImpl(inputText string) ([]*dlpheader.DetectResult, error) {
-	rd := bufio.NewReaderSize(strings.NewReader(inputText), DefLineblocksize)
+	rd := bufio.NewReaderSize(strings.NewReader(inputText), DefLinebackerSize)
 	currPos := 0
 	results := make([]*dlpheader.DetectResult, 0, DefResultSize)
 	for {

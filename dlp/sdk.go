@@ -15,24 +15,24 @@ import (
 	"github.com/darkit/slog/dlp/mask"
 )
 
-//go:embed conf/conf.json
-var DEF_CFG []byte
+//go:embed conf/dlp.db
+var DefCfg []byte
 
 const (
-	Version          = "v1.2.15"
-	DefMaxInput      = 1024 * 1024                      // 1MB, the max input string length
-	DefLimitErr      = "<--[DLP] Log Limit Exceeded-->" // append to log if limit is exceeded
-	DefMaxLogItem    = 16                               // max input items for log
-	DefResultSize    = 4                                // default results size for array allocation
-	DefLineblocksize = 1024                             // default line block
-	DefMaxItem       = 1024 * 4                         // max input items for MAP API
-	DefMaxCallDeep   = 5                                // max call depth for MaskStruct
-	DefCutter        = " /\r\n\\[](){}:=\"',"           // default cutter for finding KV object in string
+	Version           = "v1.2.15"
+	DefLimitErr       = "<--[DLP] Log Limit Exceeded-->" // 如果超过限制，则追加到日志
+	DefMaxLogItem     = 16                               // 日志的最大输入项
+	DefResultSize     = 4                                // 数组分配的默认结果大小
+	DefLinebackerSize = 1024                             // 默认行块
+	DefMaxCallDeep    = 5                                // MaskStruct的最大调用深度
+	DefMaxItem        = 1024 * 4                         // MAP API的最大输入项
+	DefMaxInput       = 1024 * 1024                      // 1MB，最大输入字符串长度
+	DefCutter         = " /\r\n\\[](){}:=\"',"           // 用于在字符串中查找KV对象的默认切割器
 )
 
 var (
-	DefMaxLogInput    int32 = 1024 // default 1KB, the max input lenght for log, change it in conf
-	DefMaxRegexRuleId int32 = 0    // default 0, no regex rule will be used for log default, change it in conf
+	DefMaxLogInput    int32 = 1024 // 默认1KB，日志的最大输入长度，在conf中更改
+	DefMaxRegexRuleId int32 = 0    // 默认0，没有正则表达式规则将用于日志默认，在conf中更改它
 )
 
 // Engine Object implements all DLP API functions
@@ -191,7 +191,7 @@ func (I *Engine) ShowDlpConf() error {
 // GetDefaultConf will return default config string
 // 返回默认的conf string
 func (I *Engine) GetDefaultConf() []byte {
-	return DEF_CFG
+	return DefCfg
 }
 
 // ApplyConfigDefault will use embeded local config, only used for DLP team
@@ -220,7 +220,7 @@ func (I *Engine) interfaceToStr(in interface{}) string {
 
 // loadDefCfg from the embeded resources
 func (I *Engine) loadDefCfg() error {
-	if confObj, err := conf.NewDlpConf(DEF_CFG); err == nil {
+	if confObj, err := conf.NewDlpConf(DefCfg); err == nil {
 		return I.applyConfigImpl(confObj)
 	} else {
 		return err

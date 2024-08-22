@@ -44,8 +44,6 @@ type MaskAPI interface {
 	MaskResult(*dlpheader.DetectResult) error
 }
 
-// public func
-
 // NewMaskWorker create MaskWorker based on MaskRule
 func NewMaskWorker(rule conf.MaskRuleItem, p dlpheader.EngineAPI) (MaskAPI, error) {
 	obj := new(MaskWorker)

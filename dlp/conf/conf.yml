@@ -1,5 +1,3 @@
-# GODLP config file
-# keys are UpperCamelCase, and are same as DlpConf struct in conf/conf.go
 Global:
   Date: 2021-10-27
   ApiVersion: v2
@@ -13,7 +11,6 @@ Global:
   MaxLogInput: 4096
   MaxRegexRuleID: 0
 MaskRules:
-  # Example MaskRule start
   - RuleName: ExampleCHAR # Name of MaskRule
     MaskType: CHAR # one of [CHAR, TAG, REPLACE, ALGO ]
     Value: "*"
@@ -43,7 +40,6 @@ MaskRules:
   - RuleName: DEIDENTIFY
     MaskType: ALGO
     Value: "DEIDENTIFY"
-  # Example MaskRule end
   - RuleName: "NULL"
     MaskType: REPLACE
     Value: "NULL"
@@ -144,6 +140,14 @@ MaskRules:
   - RuleName: GODLP
     MaskType: REPLACE
     Value: "<GODLP Copyright 2021>"
+  - RuleName: PASSWORD
+    MaskType: CHAR
+    Value: "*"
+    Offset: 1
+  - RuleName: USERNAME
+    MaskType: CHAR
+    Value: "*"
+    Offset: 1
 # 规则与defaultRules和privateRules结合。默认规则由DLP团队管理，请勿直接修改defaultRules，如果要禁用某个特定规则，请复制并修改privateRules中的规则。
 # 0 < defaultRules规则ID < 10000，并且10000 <= private规则ID。
 # 较大的规则ID将覆盖较小的规则ID，如果检测位置相同。
@@ -406,10 +410,13 @@ Rules:
     CnName: IP地址
     Level: L3
     Detect:
+#      KDict: [ip,IP,ipv4,IPV4,ipv6,IPV6,ip地址,IP地址,ipv4地址,IPV4地址,ipv6地址,IPV6地址]
       VReg:
         - \b((?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?))\b
-        - \b(?:(\s|\A))((([0-9a-fA-F]{1,4}:){7,7}[0-9a-fA-F]{1,4}|fe80:(:|(:[0-9a-fA-F]{1,4}){0,4})%[0-9a-zA-Z]{1,}|::(ffff(:0{1,4}){0,1}:){0,1}((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])|([0-9a-fA-F]{1,4}:){1,4}:((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:)|:((:[0-9a-fA-F]{1,4}){1,7}|:))(?:(\s|\z))\b
-    #Mask:  # IP will not be masked,but as a result item
+        - \b((([0-9a-fA-F]{1,4}:){7,7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)|fe80:(:[0-9a-fA-F]{0,4}){0,4}%[0-9a-zA-Z]{1,}|::(ffff(:0{1,4}){0,1}:){0,1}((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])|([0-9a-fA-F]{1,4}:){1,4}:((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9]))$)\b
+    Mask:  IP # IP will not be masked,but as a result item
+    Verify:
+      VAlgo: [IP]
     ExtInfo:
       EnGroup: user_data
       CnGroup: 用户数据
@@ -509,7 +516,7 @@ Rules:
     CnName: 车牌号
     Level: L4
     Detect:
-      KDict: ["license_plate","car_number","车牌","licenseplate"]
+      KDict: ["license_plate","car_number","车牌号","车牌","licenseplate","plate"]
     Mask: CAR
     ExtInfo:
       EnGroup: user_data
@@ -665,4 +672,46 @@ Rules:
     ExtInfo:
       EnGroup: user_data
       CnGroup: 用户数据
-# defaultRule end
+  - RuleID: 37
+    InfoType: USERNAME
+    Description: 用户名Username
+    EnName: username
+    CnName: 用户名Username
+    GroupName: user_data
+    Level: L4
+    Detect:
+      KDict: [ username,USERNAME,User,USER,用户,用户名,账号,账号信息,用户信息 ]
+    Mask: USERNAME
+    ExtInfo:
+      EnGroup: user_data
+      CnGroup: 用户数据
+  - RuleID: 38
+    InfoType: PASSWORD
+    Description: 用户密码Password
+    EnName: password
+    CnName: 用户密码Password
+    GroupName: user_data
+    Level: L4
+    Detect:
+      KDict: [ password,PASSWORD,Password,passwd,Passwd,pwd,Pwd,密码,用户密码 ]
+    Mask: PASSWORD
+    ExtInfo:
+      EnGroup: user_data
+      CnGroup: 用户数据
+  - RuleID: 39
+    InfoType: URL
+    Description: URL地址
+    EnName: URL
+    CnName: URL地址
+    GroupName: user_data
+    Level: L5
+    Detect:
+      VReg:
+        - \b(([ a-zA-Z ]{ 1,6 }):\/\/([^:@]*:[^:@]+@)?(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3}))\b
+        - \b([a-zA-Z]{1,6}):\/\/([^:@]*:[^:@]+@)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9][a-z0-9-]{0,61}[a-z0-9]\b
+    Verify:
+      VAlgo: [URL]
+    Mask: URL
+    ExtInfo:
+      EnGroup: user_data
+      CnGroup: 用户数据
