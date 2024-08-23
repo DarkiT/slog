@@ -234,14 +234,14 @@ func FormatRequest(req *http.Request, ignoreHeaders bool) map[string]any {
 			"path":      req.URL.Path,
 			"raw_query": req.URL.RawQuery,
 			"fragment":  req.URL.Fragment,
-			"query": mapEntries(req.URL.Query(), func(key string, values []string) (string, string) {
+			"query": MapEntries(req.URL.Query(), func(key string, values []string) (string, string) {
 				return key, strings.Join(values, ",")
 			}),
 		},
 	}
 
 	if !ignoreHeaders {
-		output["headers"] = mapEntries(req.Header, func(key string, values []string) (string, string) {
+		output["headers"] = MapEntries(req.Header, func(key string, values []string) (string, string) {
 			return key, strings.Join(values, ",")
 		})
 	}
@@ -298,7 +298,7 @@ func FindAttribute(attrs []slog.Attr, groups []string, key string) (slog.Attr, b
 }
 
 func RemoveEmptyAttrs(attrs []slog.Attr) []slog.Attr {
-	return filterMap(attrs, func(attr slog.Attr, _ int) (slog.Attr, bool) {
+	return FilterMap(attrs, func(attr slog.Attr, _ int) (slog.Attr, bool) {
 		if attr.Key == "" {
 			return attr, false
 		}

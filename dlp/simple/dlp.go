@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	Init "github.com/darkit/slog/dlp"
@@ -9,22 +10,19 @@ import (
 )
 
 var inStr = `
-	我的邮件是：abcd@abcd.com,
-	13800138000 是我的电话
-	你在哪里啊? 广东省广州市市南大道金沙路906号17号楼222-3室,
-	mac地址: 06-06-06-aa-bb-cc
-	mac地址: 06:06:06:aa:bb:cc
-	ipv4地址: 192.168.1.188
-	ipv6地址: 2001:0db8:85a3:0000:0000:8a2e:0370:7334
-	银行卡: 9988002866797031
-	车牌: 粤A66666
-	电话: 010-86551122
-	账号: admin
-	密码: 123456
-	收件人：张真人  手机号码：18612341234
-	网址: https://admin:123456@www.zishuo.net/live/demo?token=123456&user=zishuo
-	网址: rtsp://admin:123456@192.168.1.188/live/demo?token=123456&user=zishuo
-	网址: rtmp://admin:123456@www.zishuo.net/live/demo?token=123456&user=zishuo
+我的邮件是：abcd@abcd.com,
+13800138000 是我的电话
+你在哪里啊? 广东省广州市市南大道金沙路17号楼222-3室,
+mac地址: 06-06-06-aa-bb-cc
+mac地址: 06:06:06:aa:bb:cc
+银行卡: 9988002866797031
+车牌: 川A123AG 电话: 010-86551122
+账号: admin 密码: 123456
+收件人: 张真人 手机号码：18612341234
+网址: https://admin:123456@www.zishuo.net/live/demo?token=123456&user=zishuo
+网址: rtsp://admin:123456@192.168.1.188/live/demo?token=123456&user=zishuo
+网址: rtmp://admin:123456@www.zishuo.net/live/demo?token=123456&user=zishuo
+ipv4地址: 192.168.1.188 ipv6地址: 2001:0db8:85a3:0000:0000:8a2e:0370:7334
 `
 
 func dlpDemo() {
@@ -50,7 +48,7 @@ func dlpDemo() {
 			// eng.ShowResults(results)
 			fmt.Println()
 		}
-
+		os.Exit(0)
 		inStr = `18612341234`
 		if outStr, err := eng.Mask(inStr, dlpheader.CHINAPHONE); err == nil {
 			fmt.Printf("\t3. Mask( inStr: %s )\n", inStr)
@@ -216,5 +214,5 @@ func main() {
 	data = CustomizeKeepLengthDesensitize(CustomFilterWords, 3, 4)
 	fmt.Printf("%v\n", data)
 
-	// dlpDemo()
+	dlpDemo()
 }

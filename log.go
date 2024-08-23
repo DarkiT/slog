@@ -16,7 +16,7 @@ var (
 	levelVar                 slog.LevelVar
 	recordChan               chan slog.Record
 	textEnabled, jsonEnabled = true, false
-	slogPfx                  = &addons{
+	slogPfx                  = &extends{
 		PrefixKeys: []string{"module"},
 	}
 )

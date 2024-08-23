@@ -17,8 +17,8 @@ import (
 var ctx = context.Background()
 
 func main() {
-	ch := slog.GetChanRecord(100)
-	defer close(ch)
+	// ch := slog.GetChanRecord(100)
+	// defer close(ch)
 
 	formatter1 := formatter.FormatByKey("server", func(v slog.Value) slog.Value {
 		return slog.StringValue(slog.DlpMask(v.String(), dlpheader.IP))
@@ -29,8 +29,8 @@ func main() {
 	formatter3 := formatter.FormatByKey("url", func(v slog.Value) slog.Value {
 		return slog.StringValue(slog.DlpMask(v.String(), dlpheader.URL))
 	})
-	slog.SetLevelTrace()
 	slog.EnableFormatters(formatter1, formatter2, formatter3)
+	slog.SetLevelTrace()
 	slog.NewLogger(os.Stdout, false, false)
 	// slog.DisableTextLogger()
 	// slog.EnableJsonLogger()
@@ -132,12 +132,12 @@ XXX:
 		slog.Duration("duration", time.Duration(333)),
 	))
 
-	time.Sleep(4 * time.Second)
+	time.Sleep(100 * time.Microsecond)
 	goto XXX
 }
 
 func iChan(ch chan slog.Record) {
-	conn, _ := multi.Dial("tcp", "127.0.0.1:1900")
+	conn, _ := multi.Dial("tcp", "192.168.1.123:1900")
 	mlog := slog.New(
 		multi.Fanout(
 			slog.NewJSONHandler(conn, slog.NewOptions(nil)),

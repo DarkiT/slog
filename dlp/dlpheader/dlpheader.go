@@ -56,6 +56,7 @@ const (
 	PASSWORD       = "PASSWORD"
 	URL            = "URL"
 	IP             = "IP"
+	Email2         = "Email2"
 )
 
 type Processor func(rawLog string, kvs ...interface{}) (string, []interface{}, bool)

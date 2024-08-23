@@ -18,22 +18,20 @@ import (
 
 // RuleType is different with ResultType, bacause for input string contains KV object, KV rule will generate Value Detect Type
 const (
-	RULE_TYPE_VALUE         = 0
-	RULE_TYPE_KV            = 1
-	RESULT_TYPE_VALUE       = "VALUE"
-	RESULT_TYPE_KV          = "KV"
-	BLACKLIST_ALGO_MASKED   = "MASKED"
-	VERIFY_ALGO_IDCARD      = "IDCARD"
-	VERIFY_ALGO_ABAROUTING  = "ABAROUTING"
-	VERIFY_ALGO_CREDITCARD  = "CREDITCARD"
-	VERIFY_ALGO_BITCOIN     = "BITCOIN"
-	VERIFY_ALGO_DOMAIN      = "DOMAIN"
-	MASKED_CHARLIST         = "*#"
-	DEF_RESULT_SIZE         = 4
-	DEF_CONTEXT_RANGE       = 32
-	DEF_IDCARD_LEN          = 18
-	RULE_MATCH_RELATION_OR  = "OR"
-	RULE_MATCH_RELATION_AND = "AND"
+	RULE_TYPE_VALUE        = 0
+	RULE_TYPE_KV           = 1
+	RESULT_TYPE_VALUE      = "VALUE"
+	RESULT_TYPE_KV         = "KV"
+	BLACKLIST_ALGO_MASKED  = "MASKED"
+	VERIFY_ALGO_IDCARD     = "IDCARD"
+	VERIFY_ALGO_ABAROUTING = "ABAROUTING"
+	VERIFY_ALGO_CREDITCARD = "CREDITCARD"
+	VERIFY_ALGO_BITCOIN    = "BITCOIN"
+	VERIFY_ALGO_DOMAIN     = "DOMAIN"
+	MASKED_CHARLIST        = "*#"
+	DEF_RESULT_SIZE        = 4
+	DEF_CONTEXT_RANGE      = 32
+	DEF_IDCARD_LEN         = 18
 )
 
 // ContextVerifyFunc defines verify by context function
@@ -43,13 +41,10 @@ type Detector struct {
 	rule     conf.RuleItem // rule item in conf
 	RuleType int           // VALUE if there is no KReg and KDict
 	// Detect section in conf
-	KReg          []*regexp.Regexp    // regex list for Key
-	KDict         map[string]struct{} // Dict for Key
-	VReg          []*regexp.Regexp    // Regex list for Value
-	VDict         []string            // Dict for Value
-	KRelation     string
-	VRelation     string
-	KAndVRelation string
+	KReg  []*regexp.Regexp    // regex list for Key
+	KDict map[string]struct{} // Dict for Key
+	VReg  []*regexp.Regexp    // Regex list for Value
+	VDict []string            // Dict for Value
 	// Filter section in conf
 	BAlgo []string         // algorithm for blacklist, supports MASKED
 	BDict []string         // Dict for blacklist
@@ -129,141 +124,21 @@ func (I *Detector) UseRegex() bool {
 	return len(I.KReg) > 0 || len(I.VReg) > 0
 }
 
-// DetectKey detects sensitive info for Key
-func (I *Detector) DetectKey(kvItem *KVItem) (*dlpheader.DetectResult, error) {
-	lastKey, ifExtracted := I.getLastKey(kvItem.Key)
-	if I.KRelation == RULE_MATCH_RELATION_OR || I.KRelation == "" {
-		_, hit := I.KDict[lastKey]
-		if (!hit) && ifExtracted {
-			_, hit = I.KDict[kvItem.Key]
-		}
-		// 如果KDict没有命中会匹配KReg
-		if !hit {
-			for _, re := range I.KReg {
-				if match := re.MatchString(lastKey); match {
-					hit = true
-					break
-				}
-			}
-		}
-		if hit {
-			res, err := I.createKVResult(kvItem.Key, kvItem.Value)
-			if err != nil {
-				// log.Errorf("createKVResult Error, Key is %s", kvItem.Key)
-				return nil, err
-			}
-			res.ByteStart += kvItem.Start
-			res.ByteEnd += kvItem.Start
-			return res, nil
-		}
-	} else if I.KRelation == RULE_MATCH_RELATION_AND {
-		// 如果是提取的 要判断lastKey 如果不是则判断Key本身
-		if ifExtracted {
-			// 首先匹配KDict
-			for k := range I.KDict {
-				if lastKey != k {
-					return nil, nil
-				}
-			}
-			// 匹配KReg
-			for _, re := range I.KReg {
-				if match := re.MatchString(lastKey); !match {
-					return nil, nil
-				}
-			}
-		} else {
-			for k := range I.KDict {
-				if kvItem.Key != k {
-					return nil, nil
-				}
-			}
-			for _, re := range I.KReg {
-				if match := re.MatchString(kvItem.Key); !match {
-					return nil, nil
-				}
-			}
-		}
-		// 如果之前没有return 说明匹配到了
-		res, err := I.createKVResult(kvItem.Key, kvItem.Value)
-		if err != nil {
-			// log.Errorf("createKVResult Error, Key is %s", kvItem.Key)
-			return nil, err
-		}
-		res.ByteStart += kvItem.Start
-		res.ByteEnd += kvItem.Start
-		return res, nil
-	}
-	return nil, nil
-}
-
-// DetectValues detects sensitive info for Values
-func (I *Detector) DetectValues(kvItem *KVItem) ([]*dlpheader.DetectResult, error) {
-	results := make([]*dlpheader.DetectResult, 0, DEF_RESULT_SIZE)
-	vResults, err := I.DetectBytes([]byte(kvItem.Value))
-	if err != nil {
-		// log.Errorf("DetectBytes Error, err is %s", err.Error())
-		return results, err
-	}
-	if len(vResults) == 0 {
-		return nil, nil
-	}
-	for _, res := range vResults {
-		// convert VALUE result into KV result
-		res.ResultType = RESULT_TYPE_KV
-		res.Key = kvItem.Key
-		res.ByteStart += kvItem.Start
-		res.ByteEnd += kvItem.Start
-		results = append(results, res)
-	}
-	return results, nil
-}
-
 // DetectBytes detects sensitive info for bytes, is called from Detect()
 func (I *Detector) DetectBytes(inputBytes []byte) ([]*dlpheader.DetectResult, error) {
 	results := make([]*dlpheader.DetectResult, 0, DEF_RESULT_SIZE)
-	if I.VRelation == RULE_MATCH_RELATION_OR || I.VRelation == "" {
-		for _, reObj := range I.VReg {
-			if ret, err := I.regexDetectBytes(reObj, inputBytes); err == nil {
-				results = append(results, ret...)
-			} else {
-				// log.Errorf(err.Error())
-			}
+	for _, reObj := range I.VReg {
+		if ret, err := I.regexDetectBytes(reObj, inputBytes); err == nil {
+			results = append(results, ret...)
+		} else {
+			// log.Errorf(err.Error())
 		}
-		// 匹配完VReg之后是VDict
-		for _, item := range I.VDict {
-			if ret, err := I.dictDetectBytes([]byte(item), inputBytes); err == nil {
-				results = append(results, ret...)
-			} else {
-				// log.Errorf(err.Error())
-			}
-		}
-	} else if I.VRelation == RULE_MATCH_RELATION_AND {
-		for _, reObj := range I.VReg {
-			if ret, err := I.regexDetectBytes(reObj, inputBytes); err == nil {
-				if len(ret) > 0 {
-					results = append(results, ret...)
-				} else {
-					return nil, nil
-				}
-			} else {
-				// log.Errorf(err.Error())
-				// 匹配错误直接返回
-				results = nil
-				return results, errors.New("regexDetectBytes VReg Error")
-			}
-		}
-		for _, item := range I.VDict {
-			if ret, err := I.dictDetectBytes([]byte(item), inputBytes); err == nil {
-				if len(ret) > 0 {
-					results = append(results, ret...)
-				} else {
-					return nil, nil
-				}
-			} else {
-				// log.Errorf(err.Error())
-				results = nil
-				return results, errors.New("regexDetectBytes VDict Error")
-			}
+	}
+	for _, item := range I.VDict {
+		if ret, err := I.dictDetectBytes([]byte(item), inputBytes); err == nil {
+			results = append(results, ret...)
+		} else {
+			// log.Errorf(err.Error())
 		}
 	}
 	results = I.filter(results)
@@ -299,74 +174,55 @@ func (I *Detector) DetectList(kvList []*KVItem) ([]*dlpheader.DetectResult, erro
 }
 
 func (I *Detector) doDetectKV(kvItem *KVItem, results *[]*dlpheader.DetectResult) {
-	// IsKV 如果包含Key的匹配，则IsKV返回true
+	// inK may be a path of json object
+	lastKey, ifExtracted := I.getLastKey(kvItem.Key)
 	if I.IsKV() {
-		// 如果只是Key的匹配
-		if len(I.VDict) == 0 && len(I.VReg) == 0 {
-			res, err := I.DetectKey(kvItem)
-			if err != nil {
-				// log.Errorf("I.DetectKey error, err is %s", err.Error())
-				return
+		// key rules check
+		// check Dict rules first, then regex rule
+		_, hit := I.KDict[lastKey]
+		if (!hit) && ifExtracted {
+			_, hit = I.KDict[kvItem.Key]
+		}
+
+		if !hit {
+			for _, re := range I.KReg {
+				if re.Match([]byte(lastKey)) {
+					hit = true
+					break
+				}
 			}
-			if res != nil { // key已经命中
+		}
+		if hit { // key rule is hited
+			if len(I.VDict) == 0 && len(I.VReg) == 0 { // no value rule
+				if res, err := I.createKVResult(kvItem.Key, kvItem.Value); err == nil {
+					res.ByteStart += kvItem.Start
+					res.ByteEnd += kvItem.Start
+					*results = append(*results, res)
+				}
+			} else { // check value rule
+				if vResults, err := I.DetectBytes([]byte(kvItem.Value)); err == nil {
+					for _, res := range vResults {
+						// convert VALUE result into KV result
+						res.ResultType = RESULT_TYPE_KV
+						res.Key = kvItem.Key
+						res.ByteStart += kvItem.Start
+						res.ByteEnd += kvItem.Start
+						*results = append(*results, res)
+					}
+				}
+			}
+		}
+	} else { // only value rule
+		if vResults, err := I.DetectBytes([]byte(kvItem.Value)); err == nil {
+			for _, res := range vResults {
+				// use VALUE because value rule
+				res.ResultType = RESULT_TYPE_VALUE
+				res.Key = kvItem.Key
+				res.ByteStart += kvItem.Start
+				res.ByteEnd += kvItem.Start
 				*results = append(*results, res)
 			}
-			return
 		}
-		// 接下来说明Key Value均存在
-		if I.KAndVRelation == RULE_MATCH_RELATION_OR { // 如果K和V之间是或的关系
-			res, err := I.DetectKey(kvItem)
-			if err != nil {
-				// log.Errorf("I.DetectKey error, err is %s", err.Error())
-				return
-			}
-			if res != nil {
-				*results = append(*results, res)
-			}
-			// 匹配Value
-			valuesRes, err := I.DetectValues(kvItem)
-			if err != nil {
-				// log.Errorf("DetectValues error, Value is %s", kvItem.Value)
-				return
-			}
-			if len(valuesRes) > 0 {
-				*results = append(*results, valuesRes...)
-			}
-			return
-		} else if I.KAndVRelation == RULE_MATCH_RELATION_AND || I.KAndVRelation == "" { // 如果K和V之间是与的关系
-			res, err := I.DetectKey(kvItem)
-			if err != nil {
-				// log.Errorf("I.DetectKey error, err is %s", err.Error())
-				return
-			}
-			if res == nil { // key并未命中
-				return
-			}
-			// 到此说明key已经命中了
-			valueRes, err := I.DetectValues(kvItem)
-			if err != nil {
-				results = nil
-				// log.Errorf("DetectValues error, Value is %s", kvItem.Value)
-				return
-			}
-			if len(valueRes) == 0 {
-				// 说明Value并未命中
-				results = nil
-				return
-			}
-			*results = append(*results, valueRes...)
-		}
-	} else {
-		// 只是value的匹配
-		res, err := I.DetectValues(kvItem)
-		if err != nil {
-			// log.Errorf("DetectValues error, Value is %s", kvItem.Value)
-			return
-		}
-		if len(res) > 0 {
-			*results = append(*results, res...)
-		}
-		return
 	}
 }
 
@@ -414,10 +270,6 @@ func (I *Detector) prepare() {
 	I.CReg = I.preCompile(I.rule.Verify.CReg)
 	I.CDict = I.rule.Verify.CDict
 	I.VAlgo = I.rule.Verify.VAlgo
-	// Match Relation
-	I.KRelation = I.rule.Detect.KRelation
-	I.VRelation = I.rule.Detect.VRelation
-	I.KAndVRelation = I.rule.Detect.KAndVRelation
 	I.setRuleType()
 }
 
@@ -484,14 +336,6 @@ func (I *Detector) regexDetectBytes(re *regexp.Regexp, inputBytes []byte) ([]*dl
 			}
 		}
 	}
-	//if ret := regexp2FindAllIndex(re, string(inputBytes)); ret != nil {
-	//	for i := range ret {
-	//		pos := ret[i]
-	//		if res, err := I.createValueResult(inputBytes, pos); err == nil {
-	//			results = append(results, res)
-	//		}
-	//	}
-	//}
 	return results, nil
 }
 
@@ -570,7 +414,7 @@ func (I *Detector) filter(in []*dlpheader.DetectResult) []*dlpheader.DetectResul
 		if found == false {
 			for _, re := range I.BReg {
 				// Found in BlackList BReg
-				if match := re.MatchString(res.Text); match {
+				if re.Match([]byte(res.Text)) {
 					found = true
 					break
 				}
@@ -683,7 +527,7 @@ func (I *Detector) verifyByContext(inputBytes []byte, res *dlpheader.DetectResul
 	}
 	if !found {
 		for _, re := range I.CReg {
-			if match := re.MatchString(string(subInput)); match {
+			if re.Match(subInput) {
 				found = true
 				break
 			}
@@ -893,7 +737,6 @@ func (I *Detector) verifyByDomain(res *dlpheader.DetectResult) bool {
 func (I *Detector) getLastKey(path string) (string, bool) {
 	sz := len(path)
 	if path[sz-1] == ']' { // path likes key[n]
-		// 从尾部开始找出字符出现的index
 		ed := strings.LastIndexByte(path, '[')
 		st := strings.LastIndexByte(path, '/')
 		return path[st+1 : ed], true
@@ -905,17 +748,4 @@ func (I *Detector) getLastKey(path string) (string, bool) {
 			return path[pos+1:], true
 		}
 	}
-}
-
-func getRunesAndMap(in string) ([]rune, map[int]int) {
-	ret := make([]rune, len(in))
-	idxMap := make(map[int]int)
-
-	i := 0
-	for strIdx, r := range in {
-		idxMap[i] = strIdx
-		ret[i] = r
-		i++
-	}
-	return ret[:i], idxMap
 }

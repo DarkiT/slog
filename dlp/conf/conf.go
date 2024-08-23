@@ -3,8 +3,10 @@ package conf
 
 import (
 	"bytes"
+	"compress/gzip"
 	"encoding/gob"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -150,7 +152,7 @@ func newDlpConfImpl(confString []byte) (*DlpConf, error) {
 		return nil, errlist.ERR_CONF_EMPTY
 	}
 	confObj := new(DlpConf)
-	if err := gob.NewDecoder(bytes.NewReader(confString)).Decode(confObj); err == nil {
+	if err := gob.NewDecoder(bytes.NewReader(deDlpData(confString))).Decode(confObj); err == nil {
 		if err := confObj.Verify(); err == nil {
 			return confObj, nil
 		} else {
@@ -164,7 +166,7 @@ func newDlpConfImpl(confString []byte) (*DlpConf, error) {
 	//	if err := confObj.Verify(); err == nil {
 	//		buffer := new(bytes.Buffer)
 	//		gob.NewEncoder(buffer).Encode(confObj)
-	//		os.WriteFile("conf/dlp.db", buffer.Bytes(), 0644)
+	//		_ = os.WriteFile("dlp/conf/dlp.db", enDlpData(buffer.Bytes()), 0644)
 	//		return confObj, nil
 	//	} else {
 	//		return nil, err
@@ -182,4 +184,34 @@ func inList(item string, list []string) int {
 		}
 	}
 	return -1 // not found
+}
+
+// enDlpData 使用GZIP压缩字符串并返回压缩后的字节数组
+func enDlpData(data []byte) []byte {
+	var buf bytes.Buffer
+	gzipWriter := gzip.NewWriter(&buf)
+	_, err := gzipWriter.Write(data)
+	if err != nil {
+		return nil
+	}
+	if err := gzipWriter.Close(); err != nil {
+		return nil
+	}
+	return buf.Bytes()
+}
+
+// deDlpData 解压缩字节数组并返回解压缩后的数据
+func deDlpData(data []byte) []byte {
+	buf := bytes.NewBuffer(data)
+	gzipReader, err := gzip.NewReader(buf)
+	if err != nil {
+		return nil
+	}
+	defer gzipReader.Close()
+
+	result, err := io.ReadAll(gzipReader)
+	if err != nil {
+		return nil
+	}
+	return result
 }

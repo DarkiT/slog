@@ -53,6 +53,7 @@ func copySyncMap(m *sync.Map) *sync.Map {
 	return &cp // 返回新的 sync.Map
 }
 
+/*
 type listMap struct {
 	m       sync.Map
 	maxSize int
@@ -161,3 +162,4 @@ func (c *listMap) AddToListWithLimit(listName string, value interface{}) {
 		c.LTrim(listName, -c.maxSize, -1)
 	}
 }
+*/

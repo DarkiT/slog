@@ -1,7 +1,30 @@
 package common
 
-// toAnySlice returns a slice with all elements mapped to `any` type
-func toAnySlice[T any](collection []T) []any {
+// MapToSlice transforms a map into a slice based on specific iteratee
+// Play: https://go.dev/play/p/ZuiCZpDt6LD
+func MapToSlice[K comparable, V any, R any](in map[K]V, iteratee func(key K, value V) R) []R {
+	result := make([]R, 0, len(in))
+
+	for k := range in {
+		result = append(result, iteratee(k, in[k]))
+	}
+
+	return result
+}
+
+// Contains returns true if an element is present in a collection.
+func Contains[T comparable](collection []T, element T) bool {
+	for i := range collection {
+		if collection[i] == element {
+			return true
+		}
+	}
+
+	return false
+}
+
+// ToAnySlice returns a slice with all elements mapped to `any` type
+func ToAnySlice[T any](collection []T) []any {
 	result := make([]any, len(collection))
 	for i := range collection {
 		result[i] = collection[i]
@@ -9,9 +32,9 @@ func toAnySlice[T any](collection []T) []any {
 	return result
 }
 
-// mapEntries manipulates a map entries and transforms it to a map of another type.
+// MapEntries manipulates a map entries and transforms it to a map of another type.
 // Play: https://go.dev/play/p/VuvNQzxKimT
-func mapEntries[K1 comparable, V1 any, K2 comparable, V2 any](in map[K1]V1, iteratee func(key K1, value V1) (K2, V2)) map[K2]V2 {
+func MapEntries[K1 comparable, V1 any, K2 comparable, V2 any](in map[K1]V1, iteratee func(key K1, value V1) (K2, V2)) map[K2]V2 {
 	result := make(map[K2]V2, len(in))
 
 	for k1 := range in {
@@ -22,13 +45,13 @@ func mapEntries[K1 comparable, V1 any, K2 comparable, V2 any](in map[K1]V1, iter
 	return result
 }
 
-// filterMap returns a slice which obtained after both filtering and mapping using the given callback function.
+// FilterMap returns a slice which obtained after both filtering and mapping using the given callback function.
 // The callback function should return two values:
 //   - the result of the mapping operation and
 //   - whether the result element should be included or not.
 //
 // Play: https://go.dev/play/p/-AuYXfy7opz
-func filterMap[T any, R any](collection []T, callback func(item T, index int) (R, bool)) []R {
+func FilterMap[T any, R any](collection []T, callback func(item T, index int) (R, bool)) []R {
 	result := []R{}
 
 	for i := range collection {

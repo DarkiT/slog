@@ -78,14 +78,27 @@ func (h *handler) Enabled(_ context.Context, l slog.Level) bool {
 
 // Handle formats a given record in a human-friendly but still largely structured way.
 func (h *handler) Handle(_ context.Context, r slog.Record) error {
-	var sb buffer
+	sb := newBuffer()
+	defer sb.Free()
+
+	rep := h.replaceAttr
 
 	if !r.Time.IsZero() {
-		sb.WriteString(r.Time.Format(TimeFormat))
-		_ = sb.WriteByte(' ')
+		val := r.Time.Round(0)
+		if rep == nil {
+			t := r.Time
+			sb.WriteString(t.Format(h.timeFormat))
+		} else if a := rep(nil, slog.Time(slog.TimeKey, val)); a.Key != "" {
+			if a.Value.Kind() == slog.KindTime {
+				sb.WriteString(a.Value.Time().Format(h.timeFormat))
+			} else if a.Value.Kind() == slog.KindString {
+				sb.WriteString(a.Value.String())
+			}
+			_ = sb.WriteByte(' ')
+		}
 	}
 
-	h.appendLevel(&sb, r.Level)
+	h.appendLevel(sb, r.Level)
 	_ = sb.WriteByte(' ')
 
 	if h.addSource && r.PC != 0 {
@@ -98,7 +111,7 @@ func (h *handler) Handle(_ context.Context, r slog.Record) error {
 		sb.WriteString(h.attrs)
 	}
 	r.Attrs(func(a slog.Attr) bool {
-		h.appendAttr(&sb, a)
+		h.appendAttr(sb, a)
 		return true
 	})
 	_ = sb.WriteByte('\n')
@@ -115,9 +128,12 @@ func (h *handler) WithAttrs(attrs []slog.Attr) slog.Handler {
 		return h
 	}
 	h2 := h.clone()
-	var sb buffer
+
+	sb := newBuffer()
+	defer sb.Free()
+
 	for _, a := range attrs {
-		h2.appendAttr(&sb, a)
+		h2.appendAttr(sb, a)
 	}
 	h2.attrs += sb.String()
 	return h2

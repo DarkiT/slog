@@ -15,7 +15,7 @@ func AppendAttrsToGroup(groups []string, actualAttrs []slog.Attr, newAttrs ...sl
 	for i := range actualAttrs {
 		attr := actualAttrs[i]
 		if attr.Key == groups[0] && attr.Value.Kind() == slog.KindGroup {
-			actualAttrs[i] = slog.Group(groups[0], toAnySlice(AppendAttrsToGroup(groups[1:], attr.Value.Group(), newAttrs...))...)
+			actualAttrs[i] = slog.Group(groups[0], ToAnySlice(AppendAttrsToGroup(groups[1:], attr.Value.Group(), newAttrs...))...)
 			return actualAttrs
 		}
 	}
@@ -25,7 +25,7 @@ func AppendAttrsToGroup(groups []string, actualAttrs []slog.Attr, newAttrs ...sl
 			actualAttrs,
 			slog.Group(
 				groups[0],
-				toAnySlice(AppendAttrsToGroup(groups[1:], []slog.Attr{}, newAttrs...))...,
+				ToAnySlice(AppendAttrsToGroup(groups[1:], []slog.Attr{}, newAttrs...))...,
 			),
 		),
 	)

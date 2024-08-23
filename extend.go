@@ -8,7 +8,6 @@ import (
 	"sync"
 
 	"github.com/darkit/slog/dlp"
-
 	"github.com/darkit/slog/dlp/dlpheader"
 	"github.com/darkit/slog/formatter"
 )
@@ -18,7 +17,7 @@ var (
 	dlpEngine dlpheader.EngineAPI
 )
 
-type addons struct {
+type extends struct {
 	PrefixKeys []string
 	formatters []formatter.Formatter
 }
@@ -27,16 +26,16 @@ type addons struct {
 // 前缀从日志记录的属性中获取，使用 PrefixKeys 中指定的键。
 type eHandler struct {
 	handler  slog.Handler // 链中的下一个日志处理器。
-	opts     addons       // 此处理器的配置选项。
+	opts     extends      // 此处理器的配置选项。
 	prefixes []slog.Value // 前缀值的缓存列表。
 	groups   []string
 }
 
 // newAddonsHandler 创建一个新的前缀日志处理器。
 // 新处理器会在将每条日志消息传递给下一个处理器之前，从日志记录的属性中获取前缀并添加到消息前。
-func newAddonsHandler(next slog.Handler, opts *addons) *eHandler {
+func newAddonsHandler(next slog.Handler, opts *extends) *eHandler {
 	if opts == nil {
-		opts = &addons{
+		opts = &extends{
 			PrefixKeys: []string{"module"},
 		}
 	}
