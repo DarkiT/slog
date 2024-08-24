@@ -39,7 +39,7 @@ func main() {
 
 	core.Init()
 	// go iChan(ch)
-XXX:
+
 	fmt.Println("================默认日志记录器==================")
 	slog.Error("HTTP请求消息", "code", 403, "status", "server not response", "server", "10.10.121.88")
 	slog.Infof("Pid: %d 服务已经初始化完成, %d 个协程被创建.", os.Getpid(), runtime.NumGoroutine())
@@ -50,8 +50,8 @@ XXX:
 	slog.Warnf("这是一个警告日志: %s -> %d", "Warnf", 88888)
 	slog.Printf("这是一个信息日志: %s -> %d", "Printf", 88888)
 	slog.Trace("这是一个路由日志: %s -> %d", "Trace", 88888)
-	slog.With("url", "https://user:123456@www.zishuo.net/live/demo").Infof("这是一个脱敏测试日志")
-	slog.With("url", "rtsp://user:123456@192.168.1.123/live/demo").Infof("这是一个脱敏测试日志")
+	slog.With("url", "https://user:123456@www.zishuo.net:8081/live/demo").Infof("这是一个脱敏测试日志")
+	slog.With("url", "rtsp://user:123456@192.168.1.123:554/live/demo").Infof("这是一个脱敏测试日志")
 	slog.WithValue("mobile", "13800139000").Info("我的Email: abcd@abcd.com 手机号 13800138000 家庭住址：我家住在北京市海淀区北三环西路43号")
 	slog.WithGroup("slog").Debug("这是一个调试日志", slog.Group("data",
 		slog.String("mobile", "13800138000"),
@@ -131,9 +131,6 @@ XXX:
 		slog.Time("time", time.Now()),
 		slog.Duration("duration", time.Duration(333)),
 	))
-
-	time.Sleep(100 * time.Microsecond)
-	goto XXX
 }
 
 func iChan(ch chan slog.Record) {
