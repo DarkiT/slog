@@ -52,7 +52,11 @@ func (d *dlp) RegisterUrl() error {
 		}
 
 		// 脱敏IP地址
-		parsedUrl.Host = desensitizeIP(parsedUrl.Host)
+		if parsedUrl.Port() != "" {
+			parsedUrl.Host = fmt.Sprintf("%s:%s", desensitizeIP(parsedUrl.Hostname()), parsedUrl.Port())
+		} else {
+			parsedUrl.Host = desensitizeIP(parsedUrl.Host)
+		}
 
 		// 脱敏查询参数中的敏感信息（自定义规则）
 		if len(d.UrlQueryArgs) > 0 {
@@ -66,6 +70,7 @@ func (d *dlp) RegisterUrl() error {
 // RegisterIP 注册IP地址脱敏处理器
 func (d *dlp) RegisterIP() error {
 	return d.RegisterMasker("IP", func(in string) (string, error) {
+		fmt.Println("vvvvvvvvvvvv", in)
 		return desensitizeIP(in), nil
 	})
 }

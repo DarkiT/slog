@@ -22,7 +22,7 @@ mac地址: 06:06:06:aa:bb:cc
 网址: https://admin:123456@www.zishuo.net/live/demo?token=123456&user=zishuo
 网址: rtsp://admin:123456@192.168.1.188/live/demo?token=123456&user=zishuo
 网址: rtmp://admin:123456@www.zishuo.net/live/demo?token=123456&user=zishuo
-ipv4地址: 192.168.1.188 ipv6地址: 2001:0db8:85a3:0000:0000:8a2e:0370:7334
+ipv4地址: 192.168.1.188:8081 ipv6地址: 2001:0db8:85a3:0000:0000:8a2e:0370:7334:8082
 `
 
 func dlpDemo() {
