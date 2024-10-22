@@ -2,5 +2,5 @@ package slog
 
 const (
 	Name    = "slog"
-	Version = "v1.0.0"
+	Version = "v0.0.18"
 )

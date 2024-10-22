@@ -30,7 +30,7 @@ func New(handler Handler) *slog.Logger {
 }
 
 // NewLogger 创建一个包含文本和JSON格式的日志记录器
-func NewLogger(writer io.Writer, noColor, addSource bool) Logger {
+func NewLogger(writer io.Writer, noColor, addSource bool) *Logger {
 	options := NewOptions(nil)
 	options.AddSource = addSource || levelVar.Level() < LevelDebug
 	logger = Logger{
@@ -41,7 +41,7 @@ func NewLogger(writer io.Writer, noColor, addSource bool) Logger {
 		json:    slog.New(newAddonsHandler(NewJSONHandler(writer, options), slogPfx)),
 	}
 
-	return logger
+	return &logger
 }
 
 /*
@@ -104,13 +104,28 @@ func NewOptions(options *slog.HandlerOptions) *slog.HandlerOptions {
 
 // Default 返回一个新的带前缀的日志记录器
 func Default(modules ...string) *Logger {
-	if modules == nil {
+	if len(modules) == 0 {
 		return &logger
 	}
 
-	// 返回一个新的 Logger，其中包含给定的参数
+	// 构建模块标识符
 	module := strings.Join(modules, ".")
-	return logger.With("module", module)
+
+	// 创建新的带模块前缀的logger
+	newLogger := logger.clone()
+
+	// 设置模块前缀
+	newHandler := newAddonsHandler(newLogger.text.Handler(), slogPfx)
+	newHandler.prefixes[0] = slog.StringValue(module)
+
+	newLogger.text = slog.New(newHandler)
+	if newLogger.json != nil {
+		jsonHandler := newAddonsHandler(newLogger.json.Handler(), slogPfx)
+		jsonHandler.prefixes[0] = slog.StringValue(module)
+		newLogger.json = slog.New(jsonHandler)
+	}
+
+	return newLogger
 }
 
 // GetSlogLogger 返回原始log/slog的日志记录器
@@ -167,10 +182,24 @@ func Println(msg string, args ...any) { logger.logWithLevel(LevelInfo, msg, args
 func Printf(format string, args ...any) { logger.logWithLevel(LevelInfo, format, args...) }
 
 // With 创建一个新的日志记录器，带有指定的属性。
-func With(args ...any) *Logger { return logger.With(args...) }
+func With(args ...any) *Logger {
+	return logger.With(args...)
+}
 
-// With 创建一个新的日志记录器，带有指定的属性。
+// WithGroup 创建一个带有指定组名的全局日志记录器
+// 这是一个包级别的便捷方法
+// 参数:
+//   - name: 日志组的名称
+//
+// 返回:
+//   - 带有指定组名的新日志记录器实例
 func WithGroup(name string) *Logger { return logger.WithGroup(name) }
+
+// WithValue 在全局上下文中添加键值对并返回新的 Logger
+func WithValue(key string, val any) *Logger {
+	// 获取现有的全局Logger并调用其WithValue方法
+	return logger.WithValue(key, val)
+}
 
 // SetLevelTrace 设置全局日志级别为Trace。
 func SetLevelTrace() { levelVar.Set(LevelTrace) }
@@ -225,4 +254,14 @@ func DisableTextLogger() {
 // DisableJsonLogger 禁用 JSON 日志记录器。
 func DisableJsonLogger() {
 	jsonEnabled = false
+}
+
+// EnableDLPLogger 启用日志脱敏功能
+func EnableDLPLogger() {
+	EnableDLP()
+}
+
+// DisableDLPLogger 禁用日志脱敏功能
+func DisableDLPLogger() {
+	DisableDLP()
 }

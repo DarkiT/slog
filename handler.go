@@ -94,16 +94,16 @@ func (h *handler) Handle(_ context.Context, r slog.Record) error {
 			} else if a.Value.Kind() == slog.KindString {
 				sb.WriteString(a.Value.String())
 			}
-			_ = sb.WriteByte(' ')
+			sb.WriteByte(' ')
 		}
 	}
 
 	h.appendLevel(sb, r.Level)
-	_ = sb.WriteByte(' ')
+	sb.WriteByte(' ')
 
 	if h.addSource && r.PC != 0 {
 		sb.WriteString(h.newSourceAttr(r.PC))
-		_ = sb.WriteByte(' ')
+		sb.WriteByte(' ')
 	}
 
 	sb.WriteString(r.Message)
@@ -114,7 +114,7 @@ func (h *handler) Handle(_ context.Context, r slog.Record) error {
 		h.appendAttr(sb, a)
 		return true
 	})
-	_ = sb.WriteByte('\n')
+	sb.WriteByte('\n')
 
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -204,7 +204,7 @@ func (h *handler) appendAttr(sb *buffer, a slog.Attr) {
 }
 
 func appendKey(sb *buffer, groups []string, key string) {
-	_ = sb.WriteByte(' ')
+	sb.WriteByte(' ')
 	if len(groups) > 0 {
 		key = strings.Join(groups, ".") + "." + key
 	}
@@ -213,7 +213,7 @@ func appendKey(sb *buffer, groups []string, key string) {
 	} else {
 		sb.WriteString(key)
 	}
-	_ = sb.WriteByte('=')
+	sb.WriteByte('=')
 }
 
 func (h *handler) appendVal(sb *buffer, val slog.Value) {
@@ -233,11 +233,11 @@ func (h *handler) appendVal(sb *buffer, val slog.Value) {
 	case slog.KindTime:
 		quoteTime := needsQuoting(h.timeFormat)
 		if quoteTime {
-			_ = sb.WriteByte(' ')
+			sb.WriteByte(' ')
 		}
 		sb.WriteString(val.Time().Format(h.timeFormat))
 		if quoteTime {
-			_ = sb.WriteByte(' ')
+			sb.WriteByte(' ')
 		}
 	case slog.KindGroup, slog.KindLogValuer:
 		if tm, ok := val.Any().(encoding.TextMarshaler); ok {
