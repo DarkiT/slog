@@ -331,6 +331,8 @@ func demoSensitiveData(logger *slog.Logger) {
 	//	return text
 	//})
 
+	logger = slog.NewLogger(os.Stdout, false, true)
+
 	// 测试不同类型数据的脱敏
 	sensitiveData := []struct {
 		name     string
