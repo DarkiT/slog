@@ -42,9 +42,7 @@ func NewLogger(w io.Writer, noColor, addSource bool) *Logger {
 		ext.EnableDLP()
 	}
 
-	if w == nil {
-		w = NewWriter()
-	} else if w != os.Stdout && !isWriter(w) {
+	if w == nil || (w != os.Stdout && !isWriter(w)) {
 		w = NewWriter()
 	}
 
