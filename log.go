@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync/atomic"
-	"syscall"
 	"time"
 
 	"github.com/darkit/slog/formatter"
@@ -34,7 +33,7 @@ func New(handler Handler) *slog.Logger {
 }
 
 // NewLogger 创建一个包含文本和JSON格式的日志记录器
-func NewLogger(writer io.Writer, noColor, addSource bool) *Logger {
+func NewLogger(w io.Writer, noColor, addSource bool) *Logger {
 	options := NewOptions(nil)
 	options.AddSource = addSource || levelVar.Level() < LevelDebug
 
@@ -43,17 +42,18 @@ func NewLogger(writer io.Writer, noColor, addSource bool) *Logger {
 		ext.EnableDLP()
 	}
 
-	isTerminal := IsTerminal(writer)
-	// 如果明确指定了 noColor 为 true，或者输出不是终端，则禁用颜色
-	if !isTerminal || writer == nil {
-		writer = NewWriter()
+	if w == nil {
+		w = NewWriter()
+	} else if w != os.Stdout && !isWriter(w) {
+		w = NewWriter()
 	}
+
 	logger = Logger{
 		noColor: noColor,
 		level:   levelVar.Level(),
 		ctx:     context.Background(),
-		text:    slog.New(newAddonsHandler(NewConsoleHandler(writer, noColor, options), ext)),
-		json:    slog.New(newAddonsHandler(NewJSONHandler(writer, options), ext)),
+		text:    slog.New(newAddonsHandler(NewConsoleHandler(w, noColor, options), ext)),
+		json:    slog.New(newAddonsHandler(NewJSONHandler(w, options), ext)),
 	}
 
 	return &logger
@@ -292,18 +292,8 @@ func IsDLPEnabled() bool {
 	return dlpEnabled.Load()
 }
 
-// IsTerminal 判断是否是终端输出
-func IsTerminal(w io.Writer) bool {
-	// 1. 检查是否是我们的文件 writer
-	if _, ok := w.(*writer); ok {
-		return false
-	}
-
-	// 2. 检查是否是标准输出/错误
-	if f, ok := w.(*os.File); ok {
-		return f.Fd() == uintptr(syscall.Stdout) || f.Fd() == uintptr(syscall.Stderr)
-	}
-
-	// 3. 其他类型都视为非终端
-	return false
+// isWriter 辅助函数检查是否为自定义 writer
+func isWriter(w interface{}) bool {
+	_, ok := w.(*writer)
+	return ok
 }

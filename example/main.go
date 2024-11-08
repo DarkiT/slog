@@ -11,6 +11,8 @@ import (
 	"github.com/darkit/slog"
 )
 
+var filename = "logs/app.log"
+
 func init() {
 	// 在包初始化时确保基础设施准备就绪
 	slog.EnableTextLogger() // 启用文本日志
@@ -19,7 +21,9 @@ func init() {
 }
 
 func main() {
-	logger := slog.NewLogger(os.Stdout, false, true)
+	write := os.Stdout
+	//write := slog.NewWriter(filename)
+	logger := slog.NewLogger(write, false, true)
 
 	// 定义所有演示项目
 	demos := []struct {
@@ -60,7 +64,7 @@ func main() {
 		{
 			name:        "输出格式控制",
 			description: "演示不同的日志输出格式",
-			fn:          demoOutputFormat,
+			fn:          func() { demoOutputFormat(logger) },
 		},
 		{
 			name:        "日志监控",
@@ -70,7 +74,7 @@ func main() {
 		{
 			name:        "日志脱敏",
 			description: "演示敏感信息脱敏功能",
-			fn:          demoSensitiveData,
+			fn:          func() { demoSensitiveData(logger) },
 		},
 		{
 			name:        "高级特性",
@@ -246,9 +250,7 @@ func demoContextAndValues(logger *slog.Logger) {
 }
 
 // demoOutputFormat 演示输出格式控制
-func demoOutputFormat() {
-	logger := slog.NewLogger(os.Stdout, false, true)
-
+func demoOutputFormat(logger *slog.Logger) {
 	// 1. 演示纯文本格式
 	slog.EnableTextLogger()
 	slog.DisableJsonLogger()
@@ -313,7 +315,7 @@ func demoLogMonitoring() {
 }
 
 // demoSensitiveData 演示日志脱敏功能
-func demoSensitiveData() {
+func demoSensitiveData(logger *slog.Logger) {
 	// 启用DLP
 	slog.EnableDLPLogger()
 	time.Sleep(100 * time.Millisecond)
@@ -328,9 +330,6 @@ func demoSensitiveData() {
 	//	}
 	//	return text
 	//})
-
-	// 创建logger
-	logger := slog.NewLogger(os.Stdout, false, true)
 
 	// 测试不同类型数据的脱敏
 	sensitiveData := []struct {
