@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/darkit/slog/formatter"
@@ -42,6 +43,11 @@ func NewLogger(writer io.Writer, noColor, addSource bool) *Logger {
 		ext.EnableDLP()
 	}
 
+	isTerminal := IsTerminal(writer)
+	// 如果明确指定了 noColor 为 true，或者输出不是终端，则禁用颜色
+	if !isTerminal || writer == nil {
+		writer = NewWriter()
+	}
 	logger = Logger{
 		noColor: noColor,
 		level:   levelVar.Level(),
@@ -284,4 +290,20 @@ func DisableDLPLogger() {
 // IsDLPEnabled 检查DLP是否启用
 func IsDLPEnabled() bool {
 	return dlpEnabled.Load()
+}
+
+// IsTerminal 判断是否是终端输出
+func IsTerminal(w io.Writer) bool {
+	// 1. 检查是否是我们的文件 writer
+	if _, ok := w.(*writer); ok {
+		return false
+	}
+
+	// 2. 检查是否是标准输出/错误
+	if f, ok := w.(*os.File); ok {
+		return f.Fd() == uintptr(syscall.Stdout) || f.Fd() == uintptr(syscall.Stderr)
+	}
+
+	// 3. 其他类型都视为非终端
+	return false
 }

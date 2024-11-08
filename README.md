@@ -1,5 +1,9 @@
 # slog
 
+[![PkgGoDev](https://pkg.go.dev/badge/github.com/darkit/slog.svg)](https://pkg.go.dev/github.com/darkit/slog)
+[![Go Report Card](https://goreportcard.com/badge/github.com/darkit/slog)](https://goreportcard.com/report/github.com/darkit/slog)
+[![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/darkit/slog/blob/master/LICENSE)
+
 slog 是一个高性能、功能丰富的 Go 语言日志库，基于 Go 1.21+ 的官方 `log/slog` 包进行扩展。它提供了更灵活的日志级别控制、彩色输出、结构化日志记录、日志脱敏等高级特性。
 
 ## 特性
@@ -27,22 +31,22 @@ go get github.com/darkit/slog
 package main
 
 import (
-   "os"
-   "github.com/darkit/slog"
+	"os"
+	"github.com/darkit/slog"
 )
 
 func main() {
-   // 创建默认logger
-   logger := slog.NewLogger(os.Stdout, false, false)
+	// 创建默认logger
+	logger := slog.NewLogger(os.Stdout, false, false)
 
-   // 基础日志记录
-   logger.Info("Hello Slog!")
+	// 基础日志记录
+	logger.Info("Hello Slog!")
 
-   // 带结构化字段的日志
-   logger.Info("User logged in",
-      "user_id", 123,
-      "action", "login",
-   )
+	// 带结构化字段的日志
+	logger.Info("User logged in",
+		"user_id", 123,
+		"action", "login",
+	)
 }
 ```
 
@@ -167,6 +171,68 @@ slog.Time("start_time", time.Now()),
 slogLogger := logger.GetSlogLogger()
 ```
 
+## 日志文件管理
+
+slog 提供了日志文件管理功能，支持日志文件的自动轮转、压缩和清理。
+
+### 基础用法
+
+```go
+// 创建日志文件写入器
+writer := slog.NewWriter("logs/app.log")
+
+// 创建日志记录器
+logger := slog.NewLogger(writer, false, false)
+
+// 开始记录日志
+logger.Info("Application started")
+```
+
+### 文件写入器配置
+
+```go
+writer := slog.NewWriter("logs/app.log").
+SetMaxSize(100).      // 设置单个文件最大为100MB
+SetMaxAge(7).         // 保留7天的日志
+SetMaxBackups(10).    // 最多保留10个备份
+SetLocalTime(true).   // 使用本地时间
+SetCompress(true)     // 压缩旧日志文件
+```
+
+### 文件写入器特性
+
+- **自动轮转**: 当日志文件达到指定大小时自动创建新文件
+- **时间戳备份**: 备份文件名格式为 `原文件名-时间戳.扩展名`
+- **自动压缩**: 可选择自动压缩旧的日志文件
+- **自动清理**: 支持按时间和数量清理旧日志
+- **目录管理**: 自动创建日志目录结构
+- **错误处理**: 优雅处理文件操作错误
+
+### 配置选项
+
+| 方法 | 默认值 | 描述 |
+|------|--------|------|
+| `SetMaxSize(size int)` | 100 | 单个日志文件的最大大小（MB） |
+| `SetMaxAge(days int)` | 30 | 日志文件保留的最大天数 |
+| `SetMaxBackups(count int)` | 30 | 保留的最大备份文件数 |
+| `SetLocalTime(local bool)` | true | 是否使用本地时间 |
+| `SetCompress(compress bool)` | true | 是否压缩旧日志文件 |
+
+### 文件命名规则
+
+- **当前日志文件**: `app.log`
+- **备份文件**: `app-2024-03-20T15-04-05.log`
+- **压缩文件**: `app-2024-03-20T15-04-05.log.gz`
+
+### 目录结构示例
+
+```
+logs/
+  ├── app.log                           # 当前日志文件
+  ├── app-2024-03-20T15-04-05.log       # 未压缩的备份
+  └── app-2024-03-19T15-04-05.log.gz    # 压缩的备份
+```
+
 ## 方法列表
 
 ### 全局方法
@@ -207,6 +273,10 @@ slogLogger := logger.GetSlogLogger()
 - 高效的级别过滤
 - 原子操作保证线程安全
 
+## 版本
+
+当前版本：v0.0.19
+
 ## 贡献
 
 欢迎提交 Issue 和 Pull Request。
@@ -214,7 +284,3 @@ slogLogger := logger.GetSlogLogger()
 ## 许可证
 
 MIT License
-
-## 版本
-
-当前版本：v0.0.18
