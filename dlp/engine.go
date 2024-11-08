@@ -1,105 +1,104 @@
 package dlp
 
 import (
+	"errors"
 	"reflect"
 	"regexp"
+	"strings"
 	"sync"
 	"sync/atomic"
 )
 
-// DlpEngine 定义脱敏引擎的完整功能
+var (
+	ErrInvalidMatcher = errors.New("invalid matcher configuration")
+	ErrNotStruct      = errors.New("input must be a struct")
+)
+
+var textBuilderPool = sync.Pool{
+	New: func() interface{} {
+		return &strings.Builder{}
+	},
+}
+
+// DlpEngine 定义脱敏引擎结构体
 type DlpEngine struct {
 	config   *DlpConfig
 	searcher *RegexSearcher
 	mu       sync.RWMutex
 	enabled  atomic.Bool
-	patterns map[string]*regexp.Regexp
 }
 
+// NewDlpEngine 创建新的DLP引擎实例
 func NewDlpEngine() *DlpEngine {
 	engine := &DlpEngine{
-		config: GetConfig(),
+		config:   GetConfig(),
+		searcher: NewRegexSearcher(),
 	}
-	engine.initPatterns()
+	engine.enabled.Store(false)
 	return engine
 }
 
-// initPatterns 初始化正则表达式模式
-func (e *DlpEngine) initPatterns() {
-	e.patterns = make(map[string]*regexp.Regexp)
-
-	// 加载所有预定义的正则表达式
-	patterns := map[string]string{
-		"chinese_name":    ChineseNamePattern,    // 中文姓名
-		"id_card":         ChineseIDCardPattern,  // 身份证
-		"passport":        PassportPattern,       // 护照号
-		"social_security": SocialSecurityPattern, // 社会保障号
-		"drivers_license": DriversLicensePattern, // 驾驶证号
-		"mobile_phone":    MobilePhonePattern,    // 手机号
-		"fixed_phone":     FixedPhonePattern,     // 固定电话
-		"email":           EmailPattern,          // 电子邮箱
-		"address":         AddressPattern,        // 详细地址
-		"postal_code":     PostalCodePattern,     // 邮政编码
-		"bank_card":       BankCardPattern,       // 银行卡
-		"credit_card":     CreditCardPattern,     // 信用卡
-		"ipv4":            IPv4Pattern,           // IPv4
-		"ipv6":            IPv6Pattern,           // IPv6
-		"mac":             MACPattern,            // MAC地址
-		"imei":            IMEIPattern,           // IMEI号
-		"car_license":     CarLicensePattern,     // 车牌号
-		"vin":             VINPattern,            // 车架号
-		"api_key":         APIKeyPattern,         // API密钥
-		"jwt":             JWTPattern,            // JWT令牌
-		"access_token":    AccessTokenPattern,    // 访问令牌
-		"device_id":       DeviceIDPattern,       // 设备ID
-		"uuid":            UUIDPattern,           // UUID
-		"md5":             MD5Pattern,            // MD5哈希
-		"sha1":            SHA1Pattern,           // SHA1哈希
-		"sha256":          SHA256Pattern,         // SHA256哈希
-		"base64":          Base64Pattern,         // Base64编码
-		"lat_lng":         LatLngPattern,         // 经纬度
-		"url":             URLPattern,            // URL
-		"domain":          DomainPattern,         // 域名
-		"password":        PasswordPattern,       // 密码
-		"username":        UsernamePattern,       // 用户名
-		"medical_id":      MedicalIDPattern,      // 医保卡号
-		"company_id":      CompanyIDPattern,      // 统一社会信用代码
-		"iban":            IBANPattern,           // IBAN号码
-		"swift":           SwiftPattern,          // SWIFT代码
-		"git_repo":        GitRepoPattern,        // Git仓库
-		"commit_hash":     CommitHashPattern,     // Git提交哈希
-		"date":            DatePattern,           // 日期
-		"time":            TimePattern,           // 时间
-		"ip_port":         IPPortPattern,         // 端口号
-	}
-
-	for name, pattern := range patterns {
-		if reg, err := regexp.Compile(pattern); err == nil {
-			e.patterns[name] = reg
-		}
-	}
+// Enable 启用DLP引擎
+func (e *DlpEngine) Enable() {
+	e.enabled.Store(true)
 }
 
-// getStrategyForPattern 根据正则表达式获取对应的脱敏策略
-func (e *DlpEngine) getStrategyForPattern(pattern *regexp.Regexp) (DesensitizeFunc, bool) {
-	patternStr := pattern.String()
-	for name, p := range e.patterns {
-		if p.String() == patternStr {
-			return e.config.GetStrategy(name)
-		}
-	}
-	return nil, false
+// Disable 禁用DLP引擎
+func (e *DlpEngine) Disable() {
+	e.enabled.Store(false)
 }
 
-// DesensitizeStruct 对结构体进行脱敏
+// IsEnabled 检查DLP引擎是否启用
+func (e *DlpEngine) IsEnabled() bool {
+	return e.enabled.Load()
+}
+
+// DesensitizeText 对文本进行脱敏处理
+func (e *DlpEngine) DesensitizeText(text string) string {
+	if !e.IsEnabled() || text == "" {
+		return text
+	}
+
+	builder := textBuilderPool.Get().(*strings.Builder)
+	defer func() {
+		builder.Reset()
+		textBuilderPool.Put(builder)
+	}()
+
+	result := text
+	// 按优先级顺序处理不同类型的敏感信息
+	sensitiveTypes := e.searcher.GetAllSupportedTypes()
+	for _, typeName := range sensitiveTypes {
+		result = e.searcher.ReplaceParallel(result, typeName)
+		builder.WriteString(result)
+		result = builder.String()
+		builder.Reset()
+	}
+
+	return result
+}
+
+// DesensitizeSpecificType 对指定类型的敏感信息进行脱敏
+func (e *DlpEngine) DesensitizeSpecificType(text string, sensitiveType string) string {
+	if !e.IsEnabled() || text == "" {
+		return text
+	}
+	return e.searcher.ReplaceParallel(text, sensitiveType)
+}
+
+// DesensitizeStruct 对结构体进行脱敏处理
 func (e *DlpEngine) DesensitizeStruct(data interface{}) error {
-	if !e.config.IsEnabled() {
+	if !e.IsEnabled() {
 		return nil
 	}
 
 	val := reflect.ValueOf(data)
 	if val.Kind() == reflect.Ptr {
 		val = val.Elem()
+	}
+
+	if val.Kind() != reflect.Struct {
+		return ErrNotStruct
 	}
 
 	typ := val.Type()
@@ -114,31 +113,51 @@ func (e *DlpEngine) DesensitizeStruct(data interface{}) error {
 			continue
 		}
 
-		if strategy, ok := e.config.GetStrategy(tag); ok {
-			if field.Kind() == reflect.String {
-				field.SetString(strategy(field.String()))
-			}
+		if field.Kind() == reflect.String {
+			desensitized := e.DesensitizeSpecificType(field.String(), tag)
+			field.SetString(desensitized)
 		}
 	}
 
 	return nil
 }
 
-// DesensitizeText 对文本内容进行脱敏
-func (e *DlpEngine) DesensitizeText(text string) string {
-	if !e.config.IsEnabled() {
-		return text
+// DetectSensitiveInfo 检测文本中的所有敏感信息
+func (e *DlpEngine) DetectSensitiveInfo(text string) map[string][]MatchResult {
+	if !e.IsEnabled() || text == "" {
+		return nil
 	}
 
-	// 使用正则表达式进行内容匹配和脱敏
-	for _, pattern := range e.patterns {
-		text = pattern.ReplaceAllStringFunc(text, func(match string) string {
-			if strategy, ok := e.getStrategyForPattern(pattern); ok {
-				return strategy(match)
-			}
-			return match
-		})
+	results := make(map[string][]MatchResult)
+	sensitiveTypes := e.searcher.GetAllSupportedTypes()
+
+	for _, typeName := range sensitiveTypes {
+		matches := e.searcher.SearchSensitiveByType(text, typeName)
+		if len(matches) > 0 {
+			results[typeName] = matches
+		}
 	}
 
-	return text
+	return results
+}
+
+// RegisterCustomMatcher 注册自定义匹配器
+func (e *DlpEngine) RegisterCustomMatcher(matcher *Matcher) error {
+	if matcher.Pattern == "" || matcher.Name == "" {
+		return ErrInvalidMatcher
+	}
+
+	regex, err := regexp.Compile(matcher.Pattern)
+	if err != nil {
+		return err
+	}
+
+	matcher.Regex = regex
+	e.searcher.AddMatcher(matcher)
+	return nil
+}
+
+// GetSupportedTypes 获取所有支持的敏感信息类型
+func (e *DlpEngine) GetSupportedTypes() []string {
+	return e.searcher.GetAllSupportedTypes()
 }

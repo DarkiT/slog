@@ -4,8 +4,9 @@ import (
 	"context"
 	"log/slog"
 	"slices"
-	"strings"
 	"sync"
+
+	"github.com/darkit/slog/dlp"
 
 	"github.com/darkit/slog/formatter"
 )
@@ -13,6 +14,25 @@ import (
 type extends struct {
 	PrefixKeys []string
 	formatters []formatter.Formatter
+	dlpEnabled bool
+	dlpEngine  *dlp.DlpEngine
+}
+
+// EnableDLP 启用日志脱敏功能
+func (e *extends) EnableDLP() {
+	e.dlpEnabled = true
+	if e.dlpEngine == nil {
+		e.dlpEngine = dlp.NewDlpEngine()
+	}
+	e.dlpEngine.Enable()
+}
+
+// DisableDLP 禁用日志脱敏功能
+func (e *extends) DisableDLP() {
+	e.dlpEnabled = false
+	if e.dlpEngine != nil {
+		e.dlpEngine.Disable()
+	}
 }
 
 // eHandler 是一个自定义的 slog 处理器，用于在日志消息前添加前缀，并将其传递给下一个处理器。
@@ -123,39 +143,36 @@ func (h *eHandler) transformAttrs(groups []string, attrs []slog.Attr) []slog.Att
 	for i := range attrs {
 		attrs[i] = h.transformAttr(groups, attrs[i])
 	}
+
 	return attrs
 }
 
 func (h *eHandler) transformAttr(groups []string, attr slog.Attr) slog.Attr {
+	// 先处理LogValuer
 	for attr.Value.Kind() == slog.KindLogValuer {
 		attr.Value = attr.Value.LogValuer().LogValue()
 	}
-
-	for _, _formatter := range h.opts.formatters {
-		if v, ok := _formatter(groups, attr); ok {
+	// 应用所有formatters
+	for _, f := range h.opts.formatters {
+		if v, ok := f(groups, attr); ok {
 			attr.Value = v
 		}
 	}
 
+	// DLP处理
+	if h.opts.dlpEnabled && h.opts.dlpEngine != nil {
+		switch attr.Value.Kind() {
+		case slog.KindString:
+			attr.Value = slog.StringValue(h.opts.dlpEngine.DesensitizeText(attr.Value.String()))
+		case slog.KindGroup:
+			attrs := attr.Value.Group()
+			newAttrs := make([]slog.Attr, len(attrs))
+			for i, a := range attrs {
+				newAttrs[i] = h.transformAttr(append(groups, attr.Key), a)
+			}
+			attr.Value = slog.GroupValue(newAttrs...)
+		}
+	}
+
 	return attr
-}
-
-// defaultPrefixFormatter 通过使用 ":" 连接所有检测到的前缀值来构造前缀字符串。
-func defaultPrefixFormatter(prefixes []slog.Value) string {
-	p := make([]string, 0, len(prefixes))
-	for _, prefix := range prefixes {
-		if prefix.Any() == nil {
-			continue
-		}
-		str := prefix.String()
-		if str == "" {
-			continue
-		}
-		p = append(p, str)
-	}
-	if len(p) == 0 {
-		return ""
-	}
-
-	return "[" + strings.Join(p, ":") + "] "
 }

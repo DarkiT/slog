@@ -1,16 +1,16 @@
 package dlp
 
 import (
+	"fmt"
 	"regexp"
-	"strconv"
+	"sort"
 	"strings"
 	"sync"
-	"time"
-	"unicode/utf8"
 )
 
 const (
 	// 个人身份信息
+
 	ChineseNamePattern    = "[\u4e00-\u9fa5]{2,6}"                                                                // 中文姓名
 	ChineseIDCardPattern  = "[1-9]\\d{5}(?:18|19|20)\\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\\d|3[01])\\d{3}[\\dXx]" // 身份证
 	PassportPattern       = "[a-zA-Z][0-9]{9}"                                                                    // 护照号
@@ -18,82 +18,88 @@ const (
 	DriversLicensePattern = "[1-9]\\d{5}[a-zA-Z]\\d{6}"                                                           // 驾驶证号
 
 	// 联系方式
+
 	MobilePhonePattern = "(?:(?:\\+|00)86)?1(?:(?:3[\\d])|(?:4[5-79])|(?:5[0-35-9])|(?:6[5-7])|(?:7[0-8])|(?:8[\\d])|(?:9[189]))\\d{8}" // 手机号
 	FixedPhonePattern  = "(?:[\\d]{3,4}-)?[\\d]{7,8}(?:-[\\d]{1,4})?"                                                                   // 固定电话
-	EmailPattern       = "[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}"                                                              // 电子邮箱
+	EmailPattern       = `[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}`                                                               // 电子邮箱
 
 	// 地址信息
+
 	AddressPattern    = "[\u4e00-\u9fa5]{2,}(?:省|自治区|市|特别行政区|自治州)?[\u4e00-\u9fa5]{2,}(?:市|区|县|镇|村|街道|路|号楼|栋|单元|室)" // 详细地址
 	PostalCodePattern = `[1-9]\d{5}([^\d]|$)`                                                                      // 邮政编码
 
 	// 金融信息
+
 	BankCardPattern   = `(?:(?:4\d{12}(?:\d{3})?)|(?:5[1-5]\d{14})|(?:6(?:011|5\d{2})\d{12})|(?:3[47]\d{13})|(?:(?:30[0-5]|36\d|38\d)\d{11}))`                                // 银行卡
 	CreditCardPattern = `(?:4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|6(?:011|5[0-9][0-9])[0-9]{12}|3[47][0-9]{13}|3(?:0[0-5]|[68][0-9])[0-9]{11}|(?:2131|1800|35\d{3})\d{11})` // 信用卡
 
 	// 网络标识
-	IPv4Pattern = `(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)` // IPv4
 
+	IPv4Pattern = `(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)` // IPv4
 	IPv6Pattern = "(([0-9a-fA-F]{1,4}:){7,7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)|fe80:(:[0-9a-fA-F]{0,4}){0,4}%[0-9a-zA-Z]{1,}|::(ffff(:0{1,4}){0,1}:){0,1}((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])|([0-9a-fA-F]{1,4}:){1,4}:((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9]))"
-	//IPv6Pattern = `(?:(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}|(?=(?:[0-9A-Fa-f]{0,4}:){0,7}[0-9A-Fa-f]{0,4}$)(([0-9A-Fa-f]{1,4}:){1,7}|:)((:[0-9A-Fa-f]{1,4}){1,7}|:)|(?:[0-9A-Fa-f]{1,4}:){7}:|:(:[0-9A-Fa-f]{1,4}){7})` // IPv6
+	// IPv6Pattern = `(?:(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}|(?=(?:[0-9A-Fa-f]{0,4}:){0,7}[0-9A-Fa-f]{0,4}$)(([0-9A-Fa-f]{1,4}:){1,7}|:)((:[0-9A-Fa-f]{1,4}){1,7}|:)|(?:[0-9A-Fa-f]{1,4}:){7}:|:(:[0-9A-Fa-f]{1,4}){7})` // IPv6
 	MACPattern  = `(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}` // MAC地址
 	IMEIPattern = `\d{15,17}`                               // IMEI号
 
 	// 车辆信息
+
 	CarLicensePattern = `[京津沪渝冀豫云辽黑湘皖鲁新苏浙赣鄂桂甘晋蒙陕吉闽贵粤青藏川宁琼使领][A-Z][A-HJ-NP-Z0-9]{4,5}[A-HJ-NP-Z0-9挂学警港澳]` // 车牌号
 	VINPattern        = `[A-HJ-NPR-Z0-9]{17}`                                                            // 车架号
 
 	// 密钥和令牌
+
 	APIKeyPattern      = `[a-zA-Z0-9]{32,}`                                         // API密钥
 	JWTPattern         = `eyJ[A-Za-z0-9-_=]+\.[A-Za-z0-9-_=]+\.?[A-Za-z0-9-_.+/=]*` // JWT令牌
 	AccessTokenPattern = `[a-zA-Z0-9]{40,}`                                         // 访问令牌
 
 	// 设备标识
+
 	DeviceIDPattern = `[A-F0-9]{8}-[A-F0-9]{4}-[A-F0-9]{4}-[A-F0-9]{4}-[A-F0-9]{12}`                // 设备ID
 	UUIDPattern     = `[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}` // UUID
 
 	// 加密哈希
+
 	MD5Pattern    = `[a-fA-F0-9]{32}` // MD5哈希
 	SHA1Pattern   = `[a-fA-F0-9]{40}` // SHA1哈希
 	SHA256Pattern = `[a-fA-F0-9]{64}` // SHA256哈希
 
 	// 其他标识
-	Base64Pattern = `(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?`                         // Base64编码
+
 	LatLngPattern = `[-+]?([1-8]?\d(\.\d+)?|90(\.0+)?),\s*[-+]?(180(\.0+)?|((1[0-7]\d)|([1-9]?\d))(\.\d+)?)` // 经纬度
 
 	// URL和域名
-	//URLPattern = "https?:\\/\\/(www\\.)?[-a-zA-Z0-9@:%._\\+~#=]{1,256}\\.[a-zA-Z0-9()]{1,6}\\b([-a-zA-Z0-9()@:%_\\+.~#?&//=]*)"
+	// URLPattern = "https?:\\/\\/(www\\.)?[-a-zA-Z0-9@:%._\\+~#=]{1,256}\\.[a-zA-Z0-9()]{1,6}\\b([-a-zA-Z0-9()@:%_\\+.~#?&//=]*)"
+
 	URLPattern    = `(?:(?:https?|ftp)://)?[\w/\-?=%.]+\.[\w/\-&?=%.]+`                          // URL
 	DomainPattern = `(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9][a-z0-9-]{0,61}[a-z0-9]` // 域名
 
 	// 敏感内容
+
 	PasswordPattern = `^[a-zA-Z]\w{5,17}$`  // 密码（以字母开头，长度在6~18之间，只能包含字母、数字和下划线）
 	UsernamePattern = `[a-zA-Z0-9_-]{3,16}` // 用户名
 
 	// 证件号码
+
 	MedicalIDPattern = `[1-9]\d{7}`  // 医保卡号
 	CompanyIDPattern = `[1-9]\d{14}` // 统一社会信用代码
 
 	// 金融相关
+
 	IBANPattern  = `[A-Z]{2}\d{2}[A-Z0-9]{4}\d{7}([A-Z\d]?){0,16}` // IBAN号码
 	SwiftPattern = `[A-Z]{6}[A-Z0-9]{2}([A-Z0-9]{3})?`             // SWIFT代码
 
 	// 代码相关
-	GitRepoPattern    = `(?:git|ssh|https?|git@[\w\.]+)(?::(\/\/)?)([\w\.@\:/\-~]+)(\.git)(\/)?` // Git仓库
-	CommitHashPattern = `[0-9a-f]{7,40}`                                                         // Git提交哈希
 
-	// 特殊格式
-	DatePattern   = `\d{4}[-/](0?[1-9]|1[012])[-/](0?[1-9]|[12][0-9]|3[01])`                    // 日期
-	TimePattern   = `(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d`                                         // 时间
-	IPPortPattern = `(?:6553[0-5]|655[0-2]\d|65[0-4]\d{2}|6[0-4]\d{3}|[1-5]\d{4}|[1-9]\d{0,3})` // 端口号
+	GitRepoPattern = `(?:git|ssh|git@[\w\.]+)(?::(\/\/)?)([\w\.@\:/\-~]+)(\.git)(\/)?` // Git仓库
 
 	// 修复 IPv6Pattern，使其更加准确
-	//IPv6Pattern = `(([0-9a-fA-F]{1,4}:){7,7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)|fe80:(:[0-9a-fA-F]{0,4}){0,4}%[0-9a-zA-Z]{1,}|::(ffff(:0{1,4}){0,1}:){0,1}((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])|([0-9a-fA-F]{1,4}:){1,4}:((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9]))`
+	// IPv6Pattern = `(([0-9a-fA-F]{1,4}:){7,7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)|fe80:(:[0-9a-fA-F]{0,4}){0,4}%[0-9a-zA-Z]{1,}|::(ffff(:0{1,4}){0,1}:){0,1}((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])|([0-9a-fA-F]{1,4}:){1,4}:((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9]))`
 
 	// 修复 URLPattern，使其更加准确
-	//URLPattern = `https?:\/\/(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_\+.~#?&//=]*)`
+	// URLPattern = `https?:\/\/(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_\+.~#?&//=]*)`
 
 	// 修复 PasswordPattern，增加特殊字符要求
-	//PasswordPattern = `^(?=.*[A-Za-z])(?=.*\d)(?=.*[@$!%*#?&])[A-Za-z\d@$!%*#?&]{8,}$`
+	// PasswordPattern = `^(?=.*[A-Za-z])(?=.*\d)(?=.*[@$!%*#?&])[A-Za-z\d@$!%*#?&]{8,}$`
 
 )
 
@@ -124,7 +130,6 @@ var (
 	MD5Regex            *regexp.Regexp
 	SHA1Regex           *regexp.Regexp
 	SHA256Regex         *regexp.Regexp
-	Base64Regex         *regexp.Regexp
 	LatLngRegex         *regexp.Regexp
 	URLRegex            *regexp.Regexp
 	DomainRegex         *regexp.Regexp
@@ -135,11 +140,33 @@ var (
 	IBANRegex           *regexp.Regexp
 	SwiftRegex          *regexp.Regexp
 	GitRepoRegex        *regexp.Regexp
-	CommitHashRegex     *regexp.Regexp
-	DateRegex           *regexp.Regexp
-	TimeRegex           *regexp.Regexp
-	IPPortRegex         *regexp.Regexp
 )
+
+// Matcher 定义匹配器结构体
+type Matcher struct {
+	Name        string              // 匹配器名称
+	Pattern     string              // 正则表达式模式
+	Regex       *regexp.Regexp      // 编译后的正则表达式
+	Validator   func(string) bool   // 验证函数
+	Transformer func(string) string // 转换函数
+	Priority    int                 // 优先级，数字越大优先级越高
+	Complexity  int                 // 正则表达式复杂度评分
+}
+
+// MatchResult 定义匹配结果结构体
+type MatchResult struct {
+	Type     string // 匹配类型
+	Content  string // 匹配内容
+	Position [2]int // 匹配位置 [start, end]
+}
+
+// RegexSearcher 定义正则搜索器
+type RegexSearcher struct {
+	matchers []*Matcher                // 按优先级排序的匹配器列表
+	pool     sync.Pool                 // 字符串构建器池
+	mu       sync.RWMutex              // 读写锁
+	cache    map[string]*regexp.Regexp // 正则表达式缓存
+}
 
 func init() {
 	// 初始化所有正则表达式
@@ -169,7 +196,6 @@ func init() {
 	MD5Regex = regexp.MustCompile(MD5Pattern)
 	SHA1Regex = regexp.MustCompile(SHA1Pattern)
 	SHA256Regex = regexp.MustCompile(SHA256Pattern)
-	Base64Regex = regexp.MustCompile(Base64Pattern)
 	LatLngRegex = regexp.MustCompile(LatLngPattern)
 	URLRegex = regexp.MustCompile(URLPattern)
 	DomainRegex = regexp.MustCompile(DomainPattern)
@@ -180,196 +206,13 @@ func init() {
 	IBANRegex = regexp.MustCompile(IBANPattern)
 	SwiftRegex = regexp.MustCompile(SwiftPattern)
 	GitRepoRegex = regexp.MustCompile(GitRepoPattern)
-	CommitHashRegex = regexp.MustCompile(CommitHashPattern)
-	DateRegex = regexp.MustCompile(DatePattern)
-	TimeRegex = regexp.MustCompile(TimePattern)
-	IPPortRegex = regexp.MustCompile(IPPortPattern)
-}
-
-// Match 正则匹配函数
-func Match(text string, regex *regexp.Regexp) bool {
-	return regex.MatchString(text)
-}
-
-// FindAll 查找所有匹配项
-func FindAll(text string, regex *regexp.Regexp) []string {
-	return regex.FindAllString(text, -1)
-}
-
-// ReplaceAll 替换所有匹配项
-func ReplaceAll(text string, regex *regexp.Regexp, replacement string) string {
-	return regex.ReplaceAllString(text, replacement)
-}
-
-// Matcher 匹配器定义，用于定义特定类型的匹配规则
-type Matcher struct {
-	Name        string              // 匹配器名称
-	Pattern     string              // 正则表达式模式
-	Regex       *regexp.Regexp      // 编译后的正则表达式
-	Validator   func(string) bool   // 额外的验证函数
-	Transformer func(string) string // 转换函数
-}
-
-// 全局匹配器注册表
-var (
-	matcherRegistry = make(map[string]*Matcher)
-	registryMutex   sync.RWMutex
-)
-
-// 注册所有内置匹配器
-func init() {
-	registerDefaultMatchers()
-}
-
-// 注册默认的匹配器
-func registerDefaultMatchers() {
-	matchers := []*Matcher{
-		{
-			Name:    "ChineseName",
-			Pattern: ChineseNamePattern,
-			Validator: func(s string) bool {
-				return len([]rune(s)) >= 2 && len([]rune(s)) <= 6
-			},
-			Transformer: func(s string) string {
-				return ChineseNameDesensitize(s)
-			},
-		},
-		{
-			Name:    "ChineseIDCard",
-			Pattern: ChineseIDCardPattern,
-			Validator: func(s string) bool {
-				return validateChineseIDCard(s)
-			},
-			Transformer: func(s string) string {
-				return IdCardDesensitize(s)
-			},
-		},
-		{
-			Name:    "MobilePhone",
-			Pattern: MobilePhonePattern,
-			Validator: func(s string) bool {
-				return len(s) == 11
-			},
-			Transformer: func(s string) string {
-				return MobilePhoneDesensitize(s)
-			},
-		},
-		// ... 其他匹配器注册
-	}
-
-	for _, m := range matchers {
-		if regex, err := regexp.Compile(m.Pattern); err == nil {
-			m.Regex = regex
-			registerMatcher(m)
-		}
-	}
-}
-
-// 注册新的匹配器
-func registerMatcher(matcher *Matcher) {
-	registryMutex.Lock()
-	defer registryMutex.Unlock()
-	matcherRegistry[matcher.Name] = matcher
-}
-
-// 获取匹配器
-func getMatcher(name string) (*Matcher, bool) {
-	registryMutex.RLock()
-	defer registryMutex.RUnlock()
-	matcher, ok := matcherRegistry[name]
-	return matcher, ok
-}
-
-// 正则匹配相关的实用函数
-
-// DetectSensitiveInfo 检测文本中的所有敏感信息
-func DetectSensitiveInfo(text string) map[string][]string {
-	result := make(map[string][]string)
-
-	registryMutex.RLock()
-	defer registryMutex.RUnlock()
-
-	for name, matcher := range matcherRegistry {
-		if matches := matcher.Regex.FindAllString(text, -1); len(matches) > 0 {
-			var validMatches []string
-			for _, match := range matches {
-				if matcher.Validator == nil || matcher.Validator(match) {
-					validMatches = append(validMatches, match)
-				}
-			}
-			if len(validMatches) > 0 {
-				result[name] = validMatches
-			}
-		}
-	}
-
-	return result
-}
-
-// DesensitizeText 脱敏文本中的所有敏感信息
-func DesensitizeText(text string) string {
-	registryMutex.RLock()
-	defer registryMutex.RUnlock()
-
-	for _, matcher := range matcherRegistry {
-		text = matcher.Regex.ReplaceAllStringFunc(text, func(match string) string {
-			if matcher.Validator == nil || matcher.Validator(match) {
-				if matcher.Transformer != nil {
-					return matcher.Transformer(match)
-				}
-				return strings.Repeat("*", utf8.RuneCountInString(match))
-			}
-			return match
-		})
-	}
-
-	return text
-}
-
-// 验证中国身份证号的辅助函数
-func validateChineseIDCard(id string) bool {
-	if len(id) != 18 {
-		return false
-	}
-
-	// 验证生日
-	year, _ := strconv.Atoi(id[6:10])
-	month, _ := strconv.Atoi(id[10:12])
-	day, _ := strconv.Atoi(id[12:14])
-
-	if year < 1900 || year > time.Now().Year() || month < 1 || month > 12 || day < 1 || day > 31 {
-		return false
-	}
-
-	// 检查日期是否有效
-	_, err := time.Parse("20060102", id[6:14])
-	if err != nil {
-		return false
-	}
-
-	// 验证校验码
-	weights := []int{7, 9, 10, 5, 8, 4, 2, 1, 6, 3, 7, 9, 10, 5, 8, 4, 2}
-	validChecksum := "10X98765432"
-	sum := 0
-
-	for i := 0; i < 17; i++ {
-		n, _ := strconv.Atoi(string(id[i]))
-		sum += n * weights[i]
-	}
-
-	checksum := validChecksum[sum%11]
-	return string(id[17]) == string(checksum)
-}
-
-// RegexSearcher 正则搜索器，用于优化大文本的搜索性能
-type RegexSearcher struct {
-	matchers []*Matcher
-	pool     sync.Pool
 }
 
 // NewRegexSearcher 创建新的正则搜索器
 func NewRegexSearcher() *RegexSearcher {
 	searcher := &RegexSearcher{
+		matchers: make([]*Matcher, 0, 50), // 预分配合适的容量
+		cache:    make(map[string]*regexp.Regexp),
 		pool: sync.Pool{
 			New: func() interface{} {
 				return new(strings.Builder)
@@ -377,104 +220,674 @@ func NewRegexSearcher() *RegexSearcher {
 		},
 	}
 
-	registryMutex.RLock()
-	defer registryMutex.RUnlock()
-
-	for _, matcher := range matcherRegistry {
-		searcher.matchers = append(searcher.matchers, matcher)
+	if err := searcher.registerDefaultMatchers(); err != nil {
+		panic(fmt.Sprintf("Failed to initialize RegexSearcher: %v", err))
 	}
 
+	// 根据复杂度和优先级排序匹配器
+	searcher.sortMatchers()
 	return searcher
 }
 
-// SearchParallel 并行搜索大文本中的敏感信息
-func (s *RegexSearcher) SearchParallel(text string) map[string][]string {
-	result := make(map[string][]string)
-	resultMutex := sync.Mutex{}
-
-	const chunkSize = 10000 // 每个协程处理的文本大小
-	textLen := len(text)
-	numGoroutines := (textLen + chunkSize - 1) / chunkSize
-
-	var wg sync.WaitGroup
-	wg.Add(numGoroutines)
-
-	for i := 0; i < numGoroutines; i++ {
-		start := i * chunkSize
-		end := start + chunkSize
-		if end > textLen {
-			end = textLen
+// sortMatchers 根据复杂度和优先级排序匹配器
+func (s *RegexSearcher) sortMatchers() {
+	sort.Slice(s.matchers, func(i, j int) bool {
+		// 首先比较复杂度
+		if s.matchers[i].Complexity != s.matchers[j].Complexity {
+			return s.matchers[i].Complexity > s.matchers[j].Complexity
 		}
-
-		go func(chunk string) {
-			defer wg.Done()
-
-			matches := make(map[string][]string)
-			for _, matcher := range s.matchers {
-				if found := matcher.Regex.FindAllString(chunk, -1); len(found) > 0 {
-					matches[matcher.Name] = append(matches[matcher.Name], found...)
-				}
-			}
-
-			if len(matches) > 0 {
-				resultMutex.Lock()
-				for k, v := range matches {
-					result[k] = append(result[k], v...)
-				}
-				resultMutex.Unlock()
-			}
-		}(text[start:end])
-	}
-
-	wg.Wait()
-	return result
+		// 复杂度相同时比较优先级
+		return s.matchers[i].Priority > s.matchers[j].Priority
+	})
 }
 
-// ReplaceParallel 批量替换文本中的敏感信息
-func (s *RegexSearcher) ReplaceParallel(text string) string {
-	builder := s.pool.Get().(*strings.Builder)
+// calculateComplexity 计算正则表达式的复杂度
+func calculateComplexity(pattern string) int {
+	score := 0
+
+	// 特殊字符评分
+	specialChars := []string{"\\", "^", "$", "*", "+", "?", "{", "}", "[", "]", "(", ")", "|", "."}
+	for _, char := range specialChars {
+		score += strings.Count(pattern, char) * 2
+	}
+
+	// 字符类评分
+	charClasses := []string{"\\d", "\\w", "\\s", "\\b", "\\D", "\\W", "\\S", "\\B"}
+	for _, class := range charClasses {
+		score += strings.Count(pattern, class) * 3
+	}
+
+	// 量词评分
+	quantifiers := []string{"{", "+", "*", "?"}
+	for _, q := range quantifiers {
+		score += strings.Count(pattern, q) * 4
+	}
+
+	// 捕获组评分
+	score += strings.Count(pattern, "(") * 5
+
+	// 否定和前瞻后顾评分
+	if strings.Contains(pattern, "(?!") || strings.Contains(pattern, "(?=") {
+		score += 10
+	}
+
+	return score
+}
+
+// Match 执行匹配操作
+func (s *RegexSearcher) Match(text string) []MatchResult {
+	if text == "" {
+		return nil
+	}
+
+	var results []MatchResult
+	positions := make(map[[2]int]bool) // 用于跟踪已匹配的位置
+
+	// 按优先级顺序遍历匹配器
+	for _, matcher := range s.matchers {
+		// 尝试匹配
+		matches := matcher.Regex.FindAllStringSubmatchIndex(text, -1)
+		if matches == nil {
+			continue
+		}
+
+		for _, match := range matches {
+			pos := [2]int{match[0], match[1]}
+
+			// 检查位置是否已被更高优先级的模式匹配
+			if positions[pos] {
+				continue
+			}
+
+			content := text[match[0]:match[1]]
+
+			// 如果有验证器，验证匹配内容
+			if matcher.Validator != nil && !matcher.Validator(content) {
+				continue
+			}
+
+			// 标记该位置已被匹配
+			positions[pos] = true
+
+			results = append(results, MatchResult{
+				Type:     matcher.Name,
+				Content:  content,
+				Position: pos,
+			})
+		}
+	}
+
+	// 按位置排序结果
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].Position[0] < results[j].Position[0]
+	})
+
+	return results
+}
+
+// AddMatcher 添加新的匹配器
+func (s *RegexSearcher) AddMatcher(matcher *Matcher) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// 编译正则表达式
+	regex, err := regexp.Compile(matcher.Pattern)
+	if err != nil {
+		return fmt.Errorf("failed to compile regex pattern for %s: %v", matcher.Name, err)
+	}
+
+	// 计算复杂度
+	matcher.Complexity = calculateComplexity(matcher.Pattern)
+	matcher.Regex = regex
+
+	// 添加到匹配器列表
+	s.matchers = append(s.matchers, matcher)
+
+	// 重新排序
+	s.sortMatchers()
+	return nil
+}
+
+// RemoveMatcher 移除匹配器
+func (s *RegexSearcher) RemoveMatcher(name string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for i, m := range s.matchers {
+		if m.Name == name {
+			s.matchers = append(s.matchers[:i], s.matchers[i+1:]...)
+			break
+		}
+	}
+}
+
+// GetMatcher 获取指定名称的匹配器
+func (s *RegexSearcher) GetMatcher(name string) *Matcher {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	for _, m := range s.matchers {
+		if m.Name == name {
+			return m
+		}
+	}
+	return nil
+}
+
+// UpdateMatcher 更新匹配器
+func (s *RegexSearcher) UpdateMatcher(name string, pattern string, validator func(string) bool, transformer func(string) string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for _, m := range s.matchers {
+		if m.Name == name {
+			// 编译新的正则表达式
+			regex, err := regexp.Compile(pattern)
+			if err != nil {
+				return fmt.Errorf("failed to compile regex pattern: %v", err)
+			}
+
+			// 更新匹配器
+			m.Pattern = pattern
+			m.Regex = regex
+			m.Validator = validator
+			m.Transformer = transformer
+			m.Complexity = calculateComplexity(pattern)
+
+			// 重新排序
+			s.sortMatchers()
+			return nil
+		}
+	}
+	return fmt.Errorf("matcher %s not found", name)
+}
+
+// GetAllSupportedTypes 获取所有支持的敏感信息类型
+func (s *RegexSearcher) GetAllSupportedTypes() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	types := make([]string, len(s.matchers))
+	for i, matcher := range s.matchers {
+		types[i] = matcher.Name
+	}
+	return types
+}
+
+// SearchSensitiveByType 按类型搜索敏感信息
+func (s *RegexSearcher) SearchSensitiveByType(text string, typeName string) []MatchResult {
+	if text == "" {
+		return nil
+	}
+
+	s.mu.RLock()
+	matcher := s.GetMatcher(typeName)
+	s.mu.RUnlock()
+
+	if matcher == nil {
+		return nil
+	}
+
+	var results []MatchResult
+	matches := matcher.Regex.FindAllStringSubmatchIndex(text, -1)
+	if matches == nil {
+		return nil
+	}
+
+	for _, match := range matches {
+		content := text[match[0]:match[1]]
+
+		// 如果有验证器，验证匹配内容
+		if matcher.Validator != nil && !matcher.Validator(content) {
+			continue
+		}
+
+		results = append(results, MatchResult{
+			Type:     matcher.Name,
+			Content:  content,
+			Position: [2]int{match[0], match[1]},
+		})
+	}
+
+	return results
+}
+
+// ReplaceParallel 并行处理敏感信息替换
+func (s *RegexSearcher) ReplaceParallel(text string, matchType string) string {
+	if text == "" {
+		return text
+	}
+
+	// 跳过规则名称
+	if isRuleName(text) {
+		return text
+	}
+
+	// 跳过已脱敏的内容
+	if strings.Contains(text, "****") {
+		return text
+	}
+
+	builder := textBuilderPool.Get().(*strings.Builder)
 	defer func() {
 		builder.Reset()
-		s.pool.Put(builder)
+		textBuilderPool.Put(builder)
 	}()
 
-	const chunkSize = 10000
-	textLen := len(text)
-	results := make(chan string, (textLen+chunkSize-1)/chunkSize)
+	lastIndex := 0
+	for _, matcher := range s.matchers {
+		if matcher.Name != matchType {
+			continue
+		}
 
-	var wg sync.WaitGroup
+		matches := matcher.Regex.FindAllStringSubmatchIndex(text, -1)
+		for _, match := range matches {
+			builder.WriteString(text[lastIndex:match[0]])
+			content := text[match[0]:match[1]]
 
-	for start := 0; start < textLen; start += chunkSize {
-		wg.Add(1)
-		go func(begin int) {
-			defer wg.Done()
-			end := begin + chunkSize
-			if end > textLen {
-				end = textLen
+			if matcher.Validator != nil && !matcher.Validator(content) {
+				builder.WriteString(content)
+			} else {
+				builder.WriteString(matcher.Transformer(content))
 			}
-
-			chunk := text[begin:end]
-			for _, matcher := range s.matchers {
-				chunk = matcher.Regex.ReplaceAllStringFunc(chunk, func(match string) string {
-					if matcher.Transformer != nil {
-						return matcher.Transformer(match)
-					}
-					return strings.Repeat("*", utf8.RuneCountInString(match))
-				})
-			}
-
-			results <- chunk
-		}(start)
+			lastIndex = match[1]
+		}
 	}
 
-	go func() {
-		wg.Wait()
-		close(results)
-	}()
-
-	for chunk := range results {
-		builder.WriteString(chunk)
-	}
-
+	builder.WriteString(text[lastIndex:])
 	return builder.String()
+}
+
+// registerDefaultMatchers 注册默认的匹配器
+func (s *RegexSearcher) registerDefaultMatchers() error {
+	matchers := []*Matcher{
+		{
+			Name:     ChineseName,
+			Pattern:  ChineseNamePattern,
+			Regex:    ChineseNameRegex,
+			Priority: 1000,
+			Transformer: func(s string) string {
+				return ChineseNameDesensitize(s)
+			},
+		},
+		{
+			Name:     IDCard,
+			Pattern:  ChineseIDCardPattern,
+			Regex:    ChineseIDCardRegex,
+			Priority: 990,
+			Validator: func(s string) bool {
+				return ChineseIDCardDesensitize(s)
+			},
+			Transformer: func(s string) string {
+				return IdCardDesensitize(s)
+			},
+		},
+		{
+			Name:     Passport,
+			Pattern:  PassportPattern,
+			Regex:    PassportRegex,
+			Priority: 980,
+			Transformer: func(s string) string {
+				return PassportDesensitize(s)
+			},
+		},
+		{
+			Name:     SocialSecurity,
+			Pattern:  SocialSecurityPattern,
+			Regex:    SocialSecurityRegex,
+			Priority: 970,
+			Transformer: func(s string) string {
+				return SocialSecurityDesensitize(s)
+			},
+		},
+		{
+			Name:     DriversLicense,
+			Pattern:  DriversLicensePattern,
+			Regex:    DriversLicenseRegex,
+			Priority: 960,
+			Transformer: func(s string) string {
+				return DriversLicenseDesensitize(s)
+			},
+		},
+		{
+			Name:     MobilePhone,
+			Pattern:  MobilePhonePattern,
+			Regex:    MobilePhoneRegex,
+			Priority: 950,
+			Transformer: func(s string) string {
+				return MobilePhoneDesensitize(s)
+			},
+		},
+		{
+			Name:     FixedPhone,
+			Pattern:  FixedPhonePattern,
+			Regex:    FixedPhoneRegex,
+			Priority: 940,
+			Transformer: func(s string) string {
+				return FixedPhoneDesensitize(s)
+			},
+		},
+		{
+			Name:     Email,
+			Pattern:  EmailPattern,
+			Regex:    EmailRegex,
+			Priority: 930,
+			Transformer: func(s string) string {
+				return EmailDesensitize(s)
+			},
+		},
+		{
+			Name:     Address,
+			Pattern:  AddressPattern,
+			Regex:    AddressRegex,
+			Priority: 920,
+			Transformer: func(s string) string {
+				return AddressDesensitize(s)
+			},
+		},
+		{
+			Name:     PostalCode,
+			Pattern:  PostalCodePattern,
+			Regex:    PostalCodeRegex,
+			Priority: 910,
+			Transformer: func(s string) string {
+				return PostalCodeDesensitize(s)
+			},
+		},
+		{
+			Name:     BankCard,
+			Pattern:  BankCardPattern,
+			Regex:    BankCardRegex,
+			Priority: 900,
+			Transformer: func(s string) string {
+				return BankCardDesensitize(s)
+			},
+		},
+		{
+			Name:     CreditCard,
+			Pattern:  CreditCardPattern,
+			Regex:    CreditCardRegex,
+			Priority: 890,
+			Validator: func(s string) bool {
+				return validateCreditCard(s)
+			},
+			Transformer: func(s string) string {
+				return CreditCardDesensitize(s)
+			},
+		},
+		{
+			Name:     IPv4,
+			Pattern:  IPv4Pattern,
+			Regex:    IPv4Regex,
+			Priority: 880,
+			Transformer: func(s string) string {
+				return IPv4Desensitize(s)
+			},
+		},
+		{
+			Name:     IPv6,
+			Pattern:  IPv6Pattern,
+			Regex:    IPv6Regex,
+			Priority: 870,
+			Transformer: func(s string) string {
+				return IPv6Desensitize(s)
+			},
+		},
+		{
+			Name:     MAC,
+			Pattern:  MACPattern,
+			Regex:    MACRegex,
+			Priority: 860,
+			Transformer: func(s string) string {
+				return MACDesensitize(s)
+			},
+		},
+		{
+			Name:     IMEI,
+			Pattern:  IMEIPattern,
+			Regex:    IMEIRegex,
+			Priority: 850,
+			Transformer: func(s string) string {
+				return IMEIDesensitize(s)
+			},
+		},
+		{
+			Name:     CarLicense,
+			Pattern:  CarLicensePattern,
+			Regex:    CarLicenseRegex,
+			Priority: 840,
+			Transformer: func(s string) string {
+				return CarLicenseDesensitize(s)
+			},
+		},
+		{
+			Name:     VIN,
+			Pattern:  VINPattern,
+			Regex:    VINRegex,
+			Priority: 830,
+			Transformer: func(s string) string {
+				return VINDesensitize(s)
+			},
+		},
+		{
+			Name:     APIKey,
+			Pattern:  APIKeyPattern,
+			Regex:    APIKeyRegex,
+			Priority: 820,
+			Transformer: func(s string) string {
+				return APIKeyDesensitize(s)
+			},
+		},
+		{
+			Name:     JWT,
+			Pattern:  JWTPattern,
+			Regex:    JWTRegex,
+			Priority: 810,
+			Transformer: func(s string) string {
+				return JWTDesensitize(s)
+			},
+		},
+		{
+			Name:     AccessToken,
+			Pattern:  AccessTokenPattern,
+			Regex:    AccessTokenRegex,
+			Priority: 800,
+			Transformer: func(s string) string {
+				return AccessTokenDesensitize(s)
+			},
+		},
+		{
+			Name:     DeviceID,
+			Pattern:  DeviceIDPattern,
+			Regex:    DeviceIDRegex,
+			Priority: 790,
+			Transformer: func(s string) string {
+				return DeviceIDDesensitize(s)
+			},
+		},
+		{
+			Name:     UUID,
+			Pattern:  UUIDPattern,
+			Regex:    UUIDRegex,
+			Priority: 780,
+			Transformer: func(s string) string {
+				return UUIDDesensitize(s)
+			},
+		},
+		{
+			Name:     MD5,
+			Pattern:  MD5Pattern,
+			Regex:    MD5Regex,
+			Priority: 770,
+			Transformer: func(s string) string {
+				return MD5Desensitize(s)
+			},
+		},
+		{
+			Name:     SHA1,
+			Pattern:  SHA1Pattern,
+			Regex:    SHA1Regex,
+			Priority: 760,
+			Transformer: func(s string) string {
+				return SHA1Desensitize(s)
+			},
+		},
+		{
+			Name:     SHA256,
+			Pattern:  SHA256Pattern,
+			Regex:    SHA256Regex,
+			Priority: 750,
+			Transformer: func(s string) string {
+				return SHA256Desensitize(s)
+			},
+		},
+		{
+			Name:     LatLng,
+			Pattern:  LatLngPattern,
+			Regex:    LatLngRegex,
+			Priority: 740,
+			Transformer: func(s string) string {
+				return LatLngDesensitize(s)
+			},
+		},
+		{
+			Name:     URL,
+			Pattern:  URLPattern,
+			Regex:    URLRegex,
+			Priority: 730,
+			Transformer: func(s string) string {
+				return URLDesensitize(s)
+			},
+		},
+		{
+			Name:     Domain,
+			Pattern:  DomainPattern,
+			Regex:    DomainRegex,
+			Priority: 720,
+			Transformer: func(s string) string {
+				return DomainDesensitize(s)
+			},
+		},
+		{
+			Name:     Password,
+			Pattern:  PasswordPattern,
+			Regex:    PasswordRegex,
+			Priority: 710,
+			Transformer: func(s string) string {
+				return strings.Repeat("*", len(s))
+			},
+		},
+		{
+			Name:     Username,
+			Pattern:  UsernamePattern,
+			Regex:    UsernameRegex,
+			Priority: 700,
+			Transformer: func(s string) string {
+				return UsernameDesensitize(s)
+			},
+		},
+		{
+			Name:     MedicalID,
+			Pattern:  MedicalIDPattern,
+			Regex:    MedicalIDRegex,
+			Priority: 690,
+			Transformer: func(s string) string {
+				return MedicalIDDesensitize(s)
+			},
+		},
+		{
+			Name:     CompanyID,
+			Pattern:  CompanyIDPattern,
+			Regex:    CompanyIDRegex,
+			Priority: 680,
+			Transformer: func(s string) string {
+				if len(s) > 2 {
+					return strings.Repeat("*", len(s)-1) + s[len(s)-1:]
+				}
+				return strings.Repeat("*", len(s))
+			},
+		},
+		{
+			Name:     IBAN,
+			Pattern:  IBANPattern,
+			Regex:    IBANRegex,
+			Priority: 670,
+			Transformer: func(s string) string {
+				if len(s) > 8 {
+					return s[:4] + strings.Repeat("*", len(s)-8) + s[len(s)-4:]
+				}
+				return strings.Repeat("*", len(s))
+			},
+		},
+		{
+			Name:     Swift,
+			Pattern:  SwiftPattern,
+			Regex:    SwiftRegex,
+			Priority: 660,
+			Transformer: func(s string) string {
+				if len(s) > 4 {
+					return s[:4] + strings.Repeat("*", len(s)-4)
+				}
+				return strings.Repeat("*", len(s))
+			},
+		},
+		{
+			Name:     GitRepo,
+			Pattern:  GitRepoPattern,
+			Regex:    GitRepoRegex,
+			Priority: 650,
+			Transformer: func(s string) string {
+				// 保留协议和域名部分，隐藏仓库具体路径
+				if idx := strings.Index(s, "://"); idx != -1 {
+					protocol := s[:idx+3]
+					rest := s[idx+3:]
+					if domainEnd := strings.Index(rest, "/"); domainEnd != -1 {
+						domain := rest[:domainEnd]
+						return protocol + domain + "/****"
+					}
+				}
+				return s
+			},
+		},
+	}
+	// 计算复杂度
+	for _, m := range matchers {
+		m.Complexity = calculateComplexity(m.Pattern)
+	}
+
+	// 根据复杂度和优先级排序
+	sort.Slice(matchers, func(i, j int) bool {
+		if matchers[i].Complexity == matchers[j].Complexity {
+			return matchers[i].Priority > matchers[j].Priority
+		}
+		return matchers[i].Complexity > matchers[j].Complexity
+	})
+
+	// 添加到匹配器列表
+	for _, m := range matchers {
+		if err := s.AddMatcher(m); err != nil {
+			return fmt.Errorf("failed to add matcher %s: %v", m.Name, err)
+		}
+	}
+
+	return nil
+}
+
+// isRuleName 检查是否为规则名称
+func isRuleName(text string) bool {
+	ruleNames := []string{
+		"mobile_phone", "id_card", "bank_card",
+		"email", "chinese_name", "fixed_phone",
+		"postal_code", "passport", "drivers_license",
+		"ipv4", "mac", "car_license",
+		"credit_card", "company_id", "address",
+		"password", "jwt", "private_key",
+		"username", "device_id",
+	}
+	for _, name := range ruleNames {
+		if text == name {
+			return true
+		}
+	}
+	return false
 }

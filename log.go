@@ -7,18 +7,21 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/darkit/slog/formatter"
 )
 
 var (
+	// 创建扩展配置
+	ext = &extends{
+		PrefixKeys: []string{"module"},
+	}
 	levelVar                 slog.LevelVar
 	recordChan               chan slog.Record
 	textEnabled, jsonEnabled = true, false
-	slogPfx                  = &extends{
-		PrefixKeys: []string{"module"},
-	}
+	dlpEnabled               atomic.Bool
 )
 
 func init() {
@@ -33,12 +36,18 @@ func New(handler Handler) *slog.Logger {
 func NewLogger(writer io.Writer, noColor, addSource bool) *Logger {
 	options := NewOptions(nil)
 	options.AddSource = addSource || levelVar.Level() < LevelDebug
+
+	// 如果需要DLP,则初始化
+	if dlpEnabled.Load() {
+		ext.EnableDLP()
+	}
+
 	logger = Logger{
 		noColor: noColor,
 		level:   levelVar.Level(),
 		ctx:     context.Background(),
-		text:    slog.New(newAddonsHandler(NewConsoleHandler(writer, noColor, options), slogPfx)),
-		json:    slog.New(newAddonsHandler(NewJSONHandler(writer, options), slogPfx)),
+		text:    slog.New(newAddonsHandler(NewConsoleHandler(writer, noColor, options), ext)),
+		json:    slog.New(newAddonsHandler(NewJSONHandler(writer, options), ext)),
 	}
 
 	return &logger
@@ -115,12 +124,12 @@ func Default(modules ...string) *Logger {
 	newLogger := logger.clone()
 
 	// 设置模块前缀
-	newHandler := newAddonsHandler(newLogger.text.Handler(), slogPfx)
+	newHandler := newAddonsHandler(newLogger.text.Handler(), ext)
 	newHandler.prefixes[0] = slog.StringValue(module)
 
 	newLogger.text = slog.New(newHandler)
 	if newLogger.json != nil {
-		jsonHandler := newAddonsHandler(newLogger.json.Handler(), slogPfx)
+		jsonHandler := newAddonsHandler(newLogger.json.Handler(), ext)
 		jsonHandler.prefixes[0] = slog.StringValue(module)
 		newLogger.json = slog.New(jsonHandler)
 	}
@@ -231,9 +240,9 @@ func GetChanRecord(num ...uint16) chan slog.Record {
 	return recordChan
 }
 
-// EnableFormatters 启用日志脱敏处理器。
+// EnableFormatters 启用日志格式化器。
 func EnableFormatters(formatters ...formatter.Formatter) {
-	slogPfx.formatters = formatters
+	ext.formatters = formatters
 }
 
 // EnableTextLogger 启用文本日志记录器。
@@ -258,10 +267,21 @@ func DisableJsonLogger() {
 
 // EnableDLPLogger 启用日志脱敏功能
 func EnableDLPLogger() {
-	EnableDLP()
+	dlpEnabled.Store(true)
+	if ext != nil {
+		ext.EnableDLP()
+	}
 }
 
 // DisableDLPLogger 禁用日志脱敏功能
 func DisableDLPLogger() {
-	DisableDLP()
+	dlpEnabled.Store(false)
+	if ext != nil {
+		ext.DisableDLP()
+	}
+}
+
+// IsDLPEnabled 检查DLP是否启用
+func IsDLPEnabled() bool {
+	return dlpEnabled.Load()
 }

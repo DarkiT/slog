@@ -5,21 +5,26 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/des"
+	"crypto/md5"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha1"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
-	"errors"
+	"fmt"
 	"net"
 	"net/url"
 	"reflect"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf8"
 )
 
+// Sensitive 定义敏感信息结构体
 type Sensitive struct {
 	Name           string `dlp:"chinese_name" json:"name,omitempty"`               // 姓名
 	IdCard         string `dlp:"id_card" json:"id_card,omitempty"`                 // 身份证
@@ -60,14 +65,7 @@ type Sensitive struct {
 	Comment        string `dlp:"comment" json:"comment,omitempty"`                 // 评论内容
 }
 
-// 错误定义
 var (
-	ErrNotStruct   = errors.New("input must be a struct")
-	ErrInvalidKey  = errors.New("invalid key size")
-	ErrInvalidData = errors.New("invalid data")
-
-	// 正则表达式缓存
-	regexpCache sync.Map
 	// 脱敏处理缓存池
 	maskPool = sync.Pool{
 		New: func() interface{} {
@@ -123,7 +121,7 @@ func ProcessSensitiveData(v interface{}) error {
 	return nil
 }
 
-// 获取脱敏策略函数
+// getDesensitizeFunc 获取脱敏策略函数
 func getDesensitizeFunc(tag string) DesensitizeFunc {
 	switch tag {
 	case "chinese_name":
@@ -145,11 +143,11 @@ func getDesensitizeFunc(tag string) DesensitizeFunc {
 	case "bank_card":
 		return BankCardDesensitize
 	case "ipv4":
-		return Ipv4Desensitize
+		return IPv4Desensitize
 	case "ipv6":
-		return Ipv6Desensitize
+		return IPv6Desensitize
 	case "url":
-		return urlDesensitize
+		return URLDesensitize
 	case "first_mask":
 		return FirstMaskDesensitize
 	case "null":
@@ -203,10 +201,8 @@ func getDesensitizeFunc(tag string) DesensitizeFunc {
 	}
 }
 
-// 以下是所有脱敏策略的具体实现
-
-// urlDesensitize URL脱敏实现
-func urlDesensitize(rawURL string) string {
+// URLDesensitize URL脱敏实现
+func URLDesensitize(rawURL string) string {
 	parsedURL, err := url.Parse(rawURL)
 	if err != nil {
 		return rawURL
@@ -223,9 +219,9 @@ func urlDesensitize(rawURL string) string {
 
 	if ip := net.ParseIP(host); ip != nil {
 		if ip4 := ip.To4(); ip4 != nil {
-			host = Ipv4Desensitize(host)
+			host = IPv4Desensitize(host)
 		} else {
-			host = Ipv6Desensitize(host)
+			host = IPv6Desensitize(host)
 		}
 
 		if port != "" {
@@ -237,10 +233,8 @@ func urlDesensitize(rawURL string) string {
 
 	// 脱敏查询参数中的敏感信息
 	values := parsedURL.Query()
-	sensitiveParams := []string{"key", "token", "secret", "password", "auth"}
-
 	for key := range values {
-		for _, param := range sensitiveParams {
+		for _, param := range sensitiveURLParams {
 			if strings.Contains(strings.ToLower(key), param) {
 				values.Set(key, "****")
 			}
@@ -252,52 +246,92 @@ func urlDesensitize(rawURL string) string {
 }
 
 // ClearToNullDesensitize 清空为null的脱敏实现
-func ClearToNullDesensitize(data string) string {
+func ClearToNullDesensitize(_ string) string {
 	return ""
 }
 
 // ClearToEmptyDesensitize 清空为空字符串的脱敏实现
-func ClearToEmptyDesensitize(data string) string {
+func ClearToEmptyDesensitize(_ string) string {
 	return ""
 }
 
-// RegisterURLSensitiveParams 添加一个便捷方法用于注册自定义的URL参数脱敏规则
+// RegisterURLSensitiveParams 添加自定义的URL参数脱敏规则
 func RegisterURLSensitiveParams(params ...string) {
 	sensitiveURLParams = append(sensitiveURLParams, params...)
 }
 
+// ChineseNameDesensitize 中文姓名脱敏
 func ChineseNameDesensitize(name string) string {
-	if len(name) <= 1 {
-		return name
-	}
 	runes := []rune(name)
 	if len(runes) <= 1 {
 		return name
 	}
-	return string(runes[0]) + strings.Repeat("*", len(runes)-2) + string(runes[len(runes)-1])
+	return string(runes[0]) + strings.Repeat("*", utf8.RuneCountInString(name)-2) + string(runes[len(runes)-1])
 }
 
+// IdCardDesensitize 身份证脱敏
 func IdCardDesensitize(idCard string) string {
-	if len(idCard) <= 10 {
+	runes := []rune(idCard)
+	if len(runes) <= 10 {
 		return idCard
 	}
-	return idCard[:6] + strings.Repeat("*", len(idCard)-10) + idCard[len(idCard)-4:]
+	return string(runes[:6]) + strings.Repeat("*", len(runes)-10) + string(runes[len(runes)-4:])
 }
 
+// ChineseIDCardDesensitize 验证中国身份证号
+func ChineseIDCardDesensitize(id string) bool {
+	if len(id) != 18 {
+		return false
+	}
+
+	// 验证生日
+	year, _ := strconv.Atoi(id[6:10])
+	month, _ := strconv.Atoi(id[10:12])
+	day, _ := strconv.Atoi(id[12:14])
+
+	if year < 1900 || year > time.Now().Year() || month < 1 || month > 12 || day < 1 || day > 31 {
+		return false
+	}
+
+	// 检查日期是否有效
+	_, err := time.Parse("20060102", id[6:14])
+	if err != nil {
+		return false
+	}
+
+	// 验证校验码
+	weights := []int{7, 9, 10, 5, 8, 4, 2, 1, 6, 3, 7, 9, 10, 5, 8, 4, 2}
+	validChecksum := "10X98765432"
+	sum := 0
+
+	for i := 0; i < 17; i++ {
+		n, _ := strconv.Atoi(string(id[i]))
+		sum += n * weights[i]
+	}
+
+	checksum := validChecksum[sum%11]
+	return string(id[17]) == string(checksum)
+}
+
+// FixedPhoneDesensitize 固定电话脱敏
 func FixedPhoneDesensitize(phone string) string {
-	if len(phone) <= 6 {
+	runes := []rune(phone)
+	if len(runes) <= 6 {
 		return phone
 	}
-	return phone[:3] + strings.Repeat("*", len(phone)-5) + phone[len(phone)-2:]
+	return string(runes[:3]) + strings.Repeat("*", len(runes)-5) + string(runes[len(runes)-2:])
 }
 
+// MobilePhoneDesensitize 手机号脱敏
 func MobilePhoneDesensitize(phone string) string {
-	if len(phone) <= 7 {
+	runes := []rune(phone)
+	if len(runes) <= 7 {
 		return phone
 	}
-	return phone[:3] + strings.Repeat("*", len(phone)-7) + phone[len(phone)-4:]
+	return string(runes[:3]) + strings.Repeat("*", len(runes)-7) + string(runes[len(runes)-4:])
 }
 
+// AddressDesensitize 地址脱敏
 func AddressDesensitize(address string) string {
 	runes := []rune(address)
 	length := len(runes)
@@ -307,25 +341,34 @@ func AddressDesensitize(address string) string {
 	return string(runes[:length-8]) + strings.Repeat("*", 8)
 }
 
+// EmailDesensitize 邮箱脱敏，隐藏用户名中间3位，域名不打码
 func EmailDesensitize(email string) string {
 	parts := strings.Split(email, "@")
 	if len(parts) != 2 {
 		return email
 	}
+
 	username := parts[0]
-	if len(username) <= 1 {
+	domain := parts[1]
+
+	// 用户名处理
+	runes := []rune(username)
+	if len(runes) <= 5 { // 用户名太短则保持原样
 		return email
 	}
-	return username[:1] + strings.Repeat("*", len(username)-1) + "@" + parts[1]
+
+	// 保留前两位和后两位，中间用3个星号替换
+	maskedUsername := string(runes[:2]) + "***" + string(runes[len(runes)-2:])
+
+	return maskedUsername + "@" + domain
 }
 
+// PasswordDesensitize 密码脱敏
 func PasswordDesensitize(password string) string {
-	if len(password) == 0 {
-		return password
-	}
-	return strings.Repeat("*", len(password))
+	return strings.Repeat("*", utf8.RuneCountInString(password))
 }
 
+// CarLicenseDesensitize 车牌号脱敏
 func CarLicenseDesensitize(license string) string {
 	runes := []rune(license)
 	if len(runes) <= 4 {
@@ -334,14 +377,24 @@ func CarLicenseDesensitize(license string) string {
 	return string(runes[:2]) + strings.Repeat("*", len(runes)-3) + string(runes[len(runes)-1:])
 }
 
+// BankCardDesensitize 银行卡脱敏，保留前6位和后4位，中间用*代替
 func BankCardDesensitize(card string) string {
-	if len(card) <= 8 {
-		return card
+	runes := []rune(card)
+	if len(runes) <= 10 { // 银行卡号太短
+		return strings.Repeat("*", len(runes))
 	}
-	return card[:6] + strings.Repeat("*", len(card)-10) + card[len(card)-4:]
+
+	// 验证银行卡号有效性
+	if !validateCreditCard(card) {
+		return strings.Repeat("*", len(runes))
+	}
+
+	// 保留前6位和后4位，中间用*代替
+	return string(runes[:6]) + strings.Repeat("*", len(runes)-10) + string(runes[len(runes)-4:])
 }
 
-func Ipv4Desensitize(ip string) string {
+// IPv4Desensitize IPv4地址脱敏
+func IPv4Desensitize(ip string) string {
 	parts := strings.Split(ip, ".")
 	if len(parts) != 4 {
 		return ip
@@ -349,7 +402,8 @@ func Ipv4Desensitize(ip string) string {
 	return parts[0] + ".*.*." + parts[3]
 }
 
-func Ipv6Desensitize(ip string) string {
+// IPv6Desensitize IPv6地址脱敏
+func IPv6Desensitize(ip string) string {
 	parts := strings.Split(ip, ":")
 	if len(parts) < 4 {
 		return ip
@@ -357,6 +411,7 @@ func Ipv6Desensitize(ip string) string {
 	return parts[0] + ":" + parts[1] + ":****:" + parts[len(parts)-1]
 }
 
+// JWTDesensitize JWT令牌脱敏
 func JWTDesensitize(token string) string {
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {
@@ -365,48 +420,61 @@ func JWTDesensitize(token string) string {
 	return parts[0] + ".****." + parts[2]
 }
 
+// SocialSecurityDesensitize 社会保障号脱敏
 func SocialSecurityDesensitize(ssn string) string {
-	if len(ssn) != 11 {
+	runes := []rune(ssn)
+	if len(runes) != 11 {
 		return ssn
 	}
-	return ssn[:3] + "-**-" + ssn[7:]
+	return string(runes[:3]) + "-**-" + string(runes[7:])
 }
 
+// PassportDesensitize 护照号脱敏
 func PassportDesensitize(passport string) string {
-	if len(passport) < 6 {
+	runes := []rune(passport)
+	if len(runes) < 6 {
 		return passport
 	}
-	return passport[:2] + strings.Repeat("*", len(passport)-4) + passport[len(passport)-2:]
+	return string(runes[:2]) + strings.Repeat("*", len(runes)-4) + string(runes[len(runes)-2:])
 }
 
+// DriversLicenseDesensitize 驾驶证号脱敏
 func DriversLicenseDesensitize(license string) string {
-	if len(license) < 8 {
+	runes := []rune(license)
+	if len(runes) < 8 {
 		return license
 	}
-	return license[:4] + strings.Repeat("*", len(license)-6) + license[len(license)-2:]
+	return string(runes[:4]) + strings.Repeat("*", len(runes)-6) + string(runes[len(runes)-2:])
 }
 
+// MedicalIDDesensitize 医保卡号脱敏
 func MedicalIDDesensitize(id string) string {
-	if len(id) < 8 {
+	runes := []rune(id)
+	if len(runes) < 8 {
 		return id
 	}
-	return id[:3] + strings.Repeat("*", len(id)-6) + id[len(id)-3:]
+	return string(runes[:3]) + strings.Repeat("*", len(runes)-6) + string(runes[len(runes)-3:])
 }
 
+// CompanyIDDesensitize 公司编号（统一信用代码）脱敏
 func CompanyIDDesensitize(id string) string {
-	if len(id) < 6 {
+	runes := []rune(id)
+	if len(runes) < 6 {
 		return id
 	}
-	return id[:2] + strings.Repeat("*", len(id)-4) + id[len(id)-2:]
+	return string(runes[:2]) + strings.Repeat("*", len(runes)-4) + string(runes[len(runes)-2:])
 }
 
+// DeviceIDDesensitize 设备ID脱敏
 func DeviceIDDesensitize(id string) string {
-	if len(id) < 8 {
+	runes := []rune(id)
+	if len(runes) < 8 {
 		return id
 	}
-	return id[:4] + strings.Repeat("*", len(id)-8) + id[len(id)-4:]
+	return string(runes[:4]) + strings.Repeat("*", len(runes)-8) + string(runes[len(runes)-4:])
 }
 
+// MACDesensitize MAC地址脱敏
 func MACDesensitize(mac string) string {
 	parts := strings.Split(mac, ":")
 	if len(parts) != 6 {
@@ -415,20 +483,25 @@ func MACDesensitize(mac string) string {
 	return parts[0] + ":**:**:**:**:" + parts[5]
 }
 
+// VINDesensitize 车架号脱敏
 func VINDesensitize(vin string) string {
-	if len(vin) != 17 {
+	runes := []rune(vin)
+	if len(runes) != 17 {
 		return vin
 	}
-	return vin[:3] + strings.Repeat("*", 11) + vin[14:]
+	return string(runes[:3]) + strings.Repeat("*", 11) + string(runes[14:])
 }
 
+// IMEIDesensitize IMEI号脱敏
 func IMEIDesensitize(imei string) string {
-	if len(imei) != 15 {
+	runes := []rune(imei)
+	if len(runes) != 15 {
 		return imei
 	}
-	return imei[:4] + strings.Repeat("*", 7) + imei[11:]
+	return string(runes[:4]) + strings.Repeat("*", 7) + string(runes[11:])
 }
 
+// CoordinateDesensitize 地理坐标脱敏
 func CoordinateDesensitize(coord string) string {
 	parts := strings.Split(coord, ",")
 	if len(parts) != 2 {
@@ -437,45 +510,57 @@ func CoordinateDesensitize(coord string) string {
 	return "**.****,**.****"
 }
 
+// AccessTokenDesensitize 访问令牌脱敏
 func AccessTokenDesensitize(token string) string {
-	if len(token) < 8 {
+	runes := []rune(token)
+	if len(runes) < 8 {
 		return token
 	}
-	return token[:4] + strings.Repeat("*", len(token)-8) + token[len(token)-4:]
+	return string(runes[:4]) + strings.Repeat("*", len(runes)-8) + string(runes[len(runes)-4:])
 }
 
+// RefreshTokenDesensitize 刷新令牌脱敏
 func RefreshTokenDesensitize(token string) string {
-	if len(token) < 8 {
+	runes := []rune(token)
+	if len(runes) < 8 {
 		return token
 	}
-	return token[:4] + strings.Repeat("*", len(token)-8) + token[len(token)-4:]
+	return string(runes[:4]) + strings.Repeat("*", len(runes)-8) + string(runes[len(runes)-4:])
 }
 
-func PrivateKeyDesensitize(key string) string {
+// PrivateKeyDesensitize 私钥脱敏
+func PrivateKeyDesensitize(_ string) string {
 	return "[PRIVATE_KEY]"
 }
 
+// PublicKeyDesensitize 公钥脱敏
 func PublicKeyDesensitize(key string) string {
-	if len(key) < 20 {
+	runes := []rune(key)
+	if len(runes) < 20 {
 		return key
 	}
-	return key[:10] + "..." + key[len(key)-10:]
+	return string(runes[:10]) + "..." + string(runes[len(runes)-10:])
 }
 
+// CertificateDesensitize 证书脱敏
 func CertificateDesensitize(cert string) string {
-	if len(cert) < 20 {
+	runes := []rune(cert)
+	if len(runes) < 20 {
 		return cert
 	}
 	return "-----BEGIN CERTIFICATE-----\n****\n-----END CERTIFICATE-----"
 }
 
+// UsernameDesensitize 用户名脱敏，显示前后两位
 func UsernameDesensitize(username string) string {
-	if len(username) <= 2 {
-		return username
+	runes := []rune(username)
+	if len(runes) <= 4 {
+		return username // 如果用户名长度小于等于4，直接返回
 	}
-	return username[:1] + strings.Repeat("*", len(username)-2) + username[len(username)-1:]
+	return string(runes[:2]) + strings.Repeat("*", len(runes)-4) + string(runes[len(runes)-2:])
 }
 
+// NicknameDesensitize 昵称脱敏
 func NicknameDesensitize(nickname string) string {
 	runes := []rune(nickname)
 	if len(runes) <= 1 {
@@ -484,6 +569,7 @@ func NicknameDesensitize(nickname string) string {
 	return string(runes[0]) + strings.Repeat("*", len(runes)-1)
 }
 
+// BiographyDesensitize 个人简介脱敏
 func BiographyDesensitize(bio string) string {
 	runes := []rune(bio)
 	if len(runes) <= 10 {
@@ -492,6 +578,7 @@ func BiographyDesensitize(bio string) string {
 	return string(runes[:5]) + "..." + string(runes[len(runes)-5:])
 }
 
+// SignatureDesensitize 个性签名脱敏
 func SignatureDesensitize(signature string) string {
 	runes := []rune(signature)
 	if len(runes) <= 4 {
@@ -500,6 +587,7 @@ func SignatureDesensitize(signature string) string {
 	return string(runes[:2]) + strings.Repeat("*", len(runes)-4) + string(runes[len(runes)-2:])
 }
 
+// CommentDesensitize 评论内容脱敏
 func CommentDesensitize(comment string) string {
 	runes := []rune(comment)
 	if len(runes) <= 10 {
@@ -508,11 +596,12 @@ func CommentDesensitize(comment string) string {
 	return string(runes[:5]) + "..." + string(runes[len(runes)-5:])
 }
 
-// 高级加密脱敏方法
+// Base64Desensitize 高级加密脱敏方法
 func Base64Desensitize(data string) string {
 	return base64.StdEncoding.EncodeToString([]byte(data))
 }
 
+// AesDesensitize AES加密脱敏方法
 func AesDesensitize(data, key []byte) (string, error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {
@@ -533,6 +622,7 @@ func AesDesensitize(data, key []byte) (string, error) {
 	return hex.EncodeToString(ciphertext), nil
 }
 
+// DesDesensitize DES加密脱敏方法
 func DesDesensitize(data string, key []byte) (string, error) {
 	block, err := des.NewCipher(key)
 	if err != nil {
@@ -553,6 +643,7 @@ func DesDesensitize(data string, key []byte) (string, error) {
 	return hex.EncodeToString(append(iv, ciphertext...)), nil
 }
 
+// RsaDesensitize RSA加密脱敏方法
 func RsaDesensitize(data []byte, publicKey *rsa.PublicKey) (string, error) {
 	hash := sha256.New()
 	ciphertext, err := rsa.EncryptOAEP(hash, rand.Reader, publicKey, data, nil)
@@ -562,14 +653,16 @@ func RsaDesensitize(data []byte, publicKey *rsa.PublicKey) (string, error) {
 	return hex.EncodeToString(ciphertext), nil
 }
 
-// 自定义脱敏方法
+// FirstMaskDesensitize 仅保留首字符脱敏
 func FirstMaskDesensitize(data string) string {
-	if len(data) <= 1 {
+	runes := []rune(data)
+	if len(runes) <= 1 {
 		return data
 	}
-	return data[:1] + strings.Repeat("*", len(data)-1)
+	return string(runes[:1]) + strings.Repeat("*", len(runes)-1)
 }
 
+// CustomizeKeepLengthDesensitize 自定义保留长度的脱敏
 func CustomizeKeepLengthDesensitize(data string, preKeep, postKeep int) string {
 	runes := []rune(data)
 	length := len(runes)
@@ -581,6 +674,7 @@ func CustomizeKeepLengthDesensitize(data string, preKeep, postKeep int) string {
 	return string(runes[:preKeep]) + strings.Repeat("*", length-preKeep-postKeep) + string(runes[length-postKeep:])
 }
 
+// StringDesensitize 字符串脱敏
 func StringDesensitize(data string, filterWords ...string) string {
 	builder := maskPool.Get().(*strings.Builder)
 	defer func() {
@@ -589,79 +683,111 @@ func StringDesensitize(data string, filterWords ...string) string {
 	}()
 
 	for _, word := range filterWords {
-		replacement := strings.Repeat("*", utf8.RuneCountInString(word))
-		data = strings.ReplaceAll(data, word, replacement)
+		regex := regexp.MustCompile(regexp.QuoteMeta(word))
+		data = regex.ReplaceAllStringFunc(data, func(match string) string {
+			return strings.Repeat("*", utf8.RuneCountInString(match))
+		})
 	}
 
 	return data
 }
 
-func UrlDesensitize(rawUrl string, args ...string) string {
-	parsedUrl, err := url.Parse(rawUrl)
-	if err != nil {
-		return rawUrl
+// PostalCodeDesensitize 处理邮政编码，隐藏中间三位
+func PostalCodeDesensitize(code string) string {
+	runes := []rune(code)
+	if len(runes) == 6 {
+		return string(runes[:3]) + "***" + string(runes[6:])
 	}
+	return code
+}
 
-	// 脱敏用户名和密码
-	if parsedUrl.User != nil {
-		parsedUrl.User = url.UserPassword("****", "****")
+// CreditCardDesensitize 处理信用卡号，只显示后四位
+func CreditCardDesensitize(card string) string {
+	runes := []rune(card)
+	if len(runes) >= 4 {
+		return strings.Repeat("*", len(runes)-4) + string(runes[len(runes)-4:])
 	}
+	return card
+}
 
-	// 脱敏IP地址
-	host, port, err := net.SplitHostPort(parsedUrl.Host)
-	if err == nil {
-		if ip := net.ParseIP(host); ip != nil {
-			if ip.To4() != nil {
-				parsedUrl.Host = Ipv4Desensitize(host)
-			} else {
-				parsedUrl.Host = Ipv6Desensitize(host)
-			}
-			if port != "" {
-				parsedUrl.Host += ":" + port
-			}
-		}
-	}
-
-	// 脱敏查询参数
-	if len(args) > 0 {
-		values := parsedUrl.Query()
-		for key := range values {
-			for _, sensitiveKey := range args {
-				if strings.Contains(strings.ToLower(key), strings.ToLower(sensitiveKey)) {
-					values.Set(key, "****")
-				}
+// validateCreditCard 验证信用卡号，使用简单的Luhn算法
+func validateCreditCard(card string) bool {
+	sum := 0
+	alternate := false
+	for i := len(card) - 1; i >= 0; i-- {
+		n := int(card[i] - '0')
+		if alternate {
+			n *= 2
+			if n > 9 {
+				n -= 9
 			}
 		}
-		parsedUrl.RawQuery = values.Encode()
+		sum += n
+		alternate = !alternate
 	}
-
-	return parsedUrl.String()
+	return sum%10 == 0
 }
 
-// 辅助方法
-func pkcs7Padding(data []byte, blockSize int) []byte {
-	padding := blockSize - len(data)%blockSize
-	padtext := bytes.Repeat([]byte{byte(padding)}, padding)
-	return append(data, padtext...)
+// APIKeyDesensitize 处理API密钥，隐藏前面部分
+func APIKeyDesensitize(key string) string {
+	runes := []rune(key)
+	if len(runes) >= 8 {
+		return strings.Repeat("*", len(runes)-4) + string(runes[len(runes)-4:])
+	}
+	return key
 }
 
-// 正则表达式编译结果缓存
-func getRegexp(pattern string) (*regexp.Regexp, error) {
-	if v, ok := regexpCache.Load(pattern); ok {
-		return v.(*regexp.Regexp), nil
+// UUIDDesensitize 处理UUID，隐藏中间部分
+func UUIDDesensitize(uuid string) string {
+	parts := strings.Split(uuid, "-")
+	if len(parts) == 5 && len(parts[2]) >= 4 {
+		return parts[0] + "-" + parts[1] + "-****-****-" + parts[4]
 	}
-
-	reg, err := regexp.Compile(pattern)
-	if err != nil {
-		return nil, err
-	}
-
-	regexpCache.Store(pattern, reg)
-	return reg, nil
+	return uuid
 }
 
-// 性能优化：使用 strings.Builder 进行字符串拼接
-func maskString(str string, start, end int, maskChar string) string {
+// MD5Desensitize 计算输入的MD5哈希值并返回
+func MD5Desensitize(input string) string {
+	hash := md5.Sum([]byte(input))
+	return fmt.Sprintf("%x", hash)
+}
+
+// SHA1Desensitize 计算输入的SHA1哈希值并返回
+func SHA1Desensitize(input string) string {
+	hash := sha1.Sum([]byte(input))
+	return fmt.Sprintf("%x", hash)
+}
+
+// SHA256Desensitize 处理输入，返回 SHA-256 哈希值
+func SHA256Desensitize(input string) string {
+	h := sha256.New()
+	h.Write([]byte(input))
+	hash := h.Sum(nil)
+	return hex.EncodeToString(hash)
+}
+
+// LatLngDesensitize 处理经纬度，隐藏具体数值
+func LatLngDesensitize(latLng string) string {
+	parts := strings.Split(latLng, ",")
+	if len(parts) == 2 {
+		return "**.****,**.****"
+	}
+	return latLng
+}
+
+// DomainDesensitize 处理域名，隐藏前面部分
+func DomainDesensitize(domain string) string {
+	if strings.Contains(domain, ".") {
+		parts := strings.Split(domain, ".")
+		if len(parts) > 1 {
+			return "****." + parts[len(parts)-1]
+		}
+	}
+	return domain
+}
+
+// MaskString 字符串遮罩处理
+func MaskString(str string, start, end int, maskChar string) string {
 	builder := maskPool.Get().(*strings.Builder)
 	defer func() {
 		builder.Reset()
@@ -675,19 +801,9 @@ func maskString(str string, start, end int, maskChar string) string {
 	return builder.String()
 }
 
-// 初始化：预编译正则表达式
-func init() {
-	patterns := []string{
-		`\d{17}[\dXx]`,                // 身份证
-		`\d{11}`,                      // 手机号
-		`[0-9a-zA-Z]{16,19}`,          // 银行卡
-		`[\w\-.]+@[\w\-]+\.[a-zA-Z]+`, // 邮箱
-		// ... 其他正则表达式
-	}
-
-	for _, pattern := range patterns {
-		if reg, err := regexp.Compile(pattern); err == nil {
-			regexpCache.Store(pattern, reg)
-		}
-	}
+// pkcs7Padding PKCS#7填充
+func pkcs7Padding(data []byte, blockSize int) []byte {
+	padding := blockSize - len(data)%blockSize
+	padtext := bytes.Repeat([]byte{byte(padding)}, padding)
+	return append(data, padtext...)
 }

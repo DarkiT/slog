@@ -8,7 +8,6 @@ import (
 type DlpConfig struct {
 	enabled    atomic.Bool
 	strategies sync.Map // 存储脱敏策略
-	formatters []Formatter
 }
 
 var (
@@ -59,11 +58,6 @@ func (c *DlpConfig) GetStrategy(name string) (DesensitizeFunc, bool) {
 	return nil, false
 }
 
-// AddFormatter 添加日志格式化器
-func (c *DlpConfig) AddFormatter(formatter Formatter) {
-	c.formatters = append(c.formatters, formatter)
-}
-
 // registerDefaultStrategies 注册默认的脱敏策略
 func (c *DlpConfig) registerDefaultStrategies() {
 	// 个人信息
@@ -84,8 +78,8 @@ func (c *DlpConfig) registerDefaultStrategies() {
 	c.RegisterStrategy("password", PasswordDesensitize)
 
 	// 设备信息
-	c.RegisterStrategy("ipv4", Ipv4Desensitize)
-	c.RegisterStrategy("ipv6", Ipv6Desensitize)
+	c.RegisterStrategy("ipv4", IPv4Desensitize)
+	c.RegisterStrategy("ipv6", IPv6Desensitize)
 	c.RegisterStrategy("mac", MACDesensitize)
 	c.RegisterStrategy("device_id", DeviceIDDesensitize)
 	c.RegisterStrategy("imei", IMEIDesensitize)
@@ -108,7 +102,7 @@ func (c *DlpConfig) registerDefaultStrategies() {
 	c.RegisterStrategy("certificate", CertificateDesensitize)
 
 	// 其他
-	c.RegisterStrategy("url", urlDesensitize)
+	c.RegisterStrategy("url", URLDesensitize)
 	c.RegisterStrategy("first_mask", FirstMaskDesensitize)
 	c.RegisterStrategy("null", ClearToNullDesensitize)
 	c.RegisterStrategy("empty", ClearToEmptyDesensitize)

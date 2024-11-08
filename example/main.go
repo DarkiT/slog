@@ -2,52 +2,120 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"runtime/debug"
+	"sync"
 	"time"
 
 	"github.com/darkit/slog"
 )
 
+func init() {
+	// 在包初始化时确保基础设施准备就绪
+	slog.EnableTextLogger() // 启用文本日志
+	// slog.EnableJsonLogger()            // 也启用JSON日志用于演示
+	time.Sleep(100 * time.Millisecond) // 给一些初始化时间
+}
+
 func main() {
-	// 1. 创建日志记录器
-	// noColor: false 表示启用颜色输出
-	// addSource: true 表示显示源代码位置
 	logger := slog.NewLogger(os.Stdout, false, true)
 
-	//logger := slog.Default("DEMO")
+	// 定义所有演示项目
+	demos := []struct {
+		name        string
+		description string
+		fn          func()
+	}{
+		{
+			name:        "日志级别控制",
+			description: "演示动态调整日志级别和监听级别变化",
+			fn:          demoLogLevels,
+		},
+		{
+			name:        "基本日志记录",
+			description: "演示基本的日志记录功能",
+			fn:          func() { demoBasicLogging(logger) },
+		},
+		{
+			name:        "格式化日志",
+			description: "演示不同格式的日志输出",
+			fn:          func() { demoFormattedLogging(logger) },
+		},
+		{
+			name:        "结构化日志",
+			description: "演示结构化日志记录",
+			fn:          func() { demoStructuredLogging(logger) },
+		},
+		{
+			name:        "日志分组和模块化",
+			description: "演示日志分组和模块管理",
+			fn:          demoGroupsAndModules,
+		},
+		{
+			name:        "上下文和值传递",
+			description: "演示使用上下文和值传递",
+			fn:          func() { demoContextAndValues(logger) },
+		},
+		{
+			name:        "输出格式控制",
+			description: "演示不同的日志输出格式",
+			fn:          demoOutputFormat,
+		},
+		{
+			name:        "日志监控",
+			description: "演示日志级别监控功能",
+			fn:          demoLogMonitoring,
+		},
+		{
+			name:        "日志脱敏",
+			description: "演示敏感信息脱敏功能",
+			fn:          demoSensitiveData,
+		},
+		{
+			name:        "高级特性",
+			description: "演示高级日志特性",
+			fn:          func() { demoAdvancedFeatures(logger) },
+		},
+		{
+			name:        "前缀和格式化",
+			description: "演示日志前缀和格式化功能",
+			fn:          demoPrefixAndFormatting,
+		},
+		{
+			name:        "异步日志处理",
+			description: "演示异步日志记录功能",
+			fn:          demoAsyncLogging,
+		},
+		{
+			name:        "链路追踪",
+			description: "演示日志链路追踪功能",
+			fn:          demoTracing,
+		},
+		{
+			name:        "错误处理",
+			description: "演示错误日志处理",
+			fn:          demoErrorHandling,
+		},
+	}
 
-	// 2. 日志级别控制
-	demoLogLevels()
+	// 执行所有演示
+	for _, demo := range demos {
+		// 打印分隔线
+		logger.Info("========================================")
+		logger.Info("开始演示: "+demo.name,
+			"description", demo.description,
+		)
 
-	// 3. 基本日志记录
-	demoBasicLogging(logger)
+		// 执行演示函数
+		demo.fn()
 
-	// 4. 格式化日志
-	demoFormattedLogging(logger)
+		// 打印完成信息
+		logger.Info("演示完成: " + demo.name)
 
-	// 5. 结构化日志
-	demoStructuredLogging(logger)
-
-	// 6. 日志分组和模块化
-	demoGroupsAndModules()
-
-	// 7. 上下文和值传递
-	demoContextAndValues(logger)
-
-	// 8. 输出格式控制
-	demoOutputFormat()
-
-	// 9. 日志脱敏
-	demoSensitiveData()
-
-	// 10. 日志监控
-	demoLogMonitoring()
-
-	// 11. 高级特性
-	demoAdvancedFeatures(logger)
-
-	// 添加前缀示例
-	demoPrefixAndFormatting()
+		// 暂停一会，让输出更清晰
+		time.Sleep(200 * time.Millisecond)
+	}
 }
 
 // demoLogLevels 演示日志级别控制
@@ -106,29 +174,32 @@ func demoFormattedLogging(logger *slog.Logger) {
 
 // demoStructuredLogging 演示结构化日志
 func demoStructuredLogging(logger *slog.Logger) {
-	// 使用键值对记录结构化信息
-	logger.Info("数据库连接成功",
-		"host", "localhost",
-		"port", 5432,
-		"user", "admin",
-		"database", "test_db",
+	// 模拟用户登录场景
+	logger.Info("用户登录",
+		"user_id", 12345,
+		"ip", "192.168.1.100",
+		"device", "iPhone",
+		"location", "Beijing",
+		"timestamp", time.Now(),
 	)
 
-	// 使用slog.Attr类型记录
-	logger.Info("用户操作",
-		slog.String("action", "login"),
-		slog.Int("user_id", 12345),
-		slog.Time("timestamp", time.Now()),
-		slog.Duration("process_time", time.Second*2),
-		slog.Bool("success", true),
+	// 模拟API请求场景
+	logger.Info("API请求处理",
+		"method", "POST",
+		"path", "/api/v1/orders",
+		"duration_ms", 45,
+		"status", 200,
+		"client_ip", "10.0.0.1",
 	)
 
-	// 使用With方法添加固定字段
-	dbLogger := logger.With(
-		"component", "database",
-		"version", "1.0",
+	// 模拟系统监控场景
+	logger.Info("系统状态",
+		"cpu_usage", 65.5,
+		"memory_used_mb", 1024,
+		"disk_free_gb", 128,
+		"network_in_mbps", 75.2,
+		"network_out_mbps", 45.8,
 	)
-	dbLogger.Info("执行查询", "sql", "SELECT * FROM users")
 }
 
 // demoGroupsAndModules 演示日志分组和模块化
@@ -176,62 +247,179 @@ func demoContextAndValues(logger *slog.Logger) {
 
 // demoOutputFormat 演示输出格式控制
 func demoOutputFormat() {
-	// 控制日志格式
-	slog.EnableTextLogger()  // 启用文本日志
-	slog.EnableJsonLogger()  // 启用JSON日志
-	slog.DisableTextLogger() // 禁用文本日志
-	slog.DisableJsonLogger() // 禁用JSON日志
+	logger := slog.NewLogger(os.Stdout, false, true)
 
-	// 重新启用文本日志用于演示
+	// 1. 演示纯文本格式
 	slog.EnableTextLogger()
+	slog.DisableJsonLogger()
+	logger.Info("=== 文本格式日志演示 ===")
+	logger.Info("这是一条文本格式的日志",
+		"field1", "value1",
+		"field2", 123,
+	)
+
+	time.Sleep(100 * time.Millisecond)
+
+	// 2. 演示JSON格式
+	slog.DisableTextLogger()
+	slog.EnableJsonLogger()
+	logger.Info("=== JSON格式日志演示 ===")
+	logger.Info("这是一条JSON格式的日志",
+		"field1", "value1",
+		"field2", 123,
+	)
+
+	time.Sleep(100 * time.Millisecond)
+
+	// 3. 恢复默认设置
+	slog.EnableTextLogger()
+	slog.DisableJsonLogger()
 }
 
 // demoLogMonitoring 演示日志监控
 func demoLogMonitoring() {
+	var wg sync.WaitGroup
+	wg.Add(1)
+
+	// 创建变更通知通道
+	levelCh := make(chan slog.Level, 2)
+
 	// 监听日志级别变化
 	slog.WatchLevel("monitor1", func(level slog.Level) {
-		slog.Info("日志级别变化", "new_level", level)
+		levelCh <- level
 	})
 
-	// 触发级别变化
+	// 在goroutine中处理级别变化
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 2; i++ {
+			select {
+			case level := <-levelCh:
+				slog.Info("日志级别已变更", "new_level", level)
+			case <-time.After(500 * time.Millisecond):
+				slog.Warn("等待日志级别变更超时")
+				return
+			}
+		}
+	}()
+
+	time.Sleep(100 * time.Millisecond)
 	slog.SetLevelDebug()
+	time.Sleep(100 * time.Millisecond)
 	slog.SetLevelInfo()
 
-	// 取消监听
+	wg.Wait()
 	slog.UnwatchLevel("monitor1")
 }
 
 // demoSensitiveData 演示日志脱敏功能
 func demoSensitiveData() {
-	// 启用日志脱敏功能
-	slog.EnableDLP()
+	// 启用DLP
+	slog.EnableDLPLogger()
+	time.Sleep(100 * time.Millisecond)
 
-	// 注册自定义脱敏策略
-	slog.RegisterDLPStrategy("custom", func(text string) string {
-		if len(text) > 4 {
-			return text[:2] + "***" + text[len(text)-2:]
-		}
-		return text
-	})
+	// 这里不需要重新注册规则，因为内置规则已经在dlp包初始化时注册
+	// 直接使用包中定义好的规则名称即可
 
-	// 记录包含敏感信息的日志
-	slog.Info("用户信息",
-		"user_id", "12345678", // 会被自定义脱敏规则处理
-		"phone", "13800138000", // 会被默认脱敏规则处理
-		"normal", "public-info", // 普通信息不会被脱敏
-	)
+	// 注册常用的脱敏规则
+	//slog.RegisterDLPStrategy("mobile_phone", func(text string) string {
+	//	if matched, _ := regexp.MatchString(`^1[3-9]\d{9}$`, text); matched {
+	//		return text[:3] + "****" + text[len(text)-4:]
+	//	}
+	//	return text
+	//})
 
-	// 检查脱敏功能是否启用
-	if slog.IsDLPEnabled() {
-		slog.Info("DLP is enabled")
+	// 创建logger
+	logger := slog.NewLogger(os.Stdout, false, true)
+
+	// 测试不同类型数据的脱敏
+	sensitiveData := []struct {
+		name     string
+		value    string
+		strategy string // 对应内置规则的名称
+	}{
+		{"手机号", "13800138000", "mobile_phone"},
+		{"身份证", "440101199001011234", "id_card"},
+		{"银行卡", "6222021234567890123", "bank_card"},
+		{"电子邮箱", "test@example.com", "email"},
+		{"中文姓名", "张小三", "chinese_name"},
+		{"固定电话", "0755-12345678", "fixed_phone"},
+		{"邮政编码", "518000", "postal_code"},
+		{"护照号", "E12345678", "passport"},
+		{"驾驶证", "440101199001011234", "drivers_license"},
+		{"IPv4地址", "192.168.1.1", "ipv4"},
+		{"MAC地址", "00:0A:95:9D:68:16", "mac"},
+		{"车牌号", "粤B12345", "car_license"},
+		{"信用卡", "4111111111111111", "credit_card"},
+		{"统一社会信用代码", "91110000100000589B", "company_id"},
+		{"地址", "广东省深圳市南山区科技园", "address"},
+		{"密码", "password123", "password"},
+		{"JWT令牌", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...", "jwt"},
+		{"密钥", "sk_live_51Mx9fK2eZvKYlo2CJyxB", "private_key"},
+		{"用户名", "admin123", "username"},
+		{"设备ID", "A1B2C3D4-E5F6-G7H8-I9J0-K1L2M3N4O5P6", "device_id"},
 	}
 
-	// 手动执行文本脱敏
-	maskedText := slog.DlpMask("13800138000")
-	slog.Info("Masked text", "result", maskedText)
+	// 测试每种类型的脱敏效果
+	for _, data := range sensitiveData {
+		// 直接使用原始值,让DLP引擎自动处理脱敏
+		logger.Info("脱敏测试",
+			"数据类型", data.name,
+			"规则名称", data.strategy,
+			"原始值", data.value, // DLP引擎会自动处理脱敏
+		)
+	}
 
-	// 禁用日志脱敏
-	slog.DisableDLP()
+	// 测试复合信息脱敏
+	logger.Info("用户完整信息",
+		"姓名", "张三",
+		"身份证", "440101199001011234",
+		"手机", "13800138000",
+		"邮箱", "zhangsan@example.com",
+		"银行卡", "6222021234567890123",
+		"家庭住址", "广东省深圳市南山区科技园1号楼101室",
+		"车牌号", "粤B12345",
+		"工作单位", "某某科技有限公司",
+	)
+
+	// 测试 URL 中的敏感信息
+	logger.Info("API调用信息",
+		"url", "https://api.example.com/users?access_token=12345&api_key=secret",
+		"authorization", "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+		"client_ip", "192.168.1.100",
+		"user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+	)
+
+	// 测试JSON格式的复合数据
+	logger.Info("JSON数据脱敏测试",
+		"data", `{
+            "user": {
+                "name": "张三",
+                "id_card": "440101199001011234",
+                "phone": "13800138000",
+                "email": "zhangsan@example.com",
+                "address": "广东省深圳市南山区科技园"
+            },
+            "payment": {
+                "card_no": "6222021234567890123",
+                "card_holder": "张三"
+            }
+        }`,
+	)
+
+	// 显示当前启用的脱敏功能
+	if slog.IsDLPEnabled() {
+		logger.Info("当前脱敏功能已启用")
+	}
+
+	// 禁用脱敏功能进行对比
+	slog.DisableDLPLogger()
+	logger.Info("禁用脱敏后的日志",
+		"姓名", "张三",
+		"身份证", "440101199001011234",
+		"手机", "13800138000",
+		"银行卡", "6222021234567890123",
+	)
 }
 
 // demoAdvancedFeatures 演示高级特性
@@ -315,4 +503,87 @@ func demoPrefixAndFormatting() {
 		With("latency", "50ms").
 		Info("API性能统计")
 	// 输出: [api] API性能统计 metrics.latency=50ms
+}
+
+// demoAsyncLogging 演示异步日志记录功能
+func demoAsyncLogging() {
+	// 获取异步日志通道
+	recordChan := slog.GetChanRecord(1000)
+
+	// 启动异步处理
+	go func() {
+		for record := range recordChan {
+			// 处理日志记录
+			fmt.Printf("异步处理日志: %v\n", record)
+		}
+	}()
+
+	// 记录一些测试日志
+	logger := slog.Default("async")
+	for i := 0; i < 5; i++ {
+		logger.Info("异步日志测试",
+			"index", i,
+			"timestamp", time.Now(),
+		)
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+// demoTracing 演示日志链路追踪功能
+func demoTracing() {
+	// 创建带追踪ID的logger
+	traceLogger := slog.Default("trace").With(
+		"trace_id", "trace-123",
+		"span_id", "span-456",
+	)
+
+	// 模拟请求处理链路
+	traceLogger.Info("开始处理请求")
+
+	// 模拟服务调用
+	serviceLogger := traceLogger.WithGroup("service")
+	serviceLogger.Info("调用用户服务",
+		"service", "user",
+		"method", "GetUserInfo",
+	)
+
+	// 模拟数据库操作
+	dbLogger := traceLogger.WithGroup("database")
+	dbLogger.Info("执行数据库查询",
+		"sql", "SELECT * FROM users WHERE id = ?",
+		"params", []interface{}{123},
+	)
+
+	traceLogger.Info("请求处理完成")
+}
+
+// demoErrorHandling 演示错误日志处理
+func demoErrorHandling() {
+	logger := slog.Default("error")
+
+	// 模拟不同类型的错误处理
+	err1 := fmt.Errorf("数据库连接失败")
+	logger.Error("系统错误",
+		"error", err1,
+		"component", "database",
+	)
+
+	// 模拟带堆栈的错误
+	err2 := fmt.Errorf("验证失败: %w", err1)
+	logger.Error("业务错误",
+		"error", err2,
+		"component", "auth",
+		"stack", string(debug.Stack()),
+	)
+
+	// 使用WithGroup组织错误信息
+	logger.WithGroup("error_details").Error("详细错误信息",
+		"error", err2,
+		"stack", string(debug.Stack()),
+		"context", map[string]interface{}{
+			"user_id": 123,
+			"action":  "login",
+			"time":    time.Now(),
+		},
+	)
 }

@@ -138,7 +138,10 @@ logger := slog.NewLogger(os.Stdout, false, true) // 最后一个参数控制是�
 
 ```go
 // 启用日志脱敏
-slog.EnableFormatters(formatter.SensitiveFormatter)
+slog.EnableDLPLogger()
+
+// 禁用日志脱敏功能
+slog.DisableDLPLogger()
 
 // 使用脱敏日志
 logger.Info("User data",

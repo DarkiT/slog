@@ -69,10 +69,10 @@ func (l *Logger) WithContext(ctx context.Context) *Logger {
 
 	// 同时更新handlers的context
 	if newLogger.text != nil {
-		newLogger.text = slog.New(newAddonsHandler(newLogger.text.Handler(), slogPfx))
+		newLogger.text = slog.New(newAddonsHandler(newLogger.text.Handler(), ext))
 	}
 	if newLogger.json != nil {
-		newLogger.json = slog.New(newAddonsHandler(newLogger.json.Handler(), slogPfx))
+		newLogger.json = slog.New(newAddonsHandler(newLogger.json.Handler(), ext))
 	}
 
 	return newLogger
