@@ -5,9 +5,9 @@ const (
 	IDCard         = "id_card"         // 中国居民身份证号码
 	Passport       = "passport"        // 护照号码
 	SocialSecurity = "social_security" // 社会保障号码
-	DriversLicense = "drivers_license" // 驾驶证号码
+	DriversLicense = "license_number"  // 驾驶证号码
 	MobilePhone    = "mobile_phone"    // 手机号码
-	FixedPhone     = "fixed_phone"     // 固定电话号码
+	FixedPhone     = "landline"        // 固定电话号码
 	Email          = "email"           // 电子邮箱地址
 	Address        = "address"         // 详细地址信息
 	PostalCode     = "postal_code"     // 邮政编码
@@ -17,7 +17,7 @@ const (
 	IPv6           = "ipv6"            // IPv6地址
 	MAC            = "mac"             // MAC物理地址
 	IMEI           = "imei"            // 手机设备识别码
-	CarLicense     = "car_license"     // 车牌号码
+	LicensePlate   = "plate"           // 车牌号码
 	VIN            = "vin"             // 车辆识别代号
 	APIKey         = "api_key"         // API访问密钥
 	JWT            = "jwt"             // JSON Web Token

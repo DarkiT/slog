@@ -28,13 +28,14 @@ import (
 type Sensitive struct {
 	Name           string `dlp:"chinese_name" json:"name,omitempty"`               // 姓名
 	IdCard         string `dlp:"id_card" json:"id_card,omitempty"`                 // 身份证
-	FixedPhone     string `dlp:"fixed_phone" json:"fixed_phone,omitempty"`         // 固定电话
-	MobilePhone    string `dlp:"mobile_phone" json:"mobile_phone,omitempty"`       // 手机号
+	FixedPhone     string `dlp:"landline" json:"landline,omitempty"`               // 固定电话
+	MobilePhone    string `dlp:"mobile" json:"mobile,omitempty"`                   // 手机号
 	Address        string `dlp:"address" json:"address,omitempty"`                 // 地址
 	Email          string `dlp:"email" json:"email,omitempty"`                     // 邮箱
 	Password       string `dlp:"password" json:"password,omitempty"`               // 密码
-	CarLicense     string `dlp:"car_license" json:"car_license,omitempty"`         // 车牌
+	LicensePlate   string `dlp:"plate" json:"plate,omitempty"`                     // 车牌
 	BankCard       string `dlp:"bank_card" json:"bank_card,omitempty"`             // 银行卡
+	CreditCard     string `dlp:"credit_card" json:"credit_card,omitempty"`         // 信用卡
 	Ipv4           string `dlp:"ipv4" json:"ipv_4,omitempty"`                      // IPv4
 	Ipv6           string `dlp:"ipv6" json:"ipv_6,omitempty"`                      // IPv6
 	Base64         string `dlp:"base64" json:"base_64,omitempty"`                  // Base64编码
@@ -45,7 +46,7 @@ type Sensitive struct {
 	JWT            string `dlp:"jwt" json:"jwt,omitempty"`                         // JWT令牌
 	SocialSecurity string `dlp:"social_security" json:"social_security,omitempty"` // 社会保障号
 	Passport       string `dlp:"passport" json:"passport,omitempty"`               // 护照号
-	DriversLicense string `dlp:"drivers_license" json:"drivers_license,omitempty"` // 驾驶证号
+	DriversLicense string `dlp:"license_number" json:"license_number,omitempty"`   // 驾驶证号
 	MedicalID      string `dlp:"medical_id" json:"medical_id,omitempty"`           // 医保卡号
 	CompanyID      string `dlp:"company_id" json:"company_id,omitempty"`           // 公司编号
 	DeviceID       string `dlp:"device_id" json:"device_id,omitempty"`             // 设备ID
@@ -74,14 +75,76 @@ var (
 	}
 	// 全局变量，存储需要脱敏的URL参数名
 	sensitiveURLParams = []string{
+		// 认证相关
 		"token",
+		"access_token",
+		"refresh_token",
+		"id_token",
+		"bearer",
+		"jwt",
+
+		// 密钥相关
 		"key",
+		"api_key",
+		"apikey",
 		"secret",
+		"secret_key",
+		"private_key",
+		"public_key",
+
+		// 密码相关
 		"password",
+		"passwd",
+		"pwd",
 		"auth",
+		"authentication",
+		"credentials",
 		"access_token",
 		"refresh_token",
 		"api_key",
+
+		// 个人信息相关
+		"ssn", // 社会安全号
+		"sin", // 社会保险号
+		"credit_card",
+		"card_number",
+		"account",
+		"account_number",
+		"phone",
+		"mobile",
+		"email",
+		"address",
+		"license_number",
+
+		// Session相关
+		"session",
+		"session_id",
+		"sessionid",
+		"cookie",
+
+		// 签名相关
+		"sign",
+		"signature",
+		"hash",
+		"digest",
+
+		// OAuth相关
+		"client_secret",
+		"client_id",
+		"code",
+		"state",
+		"nonce",
+
+		// 其他敏感信息
+		"certificate",
+		"license",
+		"passport",
+		"device_id",
+		"imei",
+		"mac",
+		"ip",
+		"location",
+		"coordinates",
 	}
 )
 
@@ -128,7 +191,7 @@ func getDesensitizeFunc(tag string) DesensitizeFunc {
 		return ChineseNameDesensitize
 	case "id_card":
 		return IdCardDesensitize
-	case "fixed_phone":
+	case "landline":
 		return FixedPhoneDesensitize
 	case "mobile_phone":
 		return MobilePhoneDesensitize
@@ -138,8 +201,8 @@ func getDesensitizeFunc(tag string) DesensitizeFunc {
 		return EmailDesensitize
 	case "password":
 		return PasswordDesensitize
-	case "car_license":
-		return CarLicenseDesensitize
+	case "plate":
+		return LicensePlateDesensitize
 	case "bank_card":
 		return BankCardDesensitize
 	case "ipv4":
@@ -160,7 +223,7 @@ func getDesensitizeFunc(tag string) DesensitizeFunc {
 		return SocialSecurityDesensitize
 	case "passport":
 		return PassportDesensitize
-	case "drivers_license":
+	case "license_number":
 		return DriversLicenseDesensitize
 	case "medical_id":
 		return MedicalIDDesensitize
@@ -209,8 +272,9 @@ func URLDesensitize(rawURL string) string {
 	}
 
 	// 脱敏用户名和密码
+	var userInfo string
 	if parsedURL.User != nil {
-		parsedURL.User = url.UserPassword("****", "****")
+		userInfo = "****:****@"
 	}
 
 	// 脱敏主机名中的IP地址
@@ -223,12 +287,10 @@ func URLDesensitize(rawURL string) string {
 		} else {
 			host = IPv6Desensitize(host)
 		}
+	}
 
-		if port != "" {
-			parsedURL.Host = net.JoinHostPort(host, port)
-		} else {
-			parsedURL.Host = host
-		}
+	if port != "" {
+		host = net.JoinHostPort(host, port)
 	}
 
 	// 脱敏查询参数中的敏感信息
@@ -240,9 +302,28 @@ func URLDesensitize(rawURL string) string {
 			}
 		}
 	}
-	parsedURL.RawQuery = values.Encode()
 
-	return parsedURL.String()
+	// 手动构建URL字符串
+	var buf strings.Builder
+	if parsedURL.Scheme != "" {
+		buf.WriteString(parsedURL.Scheme)
+		buf.WriteString("://")
+	}
+	buf.WriteString(userInfo)
+	buf.WriteString(host)
+	if parsedURL.Path != "" {
+		buf.WriteString(parsedURL.Path)
+	}
+	if len(values) > 0 {
+		buf.WriteByte('?')
+		buf.WriteString(values.Encode())
+	}
+	if parsedURL.Fragment != "" {
+		buf.WriteByte('#')
+		buf.WriteString(parsedURL.Fragment)
+	}
+
+	return buf.String()
 }
 
 // ClearToNullDesensitize 清空为null的脱敏实现
@@ -368,8 +449,8 @@ func PasswordDesensitize(password string) string {
 	return strings.Repeat("*", utf8.RuneCountInString(password))
 }
 
-// CarLicenseDesensitize 车牌号脱敏
-func CarLicenseDesensitize(license string) string {
+// LicensePlateDesensitize 车牌号脱敏
+func LicensePlateDesensitize(license string) string {
 	runes := []rune(license)
 	if len(runes) <= 4 {
 		return license
@@ -596,7 +677,7 @@ func CommentDesensitize(comment string) string {
 	return string(runes[:5]) + "..." + string(runes[len(runes)-5:])
 }
 
-// Base64Desensitize 高级加密脱敏方法
+// Base64Desensitize Base64编码脱敏方法
 func Base64Desensitize(data string) string {
 	return base64.StdEncoding.EncodeToString([]byte(data))
 }

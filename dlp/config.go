@@ -64,16 +64,21 @@ func (c *DlpConfig) registerDefaultStrategies() {
 	c.RegisterStrategy("chinese_name", ChineseNameDesensitize)
 	c.RegisterStrategy("id_card", IdCardDesensitize)
 	c.RegisterStrategy("passport", PassportDesensitize)
-	c.RegisterStrategy("drivers_license", DriversLicenseDesensitize)
+	c.RegisterStrategy("license_number", DriversLicenseDesensitize)
+	c.RegisterStrategy("nickname", NicknameDesensitize)
+	c.RegisterStrategy("biography", BiographyDesensitize)
+	c.RegisterStrategy("signature", SignatureDesensitize)
+	c.RegisterStrategy("social_security", SocialSecurityDesensitize)
 
 	// 联系方式
 	c.RegisterStrategy("mobile_phone", MobilePhoneDesensitize)
-	c.RegisterStrategy("fixed_phone", FixedPhoneDesensitize)
+	c.RegisterStrategy("landline", FixedPhoneDesensitize)
 	c.RegisterStrategy("email", EmailDesensitize)
 	c.RegisterStrategy("address", AddressDesensitize)
 
 	// 账户信息
 	c.RegisterStrategy("bank_card", BankCardDesensitize)
+	c.RegisterStrategy("credit_card", CreditCardDesensitize)
 	c.RegisterStrategy("username", UsernameDesensitize)
 	c.RegisterStrategy("password", PasswordDesensitize)
 
@@ -85,12 +90,11 @@ func (c *DlpConfig) registerDefaultStrategies() {
 	c.RegisterStrategy("imei", IMEIDesensitize)
 
 	// 证件信息
-	c.RegisterStrategy("social_security", SocialSecurityDesensitize)
 	c.RegisterStrategy("medical_id", MedicalIDDesensitize)
 	c.RegisterStrategy("company_id", CompanyIDDesensitize)
 
 	// 车辆信息
-	c.RegisterStrategy("car_license", CarLicenseDesensitize)
+	c.RegisterStrategy("plate", LicensePlateDesensitize)
 	c.RegisterStrategy("vin", VINDesensitize)
 
 	// 安全凭证
@@ -101,10 +105,14 @@ func (c *DlpConfig) registerDefaultStrategies() {
 	c.RegisterStrategy("public_key", PublicKeyDesensitize)
 	c.RegisterStrategy("certificate", CertificateDesensitize)
 
-	// 其他
+	// 内容相关
+	c.RegisterStrategy("comment", CommentDesensitize)
+	c.RegisterStrategy("coordinate", CoordinateDesensitize)
+
+	// 通用处理
 	c.RegisterStrategy("url", URLDesensitize)
 	c.RegisterStrategy("first_mask", FirstMaskDesensitize)
 	c.RegisterStrategy("null", ClearToNullDesensitize)
 	c.RegisterStrategy("empty", ClearToEmptyDesensitize)
-	c.RegisterStrategy("base64", Base64Desensitize)
+	// c.RegisterStrategy("base64", Base64Desensitize)
 }

@@ -24,7 +24,6 @@ type TCPClient struct {
 //
 // 新的客户端连接到网络 `network` 上的远程地址 `raddr`，
 // 该网络必须是 "tcp"、"tcp4" 或 "tcp6"。
-
 func Dial(network, addr string) (*TCPClient, error) {
 	raddr, err := net.ResolveTCPAddr(network, addr)
 	if err != nil {

@@ -22,7 +22,7 @@ func init() {
 
 func main() {
 	write := os.Stdout
-	//write := slog.NewWriter(filename)
+	// write := slog.NewWriter(filename)
 	logger := slog.NewLogger(write, false, true)
 
 	// 定义所有演示项目
@@ -344,13 +344,13 @@ func demoSensitiveData(logger *slog.Logger) {
 		{"银行卡", "6222021234567890123", "bank_card"},
 		{"电子邮箱", "test@example.com", "email"},
 		{"中文姓名", "张小三", "chinese_name"},
-		{"固定电话", "0755-12345678", "fixed_phone"},
+		{"固定电话", "0755-12345678", "landline"},
 		{"邮政编码", "518000", "postal_code"},
 		{"护照号", "E12345678", "passport"},
-		{"驾驶证", "440101199001011234", "drivers_license"},
+		{"驾驶证", "440101199001011234", "device_id"},
 		{"IPv4地址", "192.168.1.1", "ipv4"},
 		{"MAC地址", "00:0A:95:9D:68:16", "mac"},
-		{"车牌号", "粤B12345", "car_license"},
+		{"车牌号", "粤B12345", "plate"},
 		{"信用卡", "4111111111111111", "credit_card"},
 		{"统一社会信用代码", "91110000100000589B", "company_id"},
 		{"地址", "广东省深圳市南山区科技园", "address"},

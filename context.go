@@ -8,52 +8,78 @@ import (
 	"time"
 )
 
-// 上下文键优化
-type contextKey struct {
-	name string
-}
+// contextKey 定义上下文键
+type contextKey string
 
-var (
-	fieldsKey = &contextKey{"slog_fields"}
-
-	// 全局context池
-	ctxPool = &sync.Pool{
-		New: func() interface{} {
-			return newFields()
-		},
-	}
+const (
+	fieldsKey contextKey = "slog_fields"
+	// 定义清理相关的常量
+	cleanupInterval = time.Minute
+	maxIdleTime     = time.Hour
 )
 
-// Fields 优化实现
+// Fields 存储上下文字段
 type Fields struct {
-	store      atomic.Value // *sync.Map
-	refs       int64        // 引用计数
-	cleanOnce  sync.Once    // 确保只清理一次
-	lastAccess int64        // 最后访问时间
-	mu         sync.RWMutex // 添加互斥锁以保护并发访问
+	values     *sync.Map // 存储实际的键值对
+	refCount   int32     // 原子引用计数
+	lastAccess int64     // 最后访问时间戳
 }
 
+// fieldsPool 对象池
+var fieldsPool = sync.Pool{
+	New: func() interface{} {
+		return &Fields{
+			values: new(sync.Map),
+		}
+	},
+}
+
+// newFields 创建新的Fields实例
 func newFields() *Fields {
-	f := &Fields{}
-	f.store.Store(&sync.Map{})
-	f.lastAccess = time.Now().UnixNano()
+	f := fieldsPool.Get().(*Fields)
+	atomic.StoreInt32(&f.refCount, 1)
+	atomic.StoreInt64(&f.lastAccess, time.Now().UnixNano())
 	return f
 }
 
-// cleanup优化实现
-func (f *Fields) cleanup() {
-	if atomic.AddInt64(&f.refs, -1) == 0 {
-		f.cleanOnce.Do(func() {
-			f.store.Store(&sync.Map{})
-			// 只有在超过一定时间未访问时才放回池中
-			if time.Now().UnixNano()-atomic.LoadInt64(&f.lastAccess) > int64(time.Minute) {
-				ctxPool.Put(f)
-			}
-		})
+// release 释放Fields实例
+func (f *Fields) release() {
+	if atomic.AddInt32(&f.refCount, -1) == 0 {
+		f.values = new(sync.Map)
+		fieldsPool.Put(f)
 	}
 }
 
-// WithContext 使用给定的上下文
+// clone 克隆Fields实例
+func (f *Fields) clone() *Fields {
+	newF := newFields()
+	if f != nil && f.values != nil {
+		f.values.Range(func(key, value interface{}) bool {
+			newF.values.Store(key, value)
+			return true
+		})
+	}
+	return newF
+}
+
+// updateLastAccess 更新最后访问时间
+func (f *Fields) updateLastAccess() {
+	atomic.StoreInt64(&f.lastAccess, time.Now().UnixNano())
+}
+
+// getFields 从上下文中获取Fields
+func getFields(ctx context.Context) *Fields {
+	if ctx == nil {
+		return nil
+	}
+	if f, ok := ctx.Value(fieldsKey).(*Fields); ok {
+		f.updateLastAccess()
+		return f
+	}
+	return nil
+}
+
+// WithContext 方法保持不变
 func WithContext(ctx context.Context) *Logger {
 	return logger.WithContext(ctx)
 }
@@ -91,35 +117,14 @@ func (l *Logger) WithValue(key string, val any) *Logger {
 		newLogger.ctx = context.Background()
 	}
 
-	var fields *Fields
-	if f := newLogger.ctx.Value(fieldsKey); f != nil {
-		// 使用新的 Fields 来避免影响原有的
-		fields = newFields()
-		m := &sync.Map{}
-		// 复制现有值
-		existingFields := f.(*Fields)
-		if existing := existingFields.store.Load().(*sync.Map); existing != nil {
-			existing.Range(func(k, v interface{}) bool {
-				m.Store(k, v)
-				return true
-			})
-		}
-		// 添加新值
-		m.Store(key, val)
-		fields.store.Store(m)
-	} else {
-		fields = newFields()
-		m := &sync.Map{}
-		m.Store(key, val)
-		fields.store.Store(m)
-	}
+	oldFields := getFields(newLogger.ctx)
+	newFields := oldFields.clone()
+	newFields.values.Store(key, val)
 
-	// 创建新的上下文
-	newLogger.ctx = context.WithValue(
-		newLogger.ctx,
-		fieldsKey,
-		fields,
-	)
+	newLogger.ctx = context.WithValue(newLogger.ctx, fieldsKey, newFields)
+	if oldFields != nil {
+		oldFields.release()
+	}
 
 	return newLogger
 }
@@ -127,20 +132,28 @@ func (l *Logger) WithValue(key string, val any) *Logger {
 // 定期清理过期的context
 func init() {
 	go func() {
-		ticker := time.NewTicker(time.Minute)
+		ticker := time.NewTicker(cleanupInterval)
+		defer ticker.Stop()
+
 		for range ticker.C {
-			cleanupExpiredContexts()
+			cleanupExpiredFields()
 		}
 	}()
 }
 
-func cleanupExpiredContexts() {
-	threshold := time.Now().Add(-time.Hour).UnixNano()
-	ctxPool.New = func() interface{} {
-		f := newFields()
-		if atomic.LoadInt64(&f.lastAccess) < threshold {
-			f.cleanup()
+// cleanupExpiredFields 清理过期的Fields
+func cleanupExpiredFields() {
+	threshold := time.Now().Add(-maxIdleTime).UnixNano()
+
+	// 创建临时对象用于遍历
+	temp := fieldsPool.Get().(*Fields)
+	if temp != nil {
+		// 如果最后访问时间超过阈值，重置该对象
+		if atomic.LoadInt64(&temp.lastAccess) < threshold {
+			temp.values = new(sync.Map)
+			atomic.StoreInt32(&temp.refCount, 0)
 		}
-		return f
+		// 将对象放回池中
+		fieldsPool.Put(temp)
 	}
 }

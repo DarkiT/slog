@@ -4,10 +4,8 @@ import (
 	"context"
 	"log/slog"
 	"slices"
-	"sync"
 
 	"github.com/darkit/slog/dlp"
-
 	"github.com/darkit/slog/formatter"
 )
 
@@ -86,22 +84,22 @@ func (h *eHandler) Handle(ctx context.Context, r slog.Record) error {
 	// 处理上下文字段
 	if v := ctx.Value(fieldsKey); v != nil {
 		if fields, ok := v.(*Fields); ok {
-			if m := fields.store.Load().(*sync.Map); m != nil {
-				seen := make(map[string]bool)
-				r.Attrs(func(attr slog.Attr) bool {
-					seen[attr.Key] = true
-					return true
-				})
+			// 创建已存在属性的映射
+			seen := make(map[string]bool)
+			r.Attrs(func(attr slog.Attr) bool {
+				seen[attr.Key] = true
+				return true
+			})
 
-				m.Range(func(key, val interface{}) bool {
-					if keyStr, ok := key.(string); ok {
-						if !seen[keyStr] && keyStr != "module" { // 排除 module 属性
-							nr.AddAttrs(slog.Any(keyStr, val))
-						}
+			// 从 Fields 中获取并添加属性
+			fields.values.Range(func(key, val interface{}) bool {
+				if keyStr, ok := key.(string); ok {
+					if !seen[keyStr] && keyStr != "module" { // 排除 module 属性
+						nr.AddAttrs(slog.Any(keyStr, val))
 					}
-					return true
-				})
-			}
+				}
+				return true
+			})
 		}
 	}
 
