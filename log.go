@@ -16,7 +16,7 @@ import (
 var (
 	// 创建扩展配置
 	ext = &extends{
-		PrefixKeys: []string{"module"},
+		PrefixKeys: []string{"$module"},
 	}
 	levelVar                 slog.LevelVar
 	recordChan               chan slog.Record

@@ -49,9 +49,7 @@ type eHandler struct {
 // newAddonsHandler 创建新的处理器实例
 func newAddonsHandler(next slog.Handler, opts *extends) *eHandler {
 	if opts == nil {
-		opts = &extends{
-			PrefixKeys: []string{"module"},
-		}
+		opts = ext
 	}
 
 	return &eHandler{
@@ -94,7 +92,7 @@ func (h *eHandler) Handle(ctx context.Context, r slog.Record) error {
 			// 从 Fields 中获取并添加属性
 			fields.values.Range(func(key, val interface{}) bool {
 				if keyStr, ok := key.(string); ok {
-					if !seen[keyStr] && keyStr != "module" { // 排除 module 属性
+					if !seen[keyStr] && keyStr != "$module" { // 排除 module 属性
 						nr.AddAttrs(slog.Any(keyStr, val))
 					}
 				}
@@ -105,7 +103,7 @@ func (h *eHandler) Handle(ctx context.Context, r slog.Record) error {
 
 	// 添加原始记录的属性（排除 module）
 	r.Attrs(func(attr slog.Attr) bool {
-		if attr.Key != "module" {
+		if attr.Key != "$module" {
 			nr.AddAttrs(h.transformAttr(h.groups, attr))
 		}
 		return true
