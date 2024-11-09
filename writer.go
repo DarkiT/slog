@@ -287,7 +287,7 @@ func (w *writer) compressFile(src string) error {
 	var err error
 
 	for i := 0; i < maxRetries; i++ {
-		err = w.try_CompressFile(src)
+		err = w.tryCompressfile(src)
 		if err == nil {
 			return nil
 		}
@@ -296,7 +296,7 @@ func (w *writer) compressFile(src string) error {
 	return fmt.Errorf("failed to compress file after %d retries: %v", maxRetries, err)
 }
 
-func (w *writer) try_CompressFile(src string) error {
+func (w *writer) tryCompressfile(src string) error {
 	dst := src + compressSuffix
 
 	f, err := os.Open(src)
