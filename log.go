@@ -289,7 +289,7 @@ func SetLevel(level any) error {
 // Subscribe 订阅日志记录
 // size: channel缓冲区大小
 // 返回值: 只读channel和取消订阅函数
-func Subscribe(size uint16) (<-chan slog.Record, func()) {
+func Subscribe(size uint16) (<-chan slog.Record, context.CancelFunc) {
 	ch := make(chan slog.Record, size)
 	ctx, cancel := context.WithCancel(context.Background())
 

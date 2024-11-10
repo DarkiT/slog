@@ -51,9 +51,11 @@ func (l *Logger) GetLevel() Level {
 
 // SetLevel 设置日志级别
 // 同时更新普通存储和原子存储
-func (l *Logger) SetLevel(level Level) *Logger {
-	l.level = level
-	_ = SetLevel(level)
+func (l *Logger) SetLevel(level any) *Logger {
+	if err := SetLevel(level); err != nil {
+		l.Error("SetLogLevel", "error", err.Error())
+	}
+	l.level = l.GetLevel()
 	return l
 }
 
@@ -109,9 +111,15 @@ func (l *Logger) logRecord(level Level, msg string, sprintf bool, args ...any) {
 		sub := value.(*Subscriber)
 		select {
 		case sub.ch <- r:
-			// 成功发送
+
 		default:
-			// channel已满，跳过
+			// channel已满，使用滑动窗口策略
+			select {
+			case <-sub.ch: // 移除最旧的消息
+				sub.ch <- r
+			default:
+				// 完全阻塞时跳过
+			}
 		}
 		return true
 	})
