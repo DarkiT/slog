@@ -18,13 +18,14 @@ var (
 	ext = &extends{
 		PrefixKeys: []string{"$module"},
 	}
-	levelVar                 slog.LevelVar
+	dlpEnabled               atomic.Bool
 	recordChan               chan slog.Record
 	textEnabled, jsonEnabled = true, false
-	dlpEnabled               atomic.Bool
+	levelVar                 = slog.LevelVar{}
 )
 
 func init() {
+	levelVar.Set(slog.LevelInfo)
 	NewLogger(os.Stdout, false, false)
 }
 

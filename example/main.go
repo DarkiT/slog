@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"runtime/debug"
-	"sync"
 	"time"
 
 	"github.com/darkit/slog"
@@ -67,11 +66,6 @@ func main() {
 			fn:          func() { demoOutputFormat(logger) },
 		},
 		{
-			name:        "日志监控",
-			description: "演示日志级别监控功能",
-			fn:          demoLogMonitoring,
-		},
-		{
 			name:        "日志脱敏",
 			description: "演示敏感信息脱敏功能",
 			fn:          func() { demoSensitiveData(logger) },
@@ -126,23 +120,18 @@ func main() {
 func demoLogLevels() {
 	// 设置全局日志级别
 	slog.SetLevelDebug() // 设置为Debug级别
-
-	// 动态更新日志级别
-	// 方式1：使用字符串
-	_ = slog.UpdateLogLevel("debug")
-	// 方式2：使用Level类型
-	_ = slog.UpdateLogLevel(slog.LevelDebug)
-	// 方式3：使用数字（-8: Trace, -4: Debug, 0: Info, 4: Warn, 8: Error, 12: Fatal）
-	_ = slog.UpdateLogLevel(-4)
-
 	// 获取当前日志级别
 	currentLevel := slog.GetLevel()
+	slog.Trace("Current log level", "level", currentLevel)
+	slog.Debug("Current log level", "level", currentLevel)
 	slog.Info("Current log level", "level", currentLevel)
+	slog.Warn("Current log level", "level", currentLevel)
+	slog.Error("Current log level", "level", currentLevel)
 }
 
 // demoBasicLogging 演示基本日志记录
 func demoBasicLogging(logger *slog.Logger) {
-	_ = slog.UpdateLogLevel(slog.LevelTrace)
+	slog.SetLevelTrace()
 	// 不同级别的日志记录
 	logger.Trace("这是一条跟踪日志") // 最详细的日志级别
 	logger.Debug("这是一条调试日志") // 用于调试信息
@@ -276,42 +265,6 @@ func demoOutputFormat(logger *slog.Logger) {
 	// 3. 恢复默认设置
 	slog.EnableTextLogger()
 	slog.DisableJsonLogger()
-}
-
-// demoLogMonitoring 演示日志监控
-func demoLogMonitoring() {
-	var wg sync.WaitGroup
-	wg.Add(1)
-
-	// 创建变更通知通道
-	levelCh := make(chan slog.Level, 2)
-
-	// 监听日志级别变化
-	slog.WatchLevel("monitor1", func(level slog.Level) {
-		levelCh <- level
-	})
-
-	// 在goroutine中处理级别变化
-	go func() {
-		defer wg.Done()
-		for i := 0; i < 2; i++ {
-			select {
-			case level := <-levelCh:
-				slog.Info("日志级别已变更", "new_level", level)
-			case <-time.After(500 * time.Millisecond):
-				slog.Warn("等待日志级别变更超时")
-				return
-			}
-		}
-	}()
-
-	time.Sleep(100 * time.Millisecond)
-	slog.SetLevelDebug()
-	time.Sleep(100 * time.Millisecond)
-	slog.SetLevelInfo()
-
-	wg.Wait()
-	slog.UnwatchLevel("monitor1")
 }
 
 // demoSensitiveData 演示日志脱敏功能

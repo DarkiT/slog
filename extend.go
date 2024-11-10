@@ -41,7 +41,6 @@ type eHandler struct {
 	prefixes []slog.Value // 前缀值的缓存列表。
 	groups   []string
 	ctx      context.Context
-	module   string
 }
 
 // newAddonsHandler 创建一个新的前缀日志处理器。

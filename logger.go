@@ -146,24 +146,6 @@ func (l *Logger) logRecord(level Level, msg string, sprintf bool, args ...any) {
 	}
 }
 
-// handleRecord 处理日志记录
-// 将日志发送到启用的处理器
-func (l *Logger) handleRecord(r slog.Record, level slog.Level) {
-	if l.text == nil && l.json == nil {
-		return
-	}
-
-	// 处理文本日志
-	if textEnabled && l.text != nil && l.text.Enabled(l.ctx, level) {
-		_ = l.text.Handler().Handle(l.ctx, r)
-	}
-
-	// 处理JSON日志
-	if jsonEnabled && l.json != nil && l.json.Enabled(l.ctx, level) {
-		_ = l.json.Handler().Handle(l.ctx, r)
-	}
-}
-
 // With 创建一个带有额外字段的新日志记录器
 func (l *Logger) With(args ...any) *Logger {
 	if len(args) == 0 {

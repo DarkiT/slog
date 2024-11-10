@@ -152,7 +152,7 @@ func (h *handler) WithGroup(name string) slog.Handler {
 func (h *handler) clone() *handler {
 	return &handler{
 		w:           h.w,
-		mu:          h.mu, // Reuse the same mutex
+		mu:          sync.Mutex{}, // Create new mutex instead of reusing
 		level:       h.level,
 		groups:      slices.Clip(h.groups),
 		attrs:       h.attrs,
