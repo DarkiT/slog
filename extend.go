@@ -89,14 +89,16 @@ func (h *eHandler) Handle(ctx context.Context, r slog.Record) error {
 			})
 
 			// 从 Fields 中获取并添加属性
-			fields.values.Range(func(key, val interface{}) bool {
-				if keyStr, ok := key.(string); ok {
-					if !seen[keyStr] && keyStr != "$module" { // 排除 module 属性
-						nr.AddAttrs(slog.Any(keyStr, val))
-					}
+			fields.mu.RLock()
+			for key, val := range fields.values {
+				if !seen[key] && key != "$module" { // 排除 module 属性
+					attr := slog.Any(key, val)
+					// 应用转换（包括 DLP 处理）
+					attr = h.transformAttr(h.groups, attr)
+					nr.AddAttrs(attr)
 				}
-				return true
-			})
+			}
+			fields.mu.RUnlock()
 		}
 	}
 

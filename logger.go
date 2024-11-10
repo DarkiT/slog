@@ -7,7 +7,6 @@ import (
 	"os"
 	"runtime"
 	"strings"
-	"sync/atomic"
 	"time"
 )
 
@@ -21,7 +20,7 @@ const (
 )
 
 var (
-	logger     Logger                      // 全局日志记录器实例
+	logger     *Logger                     // 全局日志记录器实例
 	TimeFormat = "2006/01/02 15:04.05.000" // 默认时间格式
 
 	// 日志级别对应的JSON名称映射
@@ -42,59 +41,19 @@ type Logger struct {
 	ctx     context.Context // 上下文信息
 	noColor bool            // 是否禁用颜色输出
 	level   Level           // 日志级别
-
-	// 内部优化字段
-	levelVar atomic.Value // 用于原子操作的level存储，确保并发安全
-}
-
-// getEffectiveLevel 获取有效的日志级别
-// 首先尝试从原子存储中获取，如果不存在则遍历所有logger获取最适合的级别
-func (l *Logger) getEffectiveLevel() Level {
-	// 优先从原子存储中获取
-	if val := l.levelVar.Load(); val != nil {
-		return val.(Level)
-	}
-
-	// 确定需要检查的logger列表
-	loggers := []*slog.Logger{l.text, l.json}
-	if textEnabled && !jsonEnabled {
-		loggers = []*slog.Logger{l.text}
-	} else if jsonEnabled && !textEnabled {
-		loggers = []*slog.Logger{l.json}
-	}
-
-	// 按优先级检查每个级别
-	for _, lg := range loggers {
-		if lg != nil {
-			for _, level := range []Level{
-				LevelDebug, LevelInfo, LevelWarn,
-				LevelError, LevelFatal, LevelTrace,
-			} {
-				if lg.Enabled(l.ctx, level) {
-					return level
-				}
-			}
-		}
-	}
-
-	// 返回全局默认级别
-	return levelVar.Level()
 }
 
 // GetLevel 获取当前日志级别
 // 优先返回原子存储的级别，否则返回有效级别
 func (l *Logger) GetLevel() Level {
-	if val := l.levelVar.Load(); val != nil {
-		return val.(Level)
-	}
-	return l.getEffectiveLevel()
+	return levelVar.Level()
 }
 
 // SetLevel 设置日志级别
 // 同时更新普通存储和原子存储
 func (l *Logger) SetLevel(level Level) *Logger {
 	l.level = level
-	l.levelVar.Store(level)
+	_ = SetLevel(level)
 	return l
 }
 
@@ -137,13 +96,25 @@ func (l *Logger) logRecord(level Level, msg string, sprintf bool, args ...any) {
 		r = newRecord(level, msg)
 	}
 
-	// 修改处理方法，传入正确的 context
+	// 处理现有的日志输出
 	if textEnabled && l.text != nil && l.text.Enabled(ctx, level) {
 		_ = l.text.Handler().Handle(ctx, r)
 	}
 	if jsonEnabled && l.json != nil && l.json.Enabled(ctx, level) {
 		_ = l.json.Handler().Handle(ctx, r)
 	}
+
+	// 向所有订阅者发送日志记录
+	subscribers.Range(func(key, value interface{}) bool {
+		sub := value.(*Subscriber)
+		select {
+		case sub.ch <- r:
+			// 成功发送
+		default:
+			// channel已满，跳过
+		}
+		return true
+	})
 }
 
 // With 创建一个带有额外字段的新日志记录器

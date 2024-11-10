@@ -2,11 +2,13 @@ package slog
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -19,10 +21,16 @@ var (
 		PrefixKeys: []string{"$module"},
 	}
 	dlpEnabled               atomic.Bool
-	recordChan               chan slog.Record
+	subscribers              sync.Map // 存储所有订阅者
 	textEnabled, jsonEnabled = true, false
 	levelVar                 = slog.LevelVar{}
 )
+
+// Subscriber 订阅者结构
+type Subscriber struct {
+	ch     chan slog.Record
+	cancel context.CancelFunc
+}
 
 func init() {
 	levelVar.Set(slog.LevelInfo)
@@ -47,7 +55,7 @@ func NewLogger(w io.Writer, noColor, addSource bool) *Logger {
 		w = NewWriter()
 	}
 
-	logger = Logger{
+	logger = &Logger{
 		noColor: noColor,
 		level:   levelVar.Level(),
 		ctx:     context.Background(),
@@ -55,7 +63,7 @@ func NewLogger(w io.Writer, noColor, addSource bool) *Logger {
 		json:    slog.New(newAddonsHandler(NewJSONHandler(w, options), ext)),
 	}
 
-	return &logger
+	return logger
 }
 
 /*
@@ -119,7 +127,7 @@ func NewOptions(options *slog.HandlerOptions) *slog.HandlerOptions {
 // Default 返回一个新的带前缀的日志记录器
 func Default(modules ...string) *Logger {
 	if len(modules) == 0 {
-		return &logger
+		return logger
 	}
 
 	// 构建模块标识符
@@ -127,6 +135,9 @@ func Default(modules ...string) *Logger {
 
 	// 创建新的带模块前缀的logger
 	newLogger := logger.clone()
+
+	// 创建新的上下文
+	newLogger.ctx = context.Background() // 确保每个模块有独立的上下文
 
 	// 设置模块前缀
 	newHandler := newAddonsHandler(newLogger.text.Handler(), ext)
@@ -233,16 +244,72 @@ func SetLevelError() { levelVar.Set(LevelError) }
 // SetLevelFatal 设置全局日志级别为Fatal。
 func SetLevelFatal() { levelVar.Set(LevelFatal) }
 
-// GetChanRecord 使用通道获取日志信息
-func GetChanRecord(num ...uint16) chan slog.Record {
-	var n uint16 = 500
-	if recordChan == nil {
-		if num != nil {
-			n = num[0]
+// SetLevel 动态更新日志级别
+// level 可以是数字(-8, -4, 0, 4, 8, 12)或字符串(trace, debug, info, warn, error, fatal)
+func SetLevel(level any) error {
+	var newLevel Level
+
+	switch v := level.(type) {
+	case Level:
+		newLevel = v
+	case int:
+		newLevel = Level(v)
+	case string:
+		// 将字符串转换为Level
+		switch strings.ToLower(v) {
+		case "trace":
+			newLevel = LevelTrace
+		case "debug":
+			newLevel = LevelDebug
+		case "info":
+			newLevel = LevelInfo
+		case "warn":
+			newLevel = LevelWarn
+		case "error":
+			newLevel = LevelError
+		case "fatal":
+			newLevel = LevelFatal
+		default:
+			return errors.New("invalid log level string")
 		}
-		recordChan = make(chan slog.Record, n)
+	default:
+		return errors.New("unsupported level type")
 	}
-	return recordChan
+
+	// 验证级别是否有效
+	if !isValidLevel(newLevel) {
+		return errors.New("invalid log level value")
+	}
+
+	levelVar.Set(newLevel)
+
+	return nil
+}
+
+// Subscribe 订阅日志记录
+// size: channel缓冲区大小
+// 返回值: 只读channel和取消订阅函数
+func Subscribe(size uint16) (<-chan slog.Record, func()) {
+	ch := make(chan slog.Record, size)
+	ctx, cancel := context.WithCancel(context.Background())
+
+	sub := &Subscriber{
+		ch:     ch,
+		cancel: cancel,
+	}
+
+	// 生成唯一的订阅者ID
+	subID := time.Now().UnixNano()
+	subscribers.Store(subID, sub)
+
+	// 监听context取消
+	go func() {
+		<-ctx.Done()
+		subscribers.Delete(subID)
+		close(ch)
+	}()
+
+	return ch, cancel
 }
 
 // EnableFormatters 启用日志格式化器。
@@ -295,4 +362,23 @@ func IsDLPEnabled() bool {
 func isWriter(w interface{}) bool {
 	_, ok := w.(*writer)
 	return ok
+}
+
+// isValidLevel 检查日志级别是否有效
+func isValidLevel(level Level) bool {
+	validLevels := []Level{
+		LevelTrace, // -8
+		LevelDebug, // -4
+		LevelInfo,  // 0
+		LevelWarn,  // 4
+		LevelError, // 8
+		LevelFatal, // 12
+	}
+
+	for _, l := range validLevels {
+		if level == l {
+			return true
+		}
+	}
+	return false
 }

@@ -39,6 +39,11 @@ func main() {
 	// 创建默认logger
 	logger := slog.NewLogger(os.Stdout, false, false)
 
+	// 获取原始的 slog.Logger
+	slogLogger := logger.GetSlogLogger()
+	// 现在可以直接使用原始的 slog.Logger
+	slogLogger.Info("使用原始slog记录日志")
+
 	// 基础日志记录
 	logger.Info("Hello Slog!")
 
@@ -154,22 +159,55 @@ logger.Info("User data",
 )
 ```
 
-### 6. 高级功能
+### 6. 日志订阅机制
 
 ```go
-// 获取日志记录通道
-recordChan := slog.GetChanRecord(1000) // 指定缓冲大小
+// 订阅日志记录
+ch, cancel := slog.Subscribe(1000) // 指定缓冲大小
+defer cancel() // 确保取消订阅
 
-// 自定义属性
-logger.With(
-slog.String("app", "myapp"),
-slog.Int("version", 1),
-slog.Time("start_time", time.Now()),
-).Info("Application started")
+// 处理订阅的日志
+go func() {
+    for record := range ch {
+        fmt.Printf("收到日志: %s [%s] %s\n",
+            record.Time.Format(slog.TimeFormat),
+            record.Level,
+            record.Message,
+        )
+    }
+}()
 
-// 获取原始slog.Logger
-slogLogger := logger.GetSlogLogger()
+// 多订阅者模式
+ch1, cancel1 := slog.Subscribe(500)
+defer cancel1()
+
+ch2, cancel2 := slog.Subscribe(1000)
+defer cancel2()
+
+// 不同订阅者可以独立处理日志
+go func() {
+    for record := range ch1 {
+        // 处理所有日志
+        fmt.Printf("订阅者1: %v\n", record)
+    }
+}()
+
+go func() {
+    for record := range ch2 {
+        // 只处理错误日志
+        if record.Level >= slog.LevelError {
+            fmt.Printf("订阅者2 - 错误: %v\n", record)
+        }
+    }
+}()
 ```
+
+订阅特性：
+- 支持多个订阅者
+- 独立的缓冲区大小控制
+- 自动资源清理
+- 无阻塞设计
+- 支持选择性处理
 
 ## 日志文件管理
 
@@ -250,6 +288,7 @@ logs/
 | `EnableJsonLogger()` | 启用JSON日志输出 |
 | `DisableJsonLogger()` | 禁用JSON日志输出 |
 | `EnableFormatters(formatters ...formatter.Formatter)` | 启用日志格式化器 |
+| `Subscribe(size uint16) (<-chan slog.Record, func())` | 订阅日志记录，返回只读channel和取消函数 |
 
 ### Logger方法
 

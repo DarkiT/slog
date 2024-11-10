@@ -86,6 +86,11 @@ func main() {
 			fn:          demoAsyncLogging,
 		},
 		{
+			name:        "多订阅者模式",
+			description: "演示多个订阅者处理日志的场景",
+			fn:          demoMultipleSubscribers,
+		},
+		{
 			name:        "链路追踪",
 			description: "演示日志链路追踪功能",
 			fn:          demoTracing,
@@ -382,9 +387,17 @@ func demoAdvancedFeatures(logger *slog.Logger) {
 	slogLogger := logger.GetSlogLogger()
 	slogLogger.Info("使用原始slog记录日志")
 
-	// 获取日志记录通道
-	recordChan := slog.GetChanRecord(1000) // 指定缓冲大小
-	_ = recordChan                         // 在实际应用中可以用于异步处理日志
+	// 订阅日志记录
+	ch, cancel := slog.Subscribe(1000) // 指定缓冲大小
+	defer cancel()                     // 确保取消订阅
+
+	// 启动异步处理
+	go func() {
+		for record := range ch {
+			// 在这里处理订阅到的日志
+			fmt.Printf("收到日志记录: %v\n", record)
+		}
+	}()
 
 	// 使用Group和With的组合
 	logger.WithGroup("api").
@@ -392,6 +405,9 @@ func demoAdvancedFeatures(logger *slog.Logger) {
 		WithGroup("auth").
 		With("client_id", "123").
 		Info("API调用")
+
+	// 等待一会儿确保日志被处理
+	time.Sleep(100 * time.Millisecond)
 }
 
 // demoPrefixAndFormatting 演示日志前缀和格式化功能
@@ -461,14 +477,18 @@ func demoPrefixAndFormatting() {
 
 // demoAsyncLogging 演示异步日志记录功能
 func demoAsyncLogging() {
-	// 获取异步日志通道
-	recordChan := slog.GetChanRecord(1000)
+	// 订阅日志
+	ch, cancel := slog.Subscribe(1000)
+	defer cancel()
 
 	// 启动异步处理
 	go func() {
-		for record := range recordChan {
-			// 处理日志记录
-			fmt.Printf("异步处理日志: %v\n", record)
+		for record := range ch {
+			fmt.Printf("异步处理日志: %s [%s] %s\n",
+				record.Time.Format(slog.TimeFormat),
+				record.Level,
+				record.Message,
+			)
 		}
 	}()
 
@@ -481,6 +501,43 @@ func demoAsyncLogging() {
 		)
 		time.Sleep(100 * time.Millisecond)
 	}
+
+	// 等待最后的日志处理完成
+	time.Sleep(200 * time.Millisecond)
+}
+
+// demoMultipleSubscribers 演示多订阅者场景
+func demoMultipleSubscribers() {
+	// 创建两个不同的订阅者
+	ch1, cancel1 := slog.Subscribe(500)
+	defer cancel1()
+
+	ch2, cancel2 := slog.Subscribe(1000)
+	defer cancel2()
+
+	// 第一个订阅者：打印完整日志
+	go func() {
+		for record := range ch1 {
+			fmt.Printf("订阅者1 - 完整日志: %v\n", record)
+		}
+	}()
+
+	// 第二个订阅者：只关注错误日志
+	go func() {
+		for record := range ch2 {
+			if record.Level >= slog.LevelError {
+				fmt.Printf("订阅者2 - 错误日志: %v\n", record)
+			}
+		}
+	}()
+
+	// 生成一些测试日志
+	logger := slog.Default("multi")
+	logger.Info("这是一条普通信息")
+	logger.Error("这是一条错误信息", "error", fmt.Errorf("test error"))
+
+	// 等待日志处理完成
+	time.Sleep(200 * time.Millisecond)
 }
 
 // demoTracing 演示日志链路追踪功能
