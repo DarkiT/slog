@@ -17,15 +17,7 @@ import (
 )
 
 var (
-	defaultLevel   = LevelError
-	levelTextNames = map[slog.Leveler]string{
-		LevelInfo:  "I",
-		LevelDebug: "D",
-		LevelWarn:  "W",
-		LevelError: "E",
-		LevelTrace: "T",
-		LevelFatal: "F",
-	}
+	defaultLevel  = LevelError
 	levelColorMap = map[slog.Level]string{
 		LevelDebug: ansiBrightBlue,
 		LevelInfo:  ansiBrightGreen,

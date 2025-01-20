@@ -22,7 +22,7 @@ func init() {
 func main() {
 	write := os.Stdout
 	// write := slog.NewWriter(filename)
-	logger := slog.NewLogger(write, false, true)
+	logger := slog.NewLogger(write, false, false)
 
 	// 定义所有演示项目
 	demos := []struct {
@@ -151,6 +151,12 @@ func demoBasicLogging(logger *slog.Logger) {
 	slog.Info("使用全局Info记录")
 	slog.Warn("使用全局Warn记录")
 	slog.Error("使用全局Error记录")
+
+	// 动态效果使用示例
+	slog.Dynamic("请稍候", 10, 500)
+	slog.Progress("加载中", 3000)
+	slog.Countdown("即将开始", 5)
+	slog.Loading("处理中...", 3)
 }
 
 // demoFormattedLogging 演示格式化日志

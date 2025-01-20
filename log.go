@@ -56,6 +56,7 @@ func NewLogger(w io.Writer, noColor, addSource bool) *Logger {
 	}
 
 	logger = &Logger{
+		w:       w,
 		noColor: noColor,
 		level:   levelVar.Level(),
 		ctx:     context.Background(),
@@ -205,6 +206,41 @@ func Println(msg string, args ...any) { logger.logWithLevel(LevelInfo, msg, args
 
 // Printf 记录信息级别的格式化日志。
 func Printf(format string, args ...any) { logger.logWithLevel(LevelInfo, format, args...) }
+
+// 辅助便捷方法
+
+// Dynamic 动态输出带点号动画效果
+//
+//   - msg: 要显示的消息内容
+//   - frames: 动画更新的总帧数
+//   - interval: 每次更新的时间间隔(毫秒)
+func Dynamic(msg string, frames int, interval int) {
+	logger.Dynamic(msg, frames, interval)
+}
+
+// Progress 全局进度显示
+//
+//   - msg: 要显示的消息内容
+//   - durationMs: 从0%到100%的总持续时间(毫秒)
+func Progress(msg string, durationMs int) {
+	logger.Progress(msg, durationMs)
+}
+
+// Countdown 全局倒计时显示
+//
+//   - msg: 要显示的消息内容
+//   - seconds: 倒计时的秒数
+func Countdown(msg string, seconds int) {
+	logger.Countdown(msg, seconds)
+}
+
+// Loading 全局加载动画
+//
+//   - msg: 要显示的消息内容
+//   - seconds: 动画持续的秒数
+func Loading(msg string, seconds int) {
+	logger.Loading(msg, seconds)
+}
 
 // With 创建一个新的日志记录器，带有指定的属性。
 func With(args ...any) *Logger {

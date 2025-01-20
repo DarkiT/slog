@@ -68,18 +68,6 @@ slog.SetLevelError()  // Error级别
 slog.SetLevelFatal()  // Fatal级别
 slog.SetLevelTrace()  // Trace级别
 
-// 动态更新日志级别
-slog.UpdateLogLevel("debug")           // 使用字符串
-slog.UpdateLogLevel(slog.LevelDebug)   // 使用Level类型
-slog.UpdateLogLevel(-4)                // 使用数字
-
-// 监听日志级别变化
-slog.WatchLevel("observer1", func(level slog.Level) {
-fmt.Printf("Log level changed to: %v\n", level)
-})
-
-// 取消监听
-slog.UnwatchLevel("observer1")
 ```
 
 ### 2. 日志记录方法
@@ -280,7 +268,6 @@ logs/
 | `NewLogger(w io.Writer, noColor, addSource bool) Logger` | 创建新的日志记录器 |
 | `Default(modules ...string) *Logger` | 获取带模块名的默认日志记录器 |
 | `SetLevel{Level}()` | 设置全局日志级别（Level可以是Trace/Debug/Info/Warn/Error/Fatal） |
-| `UpdateLogLevel(level interface{}) error` | 动态更新日志级别 |
 | `WatchLevel(name string, callback func(Level))` | 监听日志级别变化 |
 | `UnwatchLevel(name string)` | 取消日志级别监听 |
 | `EnableTextLogger()` | 启用文本日志输出 |

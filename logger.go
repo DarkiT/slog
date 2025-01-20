@@ -3,10 +3,12 @@ package slog
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -23,6 +25,15 @@ var (
 	logger     *Logger                     // 全局日志记录器实例
 	TimeFormat = "2006/01/02 15:04.05.000" // 默认时间格式
 
+	// 日志级别对应的TXT名称映射
+	levelTextNames = map[slog.Leveler]string{
+		LevelInfo:  "I",
+		LevelDebug: "D",
+		LevelWarn:  "W",
+		LevelError: "E",
+		LevelTrace: "T",
+		LevelFatal: "F",
+	}
 	// 日志级别对应的JSON名称映射
 	levelJsonNames = map[Level]string{
 		LevelInfo:  "Info",
@@ -36,11 +47,13 @@ var (
 
 // Logger 结构体定义，实现日志记录功能
 type Logger struct {
+	w       io.Writer
 	text    *slog.Logger    // 文本格式日志记录器
 	json    *slog.Logger    // JSON格式日志记录器
 	ctx     context.Context // 上下文信息
 	noColor bool            // 是否禁用颜色输出
 	level   Level           // 日志级别
+	mu      sync.Mutex      // 添加互斥锁，用于处理并发
 }
 
 // GetLevel 获取当前日志级别
@@ -248,9 +261,135 @@ func (l *Logger) Println(msg string, args ...any) {
 	l.logWithLevel(LevelInfo, msg, args...)
 }
 
+// appendColorLevel 添加带颜色的日志级别
+func (l *Logger) appendColorLevel(level Level) string {
+	if !textEnabled {
+		return fmt.Sprintf("[%s]", levelJsonNames[level])
+	}
+
+	// 获取对应的颜色代码
+	color, ok := levelColorMap[level]
+	if !ok {
+		color = ansiBrightRed
+	}
+
+	// 如果没有禁用颜色，则添加颜色代码
+	if !l.noColor {
+		return fmt.Sprintf("%s[%s]%s", color, levelTextNames[level], ansiReset)
+	}
+
+	return fmt.Sprintf("[%s]", levelTextNames[level])
+}
+
+// logWithDynamic 处理动态输出的日志
+//
+// msg: 要显示的消息
+// render: 动态渲染函数，用于生成每一帧的内容
+// interval: 每次更新的时间间隔(毫秒)
+func (l *Logger) logWithDynamic(level Level, render func(i int) string, interval int) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	// 使用 handler 的 writer
+	w := l.w
+
+	// 动态输出内容
+	for i := 0; ; i++ {
+		content := render(i)
+		if content == "" {
+			break
+		}
+
+		if textEnabled {
+			// 文本格式输出
+			fmt.Fprintf(w, "\r%s %s %s",
+				time.Now().Format(TimeFormat),
+				l.appendColorLevel(level),
+				content)
+		} else {
+			// JSON格式输出
+			fmt.Fprintf(w, "\r{\"time\":\"%s\",\"level\":\"%s\",\"msg\":\"%s\"}",
+				time.Now().Format(TimeFormat),
+				levelJsonNames[level],
+				content)
+		}
+
+		time.Sleep(time.Duration(interval) * time.Millisecond)
+	}
+	fmt.Fprintln(w)
+}
+
+// Dynamic 动态输出带点号动画效果
+//
+//   - msg: 要显示的消息内容
+//   - frames: 动画更新的总帧数
+//   - interval: 每次更新的时间间隔(毫秒)
+func (l *Logger) Dynamic(msg string, frames int, interval int) {
+	l.logWithDynamic(l.level, func(i int) string {
+		if i >= frames {
+			return ""
+		}
+		return fmt.Sprintf("%s%s", msg, strings.Repeat(".", i%4))
+	}, interval)
+}
+
+// Progress 显示进度百分比
+//
+//   - msg: 要显示的消息内容
+//   - durationMs: 从0%到100%的总持续时间(毫秒)
+func (l *Logger) Progress(msg string, durationMs int) {
+	steps := 100
+	interval := durationMs / steps // 计算每步的时间间隔
+	startTime := time.Now()
+
+	l.logWithDynamic(l.level, func(i int) string {
+		if i > steps {
+			return ""
+		}
+		// 根据实际经过的时间计算进度
+		elapsed := time.Since(startTime)
+		progress := float64(elapsed) / float64(time.Duration(durationMs)*time.Millisecond) * 100
+		if progress > 100 {
+			progress = 100
+		}
+		return fmt.Sprintf("%s %.1f%%", msg, progress)
+	}, interval)
+}
+
+// Countdown 显示倒计时
+//
+//   - msg: 要显示的消息内容
+//   - seconds: 倒计时的秒数
+func (l *Logger) Countdown(msg string, seconds int) {
+	l.logWithDynamic(l.level, func(i int) string {
+		remaining := seconds - i
+		if remaining < 0 {
+			return ""
+		}
+		return fmt.Sprintf("%s %ds", msg, remaining)
+	}, 1000)
+}
+
+// Loading 显示加载动画
+//
+//   - msg: 要显示的消息内容
+//   - seconds: 持续时间(秒)
+func (l *Logger) Loading(msg string, seconds int) {
+	spinner := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+	steps := seconds * 10 // 每秒10帧
+
+	l.logWithDynamic(l.level, func(i int) string {
+		if i >= steps {
+			return ""
+		}
+		return fmt.Sprintf("%s %s", spinner[i%len(spinner)], msg)
+	}, 100) // 固定100ms间隔，即10帧/秒
+}
+
 // clone 创建Logger的深度复制
 func (l *Logger) clone() *Logger {
 	newLogger := &Logger{
+		w:       l.w,
 		text:    l.text,
 		json:    l.json,
 		noColor: l.noColor,
