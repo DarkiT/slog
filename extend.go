@@ -115,12 +115,25 @@ func (h *eHandler) Handle(ctx context.Context, r slog.Record) error {
 
 // WithAttrs 方法，正确使用模块值
 func (h *eHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
-	return &eHandler{
+	// 复制处理器实例
+	newHandler := &eHandler{
 		handler:  h.handler.WithAttrs(h.transformAttrs(h.groups, attrs)),
 		opts:     h.opts,
 		groups:   slices.Clone(h.groups),
-		prefixes: slices.Clone(h.prefixes), // 保持现有前缀
+		prefixes: slices.Clone(h.prefixes), // 复制现有前缀
 	}
+
+	// 检查是否有前缀键
+	for _, attr := range attrs {
+		for i, key := range h.opts.PrefixKeys {
+			if attr.Key == key && i < len(newHandler.prefixes) {
+				// 存储前缀值
+				newHandler.prefixes[i] = attr.Value
+			}
+		}
+	}
+
+	return newHandler
 }
 
 func (h *eHandler) WithGroup(name string) slog.Handler {

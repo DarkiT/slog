@@ -1,6 +1,7 @@
 package slog
 
 import (
+	"io"
 	"sync"
 	"sync/atomic"
 )
@@ -114,13 +115,13 @@ func (b *buffer) WriteByte(c byte) error {
 
 // WriteTo 将buffer中的数据写入到io.Writer
 // 实现了io.WriterTo接口
-//func (b *buffer) WriteTo(w io.Writer) (n int64, err error) {
-//	if len(b.buf) == 0 {
-//		return 0, nil
-//	}
-//	nBytes, err := w.Write(b.buf)
-//	return int64(nBytes), err
-//}
+func (b *buffer) WriteTo(w io.Writer) (n int64, err error) {
+	if len(b.buf) == 0 {
+		return 0, nil
+	}
+	nBytes, err := w.Write(b.buf)
+	return int64(nBytes), err
+}
 
 // String 返回buffer中的内容作为字符串
 // 实现了fmt.Stringer接口

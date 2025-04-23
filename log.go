@@ -242,6 +242,94 @@ func Loading(msg string, seconds int) {
 	logger.Loading(msg, seconds)
 }
 
+// ProgressBar 全局方法：显示带有可视化进度条的日志
+//
+//   - msg: 要显示的消息内容
+//   - durationMs: 从0%到100%的总持续时间(毫秒)
+//   - barWidth: 进度条的总宽度（字符数）
+//   - level: 可选的日志级别，默认使用全局默认级别
+func ProgressBar(msg string, durationMs int, barWidth int, level ...Level) *Logger {
+	return Default().ProgressBar(msg, durationMs, barWidth, level...)
+}
+
+// ProgressBarWithValue 全局方法：显示指定进度值的进度条
+//
+//   - msg: 要显示的消息内容
+//   - progress: 进度值(0-100之间)
+//   - barWidth: 进度条的总宽度（字符数）
+//   - level: 可选的日志级别，默认使用全局默认级别
+func ProgressBarWithValue(msg string, progress float64, barWidth int, level ...Level) {
+	Default().ProgressBarWithValue(msg, progress, barWidth, level...)
+}
+
+// ProgressBarWithValueTo 全局方法：显示指定进度值的进度条并输出到指定writer
+//
+//   - msg: 要显示的消息内容
+//   - progress: 进度值(0-100之间)
+//   - barWidth: 进度条的总宽度（字符数）
+//   - writer: 指定的输出writer
+//   - level: 可选的日志级别，默认使用全局默认级别
+func ProgressBarWithValueTo(msg string, progress float64, barWidth int, writer io.Writer, level ...Level) {
+	Default().ProgressBarWithValueTo(msg, progress, barWidth, writer, level...)
+}
+
+// ProgressBarWithOptions 全局方法：显示可高度定制的进度条
+//
+//   - msg: 要显示的消息内容
+//   - durationMs: 从0%到100%的总持续时间(毫秒)
+//   - barWidth: 进度条的总宽度（字符数）
+//   - opts: 进度条选项，控制显示样式
+//   - level: 可选的日志级别，默认使用全局默认级别
+func ProgressBarWithOptions(msg string, durationMs int, barWidth int, opts progressBarOptions, level ...Level) *Logger {
+	return Default().ProgressBarWithOptions(msg, durationMs, barWidth, opts, level...)
+}
+
+// ProgressBarWithOptionsTo 全局方法：显示可高度定制的进度条并输出到指定writer
+//
+//   - msg: 要显示的消息内容
+//   - durationMs: 从0%到100%的总持续时间(毫秒)
+//   - barWidth: 进度条的总宽度（字符数）
+//   - opts: 进度条选项，控制显示样式
+//   - writer: 指定的输出writer
+//   - level: 可选的日志级别，默认使用全局默认级别
+func ProgressBarWithOptionsTo(msg string, durationMs int, barWidth int, opts progressBarOptions, writer io.Writer, level ...Level) *Logger {
+	return Default().ProgressBarWithOptionsTo(msg, durationMs, barWidth, opts, writer, level...)
+}
+
+// ProgressBarWithValueAndOptions 全局方法：显示指定进度值的定制进度条
+//
+//   - msg: 要显示的消息内容
+//   - progress: 进度值(0-100之间)
+//   - barWidth: 进度条的总宽度（字符数）
+//   - opts: 进度条选项，控制显示样式
+//   - level: 可选的日志级别，默认使用全局默认级别
+func ProgressBarWithValueAndOptions(msg string, progress float64, barWidth int, opts progressBarOptions, level ...Level) {
+	Default().ProgressBarWithValueAndOptions(msg, progress, barWidth, opts, level...)
+}
+
+// ProgressBarWithValueAndOptionsTo 全局方法：显示指定进度值的定制进度条并输出到指定writer
+//
+//   - msg: 要显示的消息内容
+//   - progress: 进度值(0-100之间)
+//   - barWidth: 进度条的总宽度（字符数）
+//   - opts: 进度条选项，控制显示样式
+//   - writer: 指定的输出writer
+//   - level: 可选的日志级别，默认使用全局默认级别
+func ProgressBarWithValueAndOptionsTo(msg string, progress float64, barWidth int, opts progressBarOptions, writer io.Writer, level ...Level) {
+	Default().ProgressBarWithValueAndOptionsTo(msg, progress, barWidth, opts, writer, level...)
+}
+
+// ProgressBarTo 全局方法：显示带有可视化进度条的日志，并输出到指定writer
+//
+//   - msg: 要显示的消息内容
+//   - durationMs: 从0%到100%的总持续时间(毫秒)
+//   - barWidth: 进度条的总宽度（字符数）
+//   - writer: 指定的输出writer
+//   - level: 可选的日志级别，默认使用全局默认级别
+func ProgressBarTo(msg string, durationMs int, barWidth int, writer io.Writer, level ...Level) *Logger {
+	return Default().ProgressBarTo(msg, durationMs, barWidth, writer, level...)
+}
+
 // With 创建一个新的日志记录器，带有指定的属性。
 func With(args ...any) *Logger {
 	return logger.With(args...)
@@ -320,6 +408,15 @@ func SetLevel(level any) error {
 	levelVar.Set(newLevel)
 
 	return nil
+}
+
+// SetTimeFormat 全局方法：设置日志时间格式
+//
+//   - format: 时间格式字符串，例如 "2006-01-02 15:04:05.000"
+func SetTimeFormat(format string) {
+	if format != "" {
+		TimeFormat = format
+	}
 }
 
 // Subscribe 订阅日志记录

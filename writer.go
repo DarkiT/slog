@@ -47,7 +47,7 @@ type logInfo struct {
 //   - 保留最近 30 天的日志
 //   - 最多保留 30 个备份文件
 //   - 使用本地时间
-//   - 不压缩旧文件
+//   - 压缩旧文件
 func NewWriter(filename ...string) *writer {
 	var logFile string
 	if len(filename) > 0 {
@@ -297,7 +297,7 @@ func (w *writer) compressFile(src string) error {
 }
 
 func (w *writer) tryCompressfile(src string) error {
-	dst := src + compressSuffix
+	dst := src + "." + compressSuffix
 
 	f, err := os.Open(src)
 	if err != nil {

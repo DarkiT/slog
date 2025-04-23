@@ -18,6 +18,8 @@ slog 是一个高性能、功能丰富的 Go 语言日志库，基于 Go 1.21+ �
 - 高性能缓冲设计
 - 线程安全
 - 支持自定义格式化
+- 内置丰富的可视化进度条功能
+- 支持动态输出和实时更新
 
 ## 安装
 
@@ -147,7 +149,63 @@ logger.Info("User data",
 )
 ```
 
-### 6. 日志订阅机制
+### 6. 进度条功能
+
+slog 提供了丰富的进度条功能，用于在日志中显示可视化的进度:
+
+```go
+// 基本进度条 - 根据时间自动推进
+logger.ProgressBar("处理文件中", 5000, 30) // 消息, 总时间(ms), 进度条宽度
+
+// 自定义进度值的进度条
+logger.ProgressBarWithValue("处理进度", 75.5, 30) // 显示75.5%的进度
+
+// 输出到特定writer的进度条
+file, _ := os.Create("progress.log")
+logger.ProgressBarTo("导出数据", 3000, 30, file)
+
+// 带自定义值输出到特定writer
+logger.ProgressBarWithValueTo("处理进度", 50.0, 30, os.Stdout)
+
+// 使用自定义选项
+opts := slog.DefaultProgressBarOptions()
+opts.BarStyle = "block" // 使用方块样式 (可选: "default", "block", "simple")
+opts.ShowPercentage = true
+opts.TimeFormat = "15:04:05" // 自定义时间格式
+
+// 带选项的进度条
+logger.ProgressBarWithOptions("导入数据", 10000, 40, opts)
+
+// 带选项和自定义值的进度条
+logger.ProgressBarWithValueAndOptions("分析完成度", 80.0, 40, opts)
+
+// 带选项和自定义值并输出到特定writer的进度条
+logger.ProgressBarWithValueAndOptionsTo("处理状态", 65.5, 40, opts, os.Stdout)
+```
+
+进度条特性:
+- **多种样式**: 支持默认(=)、方块(█)、简单(#-)等多种风格
+- **百分比显示**: 可选择是否显示百分比
+- **自定义颜色**: 继承日志级别颜色
+- **可自定义宽度**: 适应不同终端大小
+- **实时更新**: 根据时间自动更新或手动设置进度值
+- **自定义输出**: 可以输出到任意writer
+- **线程安全**: 所有操作都是并发安全的
+
+进度条选项说明:
+
+| 选项 | 类型 | 默认值 | 描述 |
+|------|------|--------|------|
+| `BarStyle` | string | "default" | 进度条样式 ("default", "block", "simple") |
+| `ShowPercentage` | bool | true | 是否显示百分比 |
+| `TimeFormat` | string | TimeFormat | 时间格式 |
+| `LeftBracket` | string | "[" | 左边框字符 |
+| `RightBracket` | string | "]" | 右边框字符 |
+| `Fill` | string | "=" | 已完成部分填充字符 |
+| `Head` | string | ">" | 进度条头部字符 |
+| `Empty` | string | " " | 未完成部分填充字符 |
+
+### 7. 日志订阅机制
 
 ```go
 // 订阅日志记录
@@ -276,6 +334,13 @@ logs/
 | `DisableJsonLogger()` | 禁用JSON日志输出 |
 | `EnableFormatters(formatters ...formatter.Formatter)` | 启用日志格式化器 |
 | `Subscribe(size uint16) (<-chan slog.Record, func())` | 订阅日志记录，返回只读channel和取消函数 |
+| `ProgressBar(msg string, durationMs int, barWidth int, level ...Level) *Logger` | 显示带有可视化进度条的日志 |
+| `ProgressBarWithValue(msg string, progress float64, barWidth int, level ...Level)` | 显示指定进度值的进度条 |
+| `ProgressBarWithValueTo(msg string, progress float64, barWidth int, writer io.Writer, level ...Level)` | 显示指定进度值的进度条并输出到指定writer |
+| `ProgressBarWithOptions(msg string, durationMs int, barWidth int, opts progressBarOptions, level ...Level) *Logger` | 显示可高度定制的进度条 |
+| `ProgressBarWithOptionsTo(msg string, durationMs int, barWidth int, opts progressBarOptions, writer io.Writer, level ...Level) *Logger` | 显示可高度定制的进度条并输出到指定writer |
+| `ProgressBarWithValueAndOptions(msg string, progress float64, barWidth int, opts progressBarOptions, level ...Level)` | 显示指定进度值的定制进度条 |
+| `ProgressBarWithValueAndOptionsTo(msg string, progress float64, barWidth int, opts progressBarOptions, writer io.Writer, level ...Level)` | 显示指定进度值的定制进度条并输出到指定writer |
 
 ### Logger方法
 
@@ -288,6 +353,17 @@ logs/
 | `GetLevel() Level` | 获取当前日志级别 |
 | `SetLevel(level Level) *Logger` | 设置当前记录器的日志级别 |
 | `GetSlogLogger() *slog.Logger` | 获取原始的slog.Logger |
+| `ProgressBar(msg string, durationMs int, barWidth int, level ...Level) *Logger` | 显示带有可视化进度条的日志 |
+| `ProgressBarWithValue(msg string, progress float64, barWidth int, level ...Level)` | 显示指定进度值的进度条 |
+| `ProgressBarWithValueTo(msg string, progress float64, barWidth int, writer io.Writer, level ...Level)` | 显示指定进度值的进度条并输出到指定writer |
+| `ProgressBarWithOptions(msg string, durationMs int, barWidth int, opts progressBarOptions, level ...Level) *Logger` | 显示可高度定制的进度条 |
+| `ProgressBarWithOptionsTo(msg string, durationMs int, barWidth int, opts progressBarOptions, writer io.Writer, level ...Level) *Logger` | 显示可高度定制的进度条并输出到指定writer |
+| `ProgressBarWithValueAndOptions(msg string, progress float64, barWidth int, opts progressBarOptions, level ...Level)` | 显示指定进度值的定制进度条 |
+| `ProgressBarWithValueAndOptionsTo(msg string, progress float64, barWidth int, opts progressBarOptions, writer io.Writer, level ...Level)` | 显示指定进度值的定制进度条并输出到指定writer |
+| `Dynamic(msg string, frames int, interval int, writer ...io.Writer)` | 动态输出带点号动画效果 |
+| `Progress(msg string, durationMs int, writer ...io.Writer)` | 显示进度百分比 |
+| `Countdown(msg string, seconds int, writer ...io.Writer)` | 显示倒计时 |
+| `Loading(msg string, seconds int, writer ...io.Writer)` | 显示加载动画 |
 
 ## 性能优化
 

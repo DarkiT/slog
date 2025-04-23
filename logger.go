@@ -43,7 +43,31 @@ var (
 		LevelTrace: "Trace",
 		LevelFatal: "Fatal",
 	}
+
+	// 日志格式字符串缓存，存储常用的格式字符串检测结果
+	// 键是格式字符串，值是布尔结果(是否包含格式说明符)
+	formatCache = sync.Map{}
+
+	// 格式化动词查找表，用于O(1)时间查找
+	// 使用数组而非map，利用ASCII码直接索引提高性能
+	formatVerbTable = [128]bool{}
+
+	// 标志位查找表
+	formatFlagTable = [128]bool{}
 )
+
+// init 初始化格式化查找表
+func init() {
+	// 初始化格式动词查找表
+	for _, verb := range []byte("vTdefFgGboxXsqptcUw") {
+		formatVerbTable[verb] = true
+	}
+
+	// 初始化标志位查找表
+	for _, flag := range []byte(" #+-.0123456789") {
+		formatFlagTable[flag] = true
+	}
+}
 
 // Logger 结构体定义，实现日志记录功能
 type Logger struct {
@@ -218,8 +242,6 @@ func (l *Logger) Trace(msg string, args ...any) {
 	l.logWithLevel(LevelTrace, msg, args...)
 }
 
-// 以下是格式化日志方法的实现
-
 // Debugf 记录格式化的调试级别日志
 func (l *Logger) Debugf(format string, args ...any) {
 	l.logfWithLevel(LevelDebug, format, args...)
@@ -281,109 +303,679 @@ func (l *Logger) appendColorLevel(level Level) string {
 	return fmt.Sprintf("[%s]", levelTextNames[level])
 }
 
-// logWithDynamic 处理动态输出的日志
-//
-// msg: 要显示的消息
-// render: 动态渲染函数，用于生成每一帧的内容
-// interval: 每次更新的时间间隔(毫秒)
-func (l *Logger) logWithDynamic(level Level, render func(i int) string, interval int) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
+// formatOptions 定义日志格式化选项
+type formatOptions struct {
+	TextEnabled bool   // 是否启用文本格式
+	NoColor     bool   // 是否禁用颜色
+	TimeFormat  string // 时间格式
+}
 
-	// 使用 handler 的 writer
-	w := l.w
-
-	// 动态输出内容
-	for i := 0; ; i++ {
-		content := render(i)
-		if content == "" {
-			break
-		}
-
-		if textEnabled {
-			// 文本格式输出
-			fmt.Fprintf(w, "\r%s %s %s",
-				time.Now().Format(TimeFormat),
-				l.appendColorLevel(level),
-				content)
-		} else {
-			// JSON格式输出
-			fmt.Fprintf(w, "\r{\"time\":\"%s\",\"level\":\"%s\",\"msg\":\"%s\"}",
-				time.Now().Format(TimeFormat),
-				levelJsonNames[level],
-				content)
-		}
-
-		time.Sleep(time.Duration(interval) * time.Millisecond)
+// formatDynamicLogLine 格式化动态日志行
+// 将日志格式化逻辑统一提取，确保与项目中其他日志格式一致
+func formatDynamicLogLine(t time.Time, level Level, content string, opts formatOptions) string {
+	if opts.TextEnabled {
+		// 文本格式输出 - 应与项目中其他日志格式保持一致
+		levelStr := formatLevelString(level, opts.NoColor)
+		return fmt.Sprintf("%s %s %s",
+			t.Format(opts.TimeFormat),
+			levelStr,
+			content)
+	} else {
+		// JSON格式输出 - 应与项目中其他JSON日志格式保持一致
+		return fmt.Sprintf("{\"time\":\"%s\",\"level\":\"%s\",\"msg\":\"%s\"}",
+			t.Format(opts.TimeFormat),
+			levelJsonNames[level],
+			content)
 	}
-	fmt.Fprintln(w)
 }
 
-// Dynamic 动态输出带点号动画效果
-//
-//   - msg: 要显示的消息内容
-//   - frames: 动画更新的总帧数
-//   - interval: 每次更新的时间间隔(毫秒)
-func (l *Logger) Dynamic(msg string, frames int, interval int) {
-	l.logWithDynamic(l.level, func(i int) string {
-		if i >= frames {
-			return ""
-		}
-		return fmt.Sprintf("%s%s", msg, strings.Repeat(".", i%4))
-	}, interval)
+// formatLevelString 格式化日志级别字符串
+// 提取级别格式化逻辑，确保一致性
+func formatLevelString(level Level, noColor bool) string {
+	if !textEnabled {
+		return fmt.Sprintf("[%s]", levelJsonNames[level])
+	}
+
+	// 获取对应的颜色代码
+	color, ok := levelColorMap[level]
+	if !ok {
+		color = ansiBrightRed
+	}
+
+	// 如果没有禁用颜色，则添加颜色代码
+	if !noColor {
+		return fmt.Sprintf("%s[%s]%s", color, levelTextNames[level], ansiReset)
+	}
+
+	return fmt.Sprintf("[%s]", levelTextNames[level])
 }
 
-// Progress 显示进度百分比
+// ProgressBar 显示带有可视化进度条的日志
 //
 //   - msg: 要显示的消息内容
 //   - durationMs: 从0%到100%的总持续时间(毫秒)
-func (l *Logger) Progress(msg string, durationMs int) {
+//   - barWidth: 进度条的总宽度（字符数）
+//   - level: 可选的日志级别，默认使用logger的默认级别
+func (l *Logger) ProgressBar(msg string, durationMs int, barWidth int, level ...Level) *Logger {
 	steps := 100
 	interval := durationMs / steps // 计算每步的时间间隔
 	startTime := time.Now()
 
-	l.logWithDynamic(l.level, func(i int) string {
+	// 确定使用的日志级别
+	logLevel := l.level
+	if len(level) > 0 {
+		logLevel = level[0]
+	}
+
+	// 使用默认进度条选项
+	opts := progressBarOptions{
+		BarStyle:       "default",
+		ShowPercentage: true,
+	}
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	// 使用默认的l.w
+	w := l.w
+
+	// 动态输出内容
+	for i := 0; ; i++ {
 		if i > steps {
-			return ""
+			break
 		}
+
 		// 根据实际经过的时间计算进度
 		elapsed := time.Since(startTime)
 		progress := float64(elapsed) / float64(time.Duration(durationMs)*time.Millisecond) * 100
 		if progress > 100 {
 			progress = 100
 		}
-		return fmt.Sprintf("%s %.1f%%", msg, progress)
-	}, interval)
+
+		// 获取当前时间
+		now := time.Now()
+
+		// 格式化进度条内容
+		content := formatProgressBar(msg, progress, barWidth, opts)
+
+		// 使用统一的格式化逻辑
+		logLine := formatDynamicLogLine(now, logLevel, content, formatOptions{
+			TextEnabled: textEnabled,
+			NoColor:     l.noColor,
+			TimeFormat:  TimeFormat,
+		})
+
+		// 输出到writer，保留回车符以便覆盖上一行
+		fmt.Fprint(w, "\r"+logLine)
+
+		// 如果已经达到100%，退出循环
+		if progress >= 100 {
+			break
+		}
+
+		time.Sleep(time.Duration(interval) * time.Millisecond)
+	}
+	// 输出完成后换行
+	fmt.Fprintln(w)
+
+	return l
+}
+
+// ProgressBarTo 显示带有可视化进度条的日志，并可指定输出目标
+//
+//   - msg: 要显示的消息内容
+//   - durationMs: 从0%到100%的总持续时间(毫秒)
+//   - barWidth: 进度条的总宽度（字符数）
+//   - writer: 指定的输出writer
+//   - level: 可选的日志级别，默认使用logger的默认级别
+func (l *Logger) ProgressBarTo(msg string, durationMs int, barWidth int, writer io.Writer, level ...Level) *Logger {
+	steps := 100
+	interval := durationMs / steps // 计算每步的时间间隔
+	startTime := time.Now()
+
+	// 确定使用的日志级别
+	logLevel := l.level
+	if len(level) > 0 {
+		logLevel = level[0]
+	}
+
+	// 使用默认进度条选项
+	opts := progressBarOptions{
+		BarStyle:       "default",
+		ShowPercentage: true,
+	}
+
+	// 修改logWithDynamic实现，使用指定的writer
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	// 动态输出内容
+	for i := 0; ; i++ {
+		if i > steps {
+			break
+		}
+
+		// 根据实际经过的时间计算进度
+		elapsed := time.Since(startTime)
+		progress := float64(elapsed) / float64(time.Duration(durationMs)*time.Millisecond) * 100
+		if progress > 100 {
+			progress = 100
+		}
+
+		// 获取当前时间
+		now := time.Now()
+
+		// 格式化进度条内容
+		content := formatProgressBar(msg, progress, barWidth, opts)
+
+		// 使用统一的格式化逻辑
+		logLine := formatDynamicLogLine(now, logLevel, content, formatOptions{
+			TextEnabled: textEnabled,
+			NoColor:     l.noColor,
+			TimeFormat:  TimeFormat,
+		})
+
+		// 输出到writer，保留回车符以便覆盖上一行
+		fmt.Fprint(writer, "\r"+logLine)
+
+		// 如果已经达到100%，退出循环
+		if progress >= 100 {
+			break
+		}
+
+		time.Sleep(time.Duration(interval) * time.Millisecond)
+	}
+	// 输出完成后换行
+	fmt.Fprintln(writer)
+
+	return l
+}
+
+// ProgressBarWithValue 显示指定进度值的进度条
+//
+//   - msg: 要显示的消息内容
+//   - progress: 进度值(0-100之间)
+//   - barWidth: 进度条的总宽度（字符数）
+//   - level: 可选的日志级别，默认使用logger的默认级别
+func (l *Logger) ProgressBarWithValue(msg string, progress float64, barWidth int, level ...Level) {
+	// 确保进度值在0-100之间
+	if progress < 0 {
+		progress = 0
+	} else if progress > 100 {
+		progress = 100
+	}
+
+	// 确定使用的日志级别
+	logLevel := l.level
+	if len(level) > 0 {
+		logLevel = level[0]
+	}
+
+	// 使用默认选项
+	opts := progressBarOptions{
+		BarStyle:       "default",
+		ShowPercentage: true,
+	}
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	// 使用默认的writer
+	w := l.w
+
+	// 获取当前时间
+	now := time.Now()
+
+	// 格式化进度条内容
+	content := formatProgressBar(msg, progress, barWidth, opts)
+
+	// 使用统一的格式化逻辑
+	logLine := formatDynamicLogLine(now, logLevel, content, formatOptions{
+		TextEnabled: textEnabled,
+		NoColor:     l.noColor,
+		TimeFormat:  TimeFormat,
+	})
+
+	// 输出到writer，添加换行符
+	fmt.Fprintln(w, logLine)
+}
+
+// ProgressBarWithOptions 显示可高度定制的进度条
+//
+//   - msg: 要显示的消息内容
+//   - durationMs: 从0%到100%的总持续时间(毫秒)
+//   - barWidth: 进度条的总宽度（字符数）
+//   - opts: 进度条选项，控制显示样式
+//   - level: 可选的日志级别，默认使用logger的默认级别
+func (l *Logger) ProgressBarWithOptions(msg string, durationMs int, barWidth int, opts progressBarOptions, level ...Level) *Logger {
+	steps := 100
+	interval := durationMs / steps // 计算每步的时间间隔
+	startTime := time.Now()
+
+	// 确定使用的日志级别
+	logLevel := l.level
+	if len(level) > 0 {
+		logLevel = level[0]
+	}
+
+	// 使用自定义时间格式（如果指定）
+	timeFormat := TimeFormat
+	if opts.TimeFormat != "" {
+		timeFormat = opts.TimeFormat
+	}
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	// 使用默认的l.w
+	w := l.w
+
+	// 动态输出内容
+	for i := 0; ; i++ {
+		if i > steps {
+			break
+		}
+
+		// 根据实际经过的时间计算进度
+		elapsed := time.Since(startTime)
+		progress := float64(elapsed) / float64(time.Duration(durationMs)*time.Millisecond) * 100
+		if progress > 100 {
+			progress = 100
+		}
+
+		// 获取当前时间
+		now := time.Now()
+
+		// 格式化进度条内容
+		content := formatProgressBar(msg, progress, barWidth, opts)
+
+		// 使用统一的格式化逻辑，但尊重自定义时间格式
+		logLine := formatDynamicLogLine(now, logLevel, content, formatOptions{
+			TextEnabled: textEnabled,
+			NoColor:     l.noColor,
+			TimeFormat:  timeFormat,
+		})
+
+		// 输出到writer，保留回车符以便覆盖上一行
+		fmt.Fprint(w, "\r"+logLine)
+
+		// 如果已经达到100%，退出循环
+		if progress >= 100 {
+			break
+		}
+
+		time.Sleep(time.Duration(interval) * time.Millisecond)
+	}
+	// 输出完成后换行
+	fmt.Fprintln(w)
+
+	return l
+}
+
+// ProgressBarWithOptionsTo 显示可高度定制的进度条并输出到指定writer
+//
+//   - msg: 要显示的消息内容
+//   - durationMs: 从0%到100%的总持续时间(毫秒)
+//   - barWidth: 进度条的总宽度（字符数）
+//   - opts: 进度条选项，控制显示样式
+//   - writer: 指定的输出writer
+//   - level: 可选的日志级别，默认使用logger的默认级别
+func (l *Logger) ProgressBarWithOptionsTo(msg string, durationMs int, barWidth int, opts progressBarOptions, writer io.Writer, level ...Level) *Logger {
+	steps := 100
+	interval := durationMs / steps // 计算每步的时间间隔
+	startTime := time.Now()
+
+	// 确定使用的日志级别
+	logLevel := l.level
+	if len(level) > 0 {
+		logLevel = level[0]
+	}
+
+	// 使用自定义时间格式（如果指定）
+	timeFormat := TimeFormat
+	if opts.TimeFormat != "" {
+		timeFormat = opts.TimeFormat
+	}
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	// 动态输出内容
+	for i := 0; ; i++ {
+		if i > steps {
+			break
+		}
+
+		// 根据实际经过的时间计算进度
+		elapsed := time.Since(startTime)
+		progress := float64(elapsed) / float64(time.Duration(durationMs)*time.Millisecond) * 100
+		if progress > 100 {
+			progress = 100
+		}
+
+		// 获取当前时间
+		now := time.Now()
+
+		// 格式化进度条内容
+		content := formatProgressBar(msg, progress, barWidth, opts)
+
+		// 使用统一的格式化逻辑，但尊重自定义时间格式
+		logLine := formatDynamicLogLine(now, logLevel, content, formatOptions{
+			TextEnabled: textEnabled,
+			NoColor:     l.noColor,
+			TimeFormat:  timeFormat,
+		})
+
+		// 输出到writer，保留回车符以便覆盖上一行
+		fmt.Fprint(writer, "\r"+logLine)
+
+		// 如果已经达到100%，退出循环
+		if progress >= 100 {
+			break
+		}
+
+		time.Sleep(time.Duration(interval) * time.Millisecond)
+	}
+	// 输出完成后换行
+	fmt.Fprintln(writer)
+
+	return l
+}
+
+// ProgressBarWithValueAndOptions 显示指定进度值的定制进度条
+//
+//   - msg: 要显示的消息内容
+//   - progress: 进度值(0-100之间)
+//   - barWidth: 进度条的总宽度（字符数）
+//   - opts: 进度条选项，控制显示样式
+//   - level: 可选的日志级别，默认使用logger的默认级别
+func (l *Logger) ProgressBarWithValueAndOptions(msg string, progress float64, barWidth int, opts progressBarOptions, level ...Level) {
+	// 确保进度值在0-100之间
+	if progress < 0 {
+		progress = 0
+	} else if progress > 100 {
+		progress = 100
+	}
+
+	// 确定使用的日志级别
+	logLevel := l.level
+	if len(level) > 0 {
+		logLevel = level[0]
+	}
+
+	// 使用自定义时间格式
+	timeFormat := TimeFormat
+	if opts.TimeFormat != "" {
+		timeFormat = opts.TimeFormat
+	}
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	// 使用指定的writer
+	w := l.w
+
+	// 获取当前时间
+	now := time.Now()
+
+	// 格式化进度条内容
+	content := formatProgressBar(msg, progress, barWidth, opts)
+
+	// 使用统一的格式化逻辑，但尊重自定义时间格式
+	logLine := formatDynamicLogLine(now, logLevel, content, formatOptions{
+		TextEnabled: textEnabled,
+		NoColor:     l.noColor,
+		TimeFormat:  timeFormat,
+	})
+
+	// 输出到writer，添加换行符
+	fmt.Fprintln(w, logLine)
+}
+
+// progressBarOptions 定义进度条的样式选项
+type progressBarOptions struct {
+	LeftBracket    string // 左括号，默认为 "["
+	RightBracket   string // 右括号，默认为 "]"
+	Fill           string // 填充字符，默认为 "="
+	Head           string // 进度条头部字符，默认为 ">"
+	Empty          string // 空白部分字符，默认为 " "
+	ShowPercentage bool   // 是否显示百分比，默认为 true
+	TimeFormat     string // 时间格式，默认为 TimeFormat
+	BarStyle       string // 进度条样式，默认为 "default"
+}
+
+// DefaultProgressBarOptions 返回默认的进度条选项
+func DefaultProgressBarOptions() progressBarOptions {
+	return progressBarOptions{
+		LeftBracket:    "[",
+		RightBracket:   "]",
+		Fill:           "=",
+		Head:           ">",
+		Empty:          " ",
+		ShowPercentage: true,
+		TimeFormat:     TimeFormat,
+		BarStyle:       "default",
+	}
+}
+
+// formatProgressBar 格式化进度条的显示内容
+//
+//   - msg: 要显示的消息
+//   - progress: 当前进度（0-100）
+//   - barWidth: 进度条的总宽度（字符数）
+//   - opts: 进度条选项，控制显示样式
+//
+// 返回格式化后的进度条字符串
+func formatProgressBar(msg string, progress float64, barWidth int, opts progressBarOptions) string {
+	// 确保进度在0-100范围内
+	if progress < 0 {
+		progress = 0
+	}
+	if progress > 100 {
+		progress = 100
+	}
+
+	// 计算已完成的宽度和未完成的宽度
+	completedWidth := int(float64(barWidth) * progress / 100)
+	remainingWidth := barWidth - completedWidth
+
+	// 选择进度条样式
+	completed := "="
+	remaining := " "
+	indicator := ">"
+	if opts.BarStyle == "block" {
+		completed = "█"
+		remaining = "░"
+		indicator = ""
+	} else if opts.BarStyle == "simple" {
+		completed = "#"
+		remaining = "-"
+		indicator = ">"
+	}
+
+	// 构建进度条
+	var progressBar strings.Builder
+	progressBar.WriteString("[")
+
+	// 绘制已完成部分
+	for i := 0; i < completedWidth; i++ {
+		progressBar.WriteString(completed)
+	}
+
+	// 添加指示器（除非已经100%完成）
+	if completedWidth < barWidth && indicator != "" {
+		progressBar.WriteString(indicator)
+		remainingWidth--
+	}
+
+	// 绘制未完成部分
+	for i := 0; i < remainingWidth; i++ {
+		progressBar.WriteString(remaining)
+	}
+
+	progressBar.WriteString("]")
+
+	// 格式化最终输出
+	var result string
+	if opts.ShowPercentage {
+		result = fmt.Sprintf("%s %s %.1f%%", msg, progressBar.String(), progress)
+	} else {
+		result = fmt.Sprintf("%s %s", msg, progressBar.String())
+	}
+
+	return result
+}
+
+// Progress 显示进度百分比
+//
+//   - msg: 要显示的消息内容
+//   - durationMs: 从0%到100%的总持续时间(毫秒)
+//   - writer: 可选的输出writer，如果为nil则使用默认的l.w
+func (l *Logger) Progress(msg string, durationMs int, writer ...io.Writer) {
+	steps := 100
+	interval := durationMs / steps // 计算每步的时间间隔
+	startTime := time.Now()
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	// 确定使用的writer
+	w := l.w
+	if len(writer) > 0 && writer[0] != nil {
+		w = writer[0]
+	}
+
+	// 动态输出内容
+	for i := 0; ; i++ {
+		if i > steps {
+			break
+		}
+
+		// 根据实际经过的时间计算进度
+		elapsed := time.Since(startTime)
+		progress := float64(elapsed) / float64(time.Duration(durationMs)*time.Millisecond) * 100
+		if progress > 100 {
+			progress = 100
+		}
+
+		// 获取当前时间
+		now := time.Now()
+
+		// 格式化内容
+		content := fmt.Sprintf("%s %.1f%%", msg, progress)
+
+		// 使用统一的格式化逻辑
+		logLine := formatDynamicLogLine(now, l.level, content, formatOptions{
+			TextEnabled: textEnabled,
+			NoColor:     l.noColor,
+			TimeFormat:  TimeFormat,
+		})
+
+		// 输出到writer，保留回车符以便覆盖上一行
+		fmt.Fprint(w, "\r"+logLine)
+
+		// 如果已经达到100%，退出循环
+		if progress >= 100 {
+			break
+		}
+
+		time.Sleep(time.Duration(interval) * time.Millisecond)
+	}
+	// 输出完成后换行
+	fmt.Fprintln(w)
 }
 
 // Countdown 显示倒计时
 //
 //   - msg: 要显示的消息内容
 //   - seconds: 倒计时的秒数
-func (l *Logger) Countdown(msg string, seconds int) {
-	l.logWithDynamic(l.level, func(i int) string {
+//   - writer: 可选的输出writer，如果为nil则使用默认的l.w
+func (l *Logger) Countdown(msg string, seconds int, writer ...io.Writer) {
+	interval := 1000 // 1秒更新一次
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	// 确定使用的writer
+	w := l.w
+	if len(writer) > 0 && writer[0] != nil {
+		w = writer[0]
+	}
+
+	// 动态输出内容
+	for i := 0; i <= seconds; i++ {
 		remaining := seconds - i
 		if remaining < 0 {
-			return ""
+			break
 		}
-		return fmt.Sprintf("%s %ds", msg, remaining)
-	}, 1000)
+
+		// 获取当前时间
+		now := time.Now()
+
+		// 格式化内容
+		content := fmt.Sprintf("%s %ds", msg, remaining)
+
+		// 使用统一的格式化逻辑
+		logLine := formatDynamicLogLine(now, l.level, content, formatOptions{
+			TextEnabled: textEnabled,
+			NoColor:     l.noColor,
+			TimeFormat:  TimeFormat,
+		})
+
+		// 输出到writer，保留回车符以便覆盖上一行
+		fmt.Fprint(w, "\r"+logLine)
+
+		if remaining == 0 {
+			break
+		}
+
+		time.Sleep(time.Duration(interval) * time.Millisecond)
+	}
+	// 输出完成后换行
+	fmt.Fprintln(w)
 }
 
 // Loading 显示加载动画
 //
 //   - msg: 要显示的消息内容
 //   - seconds: 持续时间(秒)
-func (l *Logger) Loading(msg string, seconds int) {
+//   - writer: 可选的输出writer，如果为nil则使用默认的l.w
+func (l *Logger) Loading(msg string, seconds int, writer ...io.Writer) {
 	spinner := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 	steps := seconds * 10 // 每秒10帧
+	interval := 100       // 固定100ms间隔，即10帧/秒
 
-	l.logWithDynamic(l.level, func(i int) string {
-		if i >= steps {
-			return ""
-		}
-		return fmt.Sprintf("%s %s", spinner[i%len(spinner)], msg)
-	}, 100) // 固定100ms间隔，即10帧/秒
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	// 确定使用的writer
+	w := l.w
+	if len(writer) > 0 && writer[0] != nil {
+		w = writer[0]
+	}
+
+	// 动态输出内容
+	for i := 0; i < steps; i++ {
+		// 获取当前时间
+		now := time.Now()
+
+		// 格式化内容
+		content := fmt.Sprintf("%s %s", spinner[i%len(spinner)], msg)
+
+		// 使用统一的格式化逻辑
+		logLine := formatDynamicLogLine(now, l.level, content, formatOptions{
+			TextEnabled: textEnabled,
+			NoColor:     l.noColor,
+			TimeFormat:  TimeFormat,
+		})
+
+		// 输出到writer，保留回车符以便覆盖上一行
+		fmt.Fprint(w, "\r"+logLine)
+
+		time.Sleep(time.Duration(interval) * time.Millisecond)
+	}
+	// 输出完成后换行
+	fmt.Fprintln(w)
 }
 
 // clone 创建Logger的深度复制
@@ -417,10 +1009,216 @@ func newRecord(level Level, format string, args ...any) slog.Record {
 }
 
 // formatLog 检查是否需要格式化日志消息
-// 返回true表示需要格式化，false表示不需要
+// 高性能实现，使用缓存和快速路径
 func formatLog(msg string, args ...any) bool {
+	// 快速路径1: 如果没有参数，则不需要格式化
 	if len(args) == 0 {
 		return false
 	}
-	return len(args) > 0 && strings.Contains(msg, "%") && !strings.Contains(msg, "%%")
+
+	// 快速路径2: 如果消息不包含百分号，则不需要格式化
+	if !strings.Contains(msg, "%") {
+		return false
+	}
+
+	// 查找缓存，对于频繁使用的相同格式字符串提高性能
+	// 缓存命中率在实际应用中通常很高，因为日志模式有限
+	if val, ok := formatCache.Load(msg); ok {
+		return val.(bool)
+	}
+
+	// 以下是完整的格式扫描逻辑
+	// 因为缓存会存储结果，所以即使这部分代码复杂，也只会对每个唯一的字符串执行一次
+	result := scanFormatSpecifiers(msg)
+
+	// 存储结果到缓存
+	// 注意：在极端情况下可能需要限制缓存大小
+	formatCache.Store(msg, result)
+	return result
+}
+
+// scanFormatSpecifiers 扫描并检查格式说明符
+// 使用手动解析而非正则表达式，以提高性能
+func scanFormatSpecifiers(msg string) bool {
+	msgBytes := []byte(msg) // 避免在循环中重复字符索引操作
+	msgLen := len(msgBytes)
+
+	// 手动解析格式说明符
+	for i := 0; i < msgLen; {
+		// 查找下一个%字符
+		if msgBytes[i] != '%' {
+			i++
+			continue
+		}
+
+		// 处理%%转义情况
+		if i+1 < msgLen && msgBytes[i+1] == '%' {
+			i += 2
+			continue
+		}
+
+		// 找到非转义的%，开始解析格式说明符
+		pos := i + 1
+		if pos >= msgLen {
+			// %在字符串末尾，不是有效的格式说明符
+			return false
+		}
+
+		// 使用查找表快速检查标志位、宽度、精度等
+		// 这比多个if条件检查更快
+		for pos < msgLen && formatFlagTable[msgBytes[pos]&127] {
+			pos++
+		}
+
+		// 检查是否到达字符串末尾
+		if pos >= msgLen {
+			return false
+		}
+
+		// 使用查找表检查格式动词(O(1)时间)
+		// 仅当ASCII范围内才使用查找表
+		if msgBytes[pos] < 128 && formatVerbTable[msgBytes[pos]] {
+			return true
+		}
+
+		// 移动到下一个位置
+		i = pos + 1
+	}
+
+	return false
+}
+
+// Dynamic 动态输出带点号动画效果
+//
+//   - msg: 要显示的消息内容
+//   - frames: 动画更新的总帧数
+//   - interval: 每次更新的时间间隔(毫秒)
+//   - writer: 可选的输出writer，如果为nil则使用默认的l.w
+func (l *Logger) Dynamic(msg string, frames int, interval int, writer ...io.Writer) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	// 确定使用的writer
+	w := l.w
+	if len(writer) > 0 && writer[0] != nil {
+		w = writer[0]
+	}
+
+	// 动态输出内容
+	for i := 0; i < frames; i++ {
+		// 获取当前时间
+		now := time.Now()
+
+		// 格式化内容
+		content := fmt.Sprintf("%s%s", msg, strings.Repeat(".", i%4))
+
+		// 使用统一的格式化逻辑
+		logLine := formatDynamicLogLine(now, l.level, content, formatOptions{
+			TextEnabled: textEnabled,
+			NoColor:     l.noColor,
+			TimeFormat:  TimeFormat,
+		})
+
+		// 输出到writer，保留回车符以便覆盖上一行
+		fmt.Fprint(w, "\r"+logLine)
+
+		time.Sleep(time.Duration(interval) * time.Millisecond)
+	}
+	// 输出完成后换行
+	fmt.Fprintln(w)
+}
+
+// ProgressBarWithValueTo 显示指定进度值的进度条并输出到指定writer
+//
+//   - msg: 要显示的消息内容
+//   - progress: 进度值(0-100之间)
+//   - barWidth: 进度条的总宽度（字符数）
+//   - writer: 指定的输出writer
+//   - level: 可选的日志级别，默认使用logger的默认级别
+func (l *Logger) ProgressBarWithValueTo(msg string, progress float64, barWidth int, writer io.Writer, level ...Level) {
+	// 确保进度值在0-100之间
+	if progress < 0 {
+		progress = 0
+	} else if progress > 100 {
+		progress = 100
+	}
+
+	// 确定使用的日志级别
+	logLevel := l.level
+	if len(level) > 0 {
+		logLevel = level[0]
+	}
+
+	// 使用默认进度条选项
+	opts := progressBarOptions{
+		BarStyle:       "default",
+		ShowPercentage: true,
+	}
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	// 获取当前时间
+	now := time.Now()
+
+	// 格式化进度条内容
+	content := formatProgressBar(msg, progress, barWidth, opts)
+
+	// 使用统一的格式化逻辑
+	logLine := formatDynamicLogLine(now, logLevel, content, formatOptions{
+		TextEnabled: textEnabled,
+		NoColor:     l.noColor,
+		TimeFormat:  TimeFormat,
+	})
+
+	// 输出到writer，添加换行符
+	fmt.Fprintln(writer, logLine)
+}
+
+// ProgressBarWithValueAndOptionsTo 显示指定进度值的定制进度条并输出到指定writer
+//
+//   - msg: 要显示的消息内容
+//   - progress: 进度值(0-100之间)
+//   - barWidth: 进度条的总宽度（字符数）
+//   - opts: 进度条选项，控制显示样式
+//   - writer: 指定的输出writer
+//   - level: 可选的日志级别，默认使用logger的默认级别
+func (l *Logger) ProgressBarWithValueAndOptionsTo(msg string, progress float64, barWidth int, opts progressBarOptions, writer io.Writer, level ...Level) {
+	// 确保进度值在0-100之间
+	if progress < 0 {
+		progress = 0
+	} else if progress > 100 {
+		progress = 100
+	}
+
+	// 确定使用的日志级别
+	logLevel := l.level
+	if len(level) > 0 {
+		logLevel = level[0]
+	}
+
+	// 使用自定义时间格式
+	timeFormat := TimeFormat
+	if opts.TimeFormat != "" {
+		timeFormat = opts.TimeFormat
+	}
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	// 获取当前时间
+	now := time.Now()
+
+	// 格式化进度条内容
+	content := formatProgressBar(msg, progress, barWidth, opts)
+
+	// 使用统一的格式化逻辑，但尊重自定义时间格式
+	logLine := formatDynamicLogLine(now, logLevel, content, formatOptions{
+		TextEnabled: textEnabled,
+		NoColor:     l.noColor,
+		TimeFormat:  timeFormat,
+	})
+
+	// 输出到writer，添加换行符
+	fmt.Fprintln(writer, logLine)
 }
