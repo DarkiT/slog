@@ -6,18 +6,23 @@ import (
 	"slices"
 
 	"github.com/darkit/slog/dlp"
-	"github.com/darkit/slog/formatter"
+	"github.com/darkit/slog/modules"
 )
 
-type extends struct {
-	PrefixKeys []string
-	formatters []formatter.Formatter
-	dlpEnabled bool
-	dlpEngine  *dlp.DlpEngine
+// FormatterFunc 内部格式化器接口，避免直接依赖formatter包
+type FormatterFunc func(groups []string, attr slog.Attr) (slog.Value, bool)
+
+type extensions struct {
+	prefixKeys        []string
+	formatters        []FormatterFunc
+	dlpEnabled        bool
+	dlpEngine         *dlp.DlpEngine
+	moduleRegistry    *modules.Registry
+	registeredModules []modules.Module
 }
 
-// EnableDLP 启用日志脱敏功能
-func (e *extends) EnableDLP() {
+// enableDLP 启用日志脱敏功能
+func (e *extensions) enableDLP() {
 	e.dlpEnabled = true
 	if e.dlpEngine == nil {
 		e.dlpEngine = dlp.NewDlpEngine()
@@ -25,19 +30,71 @@ func (e *extends) EnableDLP() {
 	e.dlpEngine.Enable()
 }
 
-// DisableDLP 禁用日志脱敏功能
-func (e *extends) DisableDLP() {
+// disableDLP 禁用日志脱敏功能
+func (e *extensions) disableDLP() {
 	e.dlpEnabled = false
 	if e.dlpEngine != nil {
 		e.dlpEngine.Disable()
 	}
 }
 
+// registerModule 注册模块到扩展系统
+func (e *extensions) registerModule(module modules.Module) error {
+	if e.moduleRegistry == nil {
+		e.moduleRegistry = modules.GetRegistry()
+	}
+
+	// 将模块添加到注册表
+	if err := e.moduleRegistry.Register(module); err != nil {
+		return err
+	}
+
+	// 添加到本地模块列表
+	e.registeredModules = append(e.registeredModules, module)
+
+	// 根据模块类型进行相应的处理
+	switch module.Type() {
+	case modules.TypeFormatter:
+		// 如果是格式化器模块，通过反射提取其格式化器并转换为内部接口
+		if adapter, ok := module.(interface{ GetFormatters() interface{} }); ok {
+			if formatters := adapter.GetFormatters(); formatters != nil {
+				// 使用反射来转换格式化器函数
+				e.addFormattersFromModule(formatters)
+			}
+		}
+	}
+
+	return nil
+}
+
+// addFormattersFromModule 从模块中添加格式化器（通过反射处理类型转换）
+func (e *extensions) addFormattersFromModule(formatters interface{}) {
+	// 这里使用类型断言来处理不同类型的格式化器
+	// 由于我们无法直接导入formatter包，我们使用interface{}并在运行时处理
+
+	// 如果适配器提供了正确的格式化器函数，我们将其转换为内部格式
+	// 这是一个简化的实现，实际的格式化器转换会在适配器中处理
+	switch v := formatters.(type) {
+	case []func([]string, slog.Attr) (slog.Value, bool):
+		// 直接兼容的格式化器函数
+		for _, f := range v {
+			e.formatters = append(e.formatters, FormatterFunc(f))
+		}
+	case []interface{}:
+		// 通用接口列表，需要进一步转换
+		for _, item := range v {
+			if f, ok := item.(func([]string, slog.Attr) (slog.Value, bool)); ok {
+				e.formatters = append(e.formatters, FormatterFunc(f))
+			}
+		}
+	}
+}
+
 // eHandler 是一个自定义的 slog 处理器，用于在日志消息前添加前缀，并将其传递给下一个处理器。
-// 前缀从日志记录的属性中获取，使用 PrefixKeys 中指定的键。
+// 前缀从日志记录的属性中获取，使用 prefixKeys 中指定的键。
 type eHandler struct {
 	handler  slog.Handler // 链中的下一个日志处理器。
-	opts     extends      // 此处理器的配置选项。
+	opts     extensions   // 此处理器的配置选项。
 	prefixes []slog.Value // 前缀值的缓存列表。
 	groups   []string
 	ctx      context.Context
@@ -46,7 +103,7 @@ type eHandler struct {
 // newAddonsHandler 创建一个新的前缀日志处理器。
 // 新处理器会在将每条日志消息传递给下一个处理器之前，从日志记录的属性中获取前缀并添加到消息前。
 // newAddonsHandler 创建新的处理器实例
-func newAddonsHandler(next slog.Handler, opts *extends) *eHandler {
+func newAddonsHandler(next slog.Handler, opts *extensions) *eHandler {
 	if opts == nil {
 		opts = ext
 	}
@@ -55,7 +112,7 @@ func newAddonsHandler(next slog.Handler, opts *extends) *eHandler {
 		handler:  next,
 		opts:     *opts,
 		groups:   []string{},
-		prefixes: make([]slog.Value, len(opts.PrefixKeys)),
+		prefixes: make([]slog.Value, len(opts.prefixKeys)),
 	}
 }
 
@@ -125,7 +182,7 @@ func (h *eHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 
 	// 检查是否有前缀键
 	for _, attr := range attrs {
-		for i, key := range h.opts.PrefixKeys {
+		for i, key := range h.opts.prefixKeys {
 			if attr.Key == key && i < len(newHandler.prefixes) {
 				// 存储前缀值
 				newHandler.prefixes[i] = attr.Value

@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/darkit/slog/common"
 )
 
 const (
@@ -25,6 +27,13 @@ var (
 	logger     *Logger                     // 全局日志记录器实例
 	TimeFormat = "2006/01/02 15:04.05.000" // 默认时间格式
 
+	// 字符串构建器池，用于优化字符串拼接性能
+	stringBuilderPool = sync.Pool{
+		New: func() interface{} {
+			return &strings.Builder{}
+		},
+	}
+
 	// 日志级别对应的TXT名称映射
 	levelTextNames = map[slog.Leveler]string{
 		LevelInfo:  "I",
@@ -35,7 +44,7 @@ var (
 		LevelFatal: "F",
 	}
 	// 日志级别对应的JSON名称映射
-	levelJsonNames = map[Level]string{
+	levelJSONNames = map[Level]string{
 		LevelInfo:  "Info",
 		LevelDebug: "Debug",
 		LevelWarn:  "Warn",
@@ -46,7 +55,8 @@ var (
 
 	// 日志格式字符串缓存，存储常用的格式字符串检测结果
 	// 键是格式字符串，值是布尔结果(是否包含格式说明符)
-	formatCache = sync.Map{}
+	formatCache        *common.LRUStringCache
+	maxFormatCacheSize int64 = 1000 // 最大缓存条目数
 
 	// 格式化动词查找表，用于O(1)时间查找
 	// 使用数组而非map，利用ASCII码直接索引提高性能
@@ -67,6 +77,80 @@ func init() {
 	for _, flag := range []byte(" #+-.0123456789") {
 		formatFlagTable[flag] = true
 	}
+
+	// 初始化LRU格式缓存
+	formatCache = common.NewLRUStringCache(int(maxFormatCacheSize))
+}
+
+// Config 日志配置结构体
+type Config struct {
+	// 缓存配置
+	MaxFormatCacheSize int64 // 最大格式缓存大小
+
+	// 性能配置
+	StringBuilderPoolSize int // 字符串构建器池大小
+
+	// 错误处理配置
+	LogInternalErrors bool // 是否记录内部错误
+
+	// 输出配置
+	EnableText *bool // 启用文本输出（nil 表示继承全局设置）
+	EnableJSON *bool // 启用JSON输出（nil 表示继承全局设置）
+	NoColor    bool  // 禁用颜色
+	AddSource  bool  // 添加源代码位置
+
+	// 时间配置
+	TimeFormat string // 时间格式
+}
+
+// DefaultConfig 返回默认配置
+func DefaultConfig() *Config {
+	c := &Config{
+		MaxFormatCacheSize:    1000,
+		StringBuilderPoolSize: 10,
+		LogInternalErrors:     true,
+		NoColor:               false,
+		AddSource:             false,
+		TimeFormat:            "2006/01/02 15:04.05.000",
+	}
+	c.SetEnableText(true)
+	return c
+}
+
+func boolPtr(v bool) *bool {
+	return &v
+}
+
+// SetEnableText 显式设置文本输出开关
+func (c *Config) SetEnableText(enabled bool) {
+	if c == nil {
+		return
+	}
+	c.EnableText = boolPtr(enabled)
+}
+
+// SetEnableJSON 显式设置 JSON 输出开关
+func (c *Config) SetEnableJSON(enabled bool) {
+	if c == nil {
+		return
+	}
+	c.EnableJSON = boolPtr(enabled)
+}
+
+// InheritTextOutput 使实例文本输出沿用全局设置
+func (c *Config) InheritTextOutput() {
+	if c == nil {
+		return
+	}
+	c.EnableText = nil
+}
+
+// InheritJSONOutput 使实例 JSON 输出沿用全局设置
+func (c *Config) InheritJSONOutput() {
+	if c == nil {
+		return
+	}
+	c.EnableJSON = nil
 }
 
 // Logger 结构体定义，实现日志记录功能
@@ -78,6 +162,7 @@ type Logger struct {
 	noColor bool            // 是否禁用颜色输出
 	level   Level           // 日志级别
 	mu      sync.Mutex      // 添加互斥锁，用于处理并发
+	config  *Config         // 配置信息
 }
 
 // GetLevel 获取当前日志级别
@@ -98,7 +183,18 @@ func (l *Logger) SetLevel(level any) *Logger {
 
 // GetSlogLogger 方法
 func (l *Logger) GetSlogLogger() *slog.Logger {
-	if jsonEnabled && !textEnabled {
+	textEnabledForInstance := textEnabled
+	jsonEnabledForInstance := jsonEnabled
+	if l.config != nil {
+		if l.config.EnableText != nil {
+			textEnabledForInstance = textEnabled && *l.config.EnableText
+		}
+		if l.config.EnableJSON != nil {
+			jsonEnabledForInstance = *l.config.EnableJSON
+		}
+	}
+
+	if jsonEnabledForInstance && !textEnabledForInstance {
 		return l.json
 	}
 	return l.text
@@ -136,30 +232,58 @@ func (l *Logger) logRecord(level Level, msg string, sprintf bool, args ...any) {
 	}
 
 	// 处理现有的日志输出
-	if textEnabled && l.text != nil && l.text.Enabled(ctx, level) {
-		_ = l.text.Handler().Handle(ctx, r)
-	}
-	if jsonEnabled && l.json != nil && l.json.Enabled(ctx, level) {
-		_ = l.json.Handler().Handle(ctx, r)
+	// 检查是否启用文本输出（优先使用实例配置，否则使用全局配置）
+	textEnabledForInstance := textEnabled
+	jsonEnabledForInstance := jsonEnabled
+	if l.config != nil {
+		if l.config.EnableText != nil {
+			textEnabledForInstance = textEnabled && *l.config.EnableText
+		}
+		if l.config.EnableJSON != nil {
+			jsonEnabledForInstance = *l.config.EnableJSON
+		}
 	}
 
-	// 向所有订阅者发送日志记录
-	subscribers.Range(func(key, value interface{}) bool {
-		sub := value.(*Subscriber)
-		select {
-		case sub.ch <- r:
-
-		default:
-			// channel已满，使用滑动窗口策略
-			select {
-			case <-sub.ch: // 移除最旧的消息
-				sub.ch <- r
-			default:
-				// 完全阻塞时跳过
+	if textEnabledForInstance && l.text != nil && l.text.Enabled(ctx, level) {
+		if err := l.text.Handler().Handle(ctx, r); err != nil {
+			// 记录内部错误到stderr，但不阻塞日志记录
+			if l.config == nil || l.config.LogInternalErrors {
+				fmt.Fprintf(os.Stderr, "slog: text handler error: %v\n", err)
 			}
 		}
+	}
+	if jsonEnabledForInstance && l.json != nil && l.json.Enabled(ctx, level) {
+		if err := l.json.Handler().Handle(ctx, r); err != nil {
+			// 记录内部错误到stderr，但不阻塞日志记录
+			if l.config == nil || l.config.LogInternalErrors {
+				fmt.Fprintf(os.Stderr, "slog: json handler error: %v\n", err)
+			}
+		}
+	}
+
+	// 向所有订阅者发送日志记录（使用原子状态管理）
+	var toDelete []interface{}
+
+	subscribers.Range(func(key, value interface{}) bool {
+		sub := value.(*subscriber)
+
+		// 使用原子状态管理，优雅地处理发送
+		if !sub.trySend(r) {
+			// 发送失败，标记为待删除
+			toDelete = append(toDelete, key)
+		}
+
 		return true
 	})
+
+	// 清理无效的订阅者
+	for _, key := range toDelete {
+		if value, ok := subscribers.LoadAndDelete(key); ok {
+			if sub, ok := value.(*subscriber); ok {
+				sub.close()
+			}
+		}
+	}
 }
 
 // With 创建一个带有额外字段的新日志记录器
@@ -283,26 +407,6 @@ func (l *Logger) Println(msg string, args ...any) {
 	l.logWithLevel(LevelInfo, msg, args...)
 }
 
-// appendColorLevel 添加带颜色的日志级别
-func (l *Logger) appendColorLevel(level Level) string {
-	if !textEnabled {
-		return fmt.Sprintf("[%s]", levelJsonNames[level])
-	}
-
-	// 获取对应的颜色代码
-	color, ok := levelColorMap[level]
-	if !ok {
-		color = ansiBrightRed
-	}
-
-	// 如果没有禁用颜色，则添加颜色代码
-	if !l.noColor {
-		return fmt.Sprintf("%s[%s]%s", color, levelTextNames[level], ansiReset)
-	}
-
-	return fmt.Sprintf("[%s]", levelTextNames[level])
-}
-
 // formatOptions 定义日志格式化选项
 type formatOptions struct {
 	TextEnabled bool   // 是否启用文本格式
@@ -324,7 +428,7 @@ func formatDynamicLogLine(t time.Time, level Level, content string, opts formatO
 		// JSON格式输出 - 应与项目中其他JSON日志格式保持一致
 		return fmt.Sprintf("{\"time\":\"%s\",\"level\":\"%s\",\"msg\":\"%s\"}",
 			t.Format(opts.TimeFormat),
-			levelJsonNames[level],
+			levelJSONNames[level],
 			content)
 	}
 }
@@ -333,7 +437,7 @@ func formatDynamicLogLine(t time.Time, level Level, content string, opts formatO
 // 提取级别格式化逻辑，确保一致性
 func formatLevelString(level Level, noColor bool) string {
 	if !textEnabled {
-		return fmt.Sprintf("[%s]", levelJsonNames[level])
+		return fmt.Sprintf("[%s]", levelJSONNames[level])
 	}
 
 	// 获取对应的颜色代码
@@ -783,11 +887,12 @@ func formatProgressBar(msg string, progress float64, barWidth int, opts progress
 	completed := "="
 	remaining := " "
 	indicator := ">"
-	if opts.BarStyle == "block" {
+	switch opts.BarStyle {
+	case "block":
 		completed = "█"
 		remaining = "░"
 		indicator = ""
-	} else if opts.BarStyle == "simple" {
+	case "simple":
 		completed = "#"
 		remaining = "-"
 		indicator = ">"
@@ -980,17 +1085,18 @@ func (l *Logger) Loading(msg string, seconds int, writer ...io.Writer) {
 
 // clone 创建Logger的深度复制
 func (l *Logger) clone() *Logger {
+	// 创建新的Logger实例，但需要考虑writer的并发安全
 	newLogger := &Logger{
-		w:       l.w,
+		w:       l.w, // 注意：共享writer需要在使用时进行同步
 		text:    l.text,
 		json:    l.json,
+		ctx:     l.ctx,
 		noColor: l.noColor,
 		level:   l.level,
-		ctx:     l.ctx, // 确保正确复制context
+		mu:      sync.Mutex{}, // 每个logger实例都有独立的互斥锁
+		config:  l.config,
 	}
-	if newLogger.ctx == nil {
-		newLogger.ctx = context.Background()
-	}
+
 	return newLogger
 }
 
@@ -1008,23 +1114,17 @@ func newRecord(level Level, format string, args ...any) slog.Record {
 	return slog.NewRecord(t, level, fmt.Sprintf(format, args...), pcs[0])
 }
 
-// formatLog 检查是否需要格式化日志消息
-// 高性能实现，使用缓存和快速路径
+// formatLog 检查格式字符串并决定是否使用格式化输出
+// 使用缓存优化重复字符串的检测性能
 func formatLog(msg string, args ...any) bool {
-	// 快速路径1: 如果没有参数，则不需要格式化
+	// 如果没有参数，直接返回false
 	if len(args) == 0 {
 		return false
 	}
 
-	// 快速路径2: 如果消息不包含百分号，则不需要格式化
-	if !strings.Contains(msg, "%") {
-		return false
-	}
-
-	// 查找缓存，对于频繁使用的相同格式字符串提高性能
-	// 缓存命中率在实际应用中通常很高，因为日志模式有限
-	if val, ok := formatCache.Load(msg); ok {
-		return val.(bool)
+	// 首先尝试从缓存中获取结果
+	if val, ok := formatCache.GetString(msg); ok {
+		return val == "true"
 	}
 
 	// 以下是完整的格式扫描逻辑
@@ -1032,9 +1132,19 @@ func formatLog(msg string, args ...any) bool {
 	result := scanFormatSpecifiers(msg)
 
 	// 存储结果到缓存
-	// 注意：在极端情况下可能需要限制缓存大小
-	formatCache.Store(msg, result)
+	resultStr := "false"
+	if result {
+		resultStr = "true"
+	}
+	formatCache.PutString(msg, resultStr)
+
 	return result
+}
+
+// cleanFormatCache 清理格式缓存
+func cleanFormatCache() {
+	// 清空缓存
+	formatCache.Clear()
 }
 
 // scanFormatSpecifiers 扫描并检查格式说明符
@@ -1095,37 +1205,8 @@ func scanFormatSpecifiers(msg string) bool {
 //   - interval: 每次更新的时间间隔(毫秒)
 //   - writer: 可选的输出writer，如果为nil则使用默认的l.w
 func (l *Logger) Dynamic(msg string, frames int, interval int, writer ...io.Writer) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	// 确定使用的writer
-	w := l.w
-	if len(writer) > 0 && writer[0] != nil {
-		w = writer[0]
-	}
-
-	// 动态输出内容
-	for i := 0; i < frames; i++ {
-		// 获取当前时间
-		now := time.Now()
-
-		// 格式化内容
-		content := fmt.Sprintf("%s%s", msg, strings.Repeat(".", i%4))
-
-		// 使用统一的格式化逻辑
-		logLine := formatDynamicLogLine(now, l.level, content, formatOptions{
-			TextEnabled: textEnabled,
-			NoColor:     l.noColor,
-			TimeFormat:  TimeFormat,
-		})
-
-		// 输出到writer，保留回车符以便覆盖上一行
-		fmt.Fprint(w, "\r"+logLine)
-
-		time.Sleep(time.Duration(interval) * time.Millisecond)
-	}
-	// 输出完成后换行
-	fmt.Fprintln(w)
+	// 使用高性能的优化版本
+	l.DynamicOptimized(msg, frames, interval, writer...)
 }
 
 // ProgressBarWithValueTo 显示指定进度值的进度条并输出到指定writer
@@ -1221,4 +1302,42 @@ func (l *Logger) ProgressBarWithValueAndOptionsTo(msg string, progress float64, 
 
 	// 输出到writer，添加换行符
 	fmt.Fprintln(writer, logLine)
+}
+
+// NewLoggerWithConfig 使用配置创建新的日志记录器
+func NewLoggerWithConfig(w io.Writer, config *Config) *Logger {
+	if config == nil {
+		config = DefaultConfig()
+	}
+
+	// 不修改全局配置，仅将配置应用到本实例
+	// 全局配置通过其他函数管理
+	timeFormat := config.TimeFormat
+	if timeFormat == "" {
+		timeFormat = TimeFormat
+	}
+
+	options := NewOptions(nil)
+	options.AddSource = config.AddSource || levelVar.Level() < LevelDebug
+
+	// 如果需要DLP,则初始化
+	if dlpEnabled.Load() {
+		ext.enableDLP()
+	}
+
+	if w == nil {
+		w = NewWriter()
+	}
+
+	newLogger := &Logger{
+		w:       w,
+		noColor: config.NoColor,
+		level:   levelVar.Level(),
+		ctx:     context.Background(),
+		config:  config,
+		text:    slog.New(newAddonsHandler(NewConsoleHandler(w, config.NoColor, options), ext)),
+		json:    slog.New(newAddonsHandler(NewJSONHandler(w, options), ext)),
+	}
+
+	return newLogger
 }

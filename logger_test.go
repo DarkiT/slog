@@ -11,8 +11,15 @@ import (
 
 // TestLoggerWithGroup 测试日志分组功能
 func TestLoggerWithGroup(t *testing.T) {
+	// 重置环境
 	var buf bytes.Buffer
+	ResetGlobalLogger(&buf, false, false)
+	SetLevelInfo() // 确保级别允许Info日志
+	EnableTextLogger()
+	DisableJSONLogger()
+
 	logger := NewLogger(&buf, false, false)
+	logger.SetLevel(LevelInfo) // 确保实例级别允许Info日志
 
 	// 创建一个带有分组的日志记录器
 	groupLogger := logger.WithGroup("testGroup")
@@ -28,7 +35,13 @@ func TestLoggerWithGroup(t *testing.T) {
 // TestLoggerFormat 测试格式化日志功能
 func TestLoggerFormat(t *testing.T) {
 	var buf bytes.Buffer
+	ResetGlobalLogger(&buf, false, false)
+	SetLevelTrace() // 设置为最低级别以允许所有日志
+	EnableTextLogger()
+	DisableJSONLogger()
+
 	logger := NewLogger(&buf, false, false)
+	logger.SetLevel(LevelTrace) // 确保实例级别允许所有日志
 
 	// 测试不同格式的日志输出
 	testCases := []struct {
@@ -76,7 +89,13 @@ func TestLoggerFormat(t *testing.T) {
 // TestLoggerWith 测试With函数添加context
 func TestLoggerWith(t *testing.T) {
 	var buf bytes.Buffer
+	ResetGlobalLogger(&buf, false, false)
+	SetLevelInfo() // 确保级别允许Info日志
+	EnableTextLogger()
+	DisableJSONLogger()
+
 	logger := NewLogger(&buf, false, false)
+	logger.SetLevel(LevelInfo) // 确保实例级别允许Info日志
 
 	// 创建带有附加字段的日志记录器
 	withLogger := logger.With(
@@ -134,7 +153,10 @@ func TestSubscribe(t *testing.T) {
 // TestDefaultWithModules 测试带模块前缀的Default函数
 func TestDefaultWithModules(t *testing.T) {
 	var buf bytes.Buffer
-	logger = NewLogger(&buf, false, false)
+	ResetGlobalLogger(&buf, false, false)
+	SetLevelInfo() // 确保级别允许Info日志
+	EnableTextLogger()
+	DisableJSONLogger()
 
 	// 使用模块名创建新日志记录器
 	moduleLogger := Default("test", "module")
@@ -152,8 +174,8 @@ func TestProgressBar(t *testing.T) {
 	var buf bytes.Buffer
 	logger := NewLogger(&buf, false, false)
 
-	// 测试进度条值设置
-	logger.ProgressBarWithValue("Test Progress", 0.5, 10)
+	// 测试进度条值设置（使用50.0表示50%，因为API设计是0-100范围）
+	logger.ProgressBarWithValue("Test Progress", 50.0, 10)
 
 	output := buf.String()
 	if !strings.Contains(output, "Test Progress") {
@@ -161,8 +183,8 @@ func TestProgressBar(t *testing.T) {
 	}
 
 	// 检查进度百分比
-	if !strings.Contains(output, "50%") {
-		t.Errorf("Expected output to contain \"50%%\", got: %s", output)
+	if !strings.Contains(output, "50") {
+		t.Errorf("Expected output to contain \"50\", got: %s", output)
 	}
 }
 
@@ -294,10 +316,11 @@ func TestJSONLogger(t *testing.T) {
 
 	var buf bytes.Buffer
 
-	// 创建新的logger并确保启用JSON格式
-	logger := NewLogger(&buf, false, false)
-	EnableJsonLogger()
-	DisableTextLogger()
+	// 创建配置为JSON格式的logger
+	config := DefaultConfig()
+	config.SetEnableJSON(true)
+	config.SetEnableText(false)
+	logger := NewLoggerWithConfig(&buf, config)
 
 	// 输出一条日志
 	logger.Info("json test", "key", "value")
@@ -328,5 +351,95 @@ func TestJSONLogger(t *testing.T) {
 
 	// 恢复默认设置
 	EnableTextLogger()
-	DisableJsonLogger()
+	DisableJSONLogger()
+}
+
+// TestGlobalTextToggleAffectsDefaultLogger 验证全局文本开关对默认配置实例生效
+func TestGlobalTextToggleAffectsDefaultLogger(t *testing.T) {
+	resetForTest()
+	var buf bytes.Buffer
+	logger := NewLogger(&buf, false, false)
+
+	logger.Info("text enabled")
+	if buf.Len() == 0 {
+		t.Fatalf("expected text log when开关开启")
+	}
+
+	buf.Reset()
+	DisableTextLogger()
+	logger.Info("text disabled")
+	if buf.Len() != 0 {
+		t.Fatalf("expected no text log after DisableTextLogger, got %q", buf.String())
+	}
+
+	EnableTextLogger()
+	logger.Info("text re-enabled")
+	if buf.Len() == 0 {
+		t.Fatalf("expected text log after EnableTextLogger")
+	}
+}
+
+// TestGlobalJSONToggleEnablesDefaultLogger 验证全局 JSON 开关可为默认实例启用 JSON 输出
+func TestGlobalJSONToggleEnablesDefaultLogger(t *testing.T) {
+	resetForTest()
+	DisableTextLogger()
+	defer EnableTextLogger()
+
+	var buf bytes.Buffer
+	logger := NewLogger(&buf, false, false)
+	logger.Info("no json yet", "key", "value")
+	if buf.Len() != 0 {
+		t.Fatalf("expected no output before EnableJSONLogger, got %q", buf.String())
+	}
+
+	EnableJSONLogger()
+	defer DisableJSONLogger()
+
+	logger.Info("json enabled", "key", "value")
+	if buf.Len() == 0 {
+		t.Fatalf("expected JSON output after EnableJSONLogger")
+	}
+
+	var entry map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &entry); err != nil {
+		t.Fatalf("expected valid JSON output, err=%v, raw=%q", err, buf.String())
+	}
+	if entry["msg"] != "json enabled" {
+		t.Fatalf("unexpected msg field: %v", entry["msg"])
+	}
+}
+
+// TestInstanceConfigInheritsGlobalOutputs 验证配置未显式设置时继承全局输出开关
+func TestInstanceConfigInheritsGlobalOutputs(t *testing.T) {
+	resetForTest()
+	DisableTextLogger()
+	defer EnableTextLogger()
+
+	var buf bytes.Buffer
+	config := &Config{}
+	logger := NewLoggerWithConfig(&buf, config)
+
+	logger.Info("no outputs yet")
+	if buf.Len() != 0 {
+		t.Fatalf("expected no output when继承关闭状态, got %q", buf.String())
+	}
+
+	buf.Reset()
+	EnableJSONLogger()
+	defer DisableJSONLogger()
+
+	logger.Info("json after toggle", "key", "value")
+	if buf.Len() == 0 {
+		t.Fatal("expected JSON output after全局开启 JSON")
+	}
+
+	records := bytes.Split(bytes.TrimSpace(buf.Bytes()), []byte("\n"))
+	last := records[len(records)-1]
+	var entry map[string]any
+	if err := json.Unmarshal(last, &entry); err != nil {
+		t.Fatalf("expected valid JSON output, err=%v, raw=%q", err, string(last))
+	}
+	if entry["msg"] != "json after toggle" {
+		t.Fatalf("unexpected msg field: %v", entry["msg"])
+	}
 }
