@@ -1,6 +1,6 @@
 package slog
 
 const (
-	Name    = "slog"
-	Version = "v0.0.21"
+	Name    = "darkit/slog"
+	Version = "v0.1.0"
 )
