@@ -1,606 +1,704 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
-	"runtime/debug"
+	"runtime"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/darkit/slog"
+	"github.com/darkit/slog/dlp"
+	"github.com/darkit/slog/modules"
+	_ "github.com/darkit/slog/modules/formatter" // 自动注册formatter模块
+	_ "github.com/darkit/slog/modules/multi"     // 自动注册multi模块
+	_ "github.com/darkit/slog/modules/syslog"    // 自动注册syslog模块
+	_ "github.com/darkit/slog/modules/webhook"   // 自动注册webhook模块
 )
 
-var filename = "logs/app.log"
-
 func init() {
-	// 在包初始化时确保基础设施准备就绪
-	slog.EnableTextLogger() // 启用文本日志
-	// slog.EnableJsonLogger()            // 也启用JSON日志用于演示
-	time.Sleep(100 * time.Millisecond) // 给一些初始化时间
+	// 初始化日志设置
+	slog.EnableTextLogger()           // 启用文本日志
+	time.Sleep(50 * time.Millisecond) // 等待初始化完成
 }
 
 func main() {
-	write := os.Stdout
-	// write := slog.NewWriter(filename)
-	logger := slog.NewLogger(write, false, false)
+	fmt.Println("🚀 darkit/slog 综合功能演示")
+	fmt.Println(strings.Repeat("=", 60))
 
-	// 定义所有演示项目
+	// 创建主logger
+	logger := slog.NewLogger(os.Stdout, false, false)
+
+	// 定义演示项目
 	demos := []struct {
 		name        string
 		description string
 		fn          func()
 	}{
 		{
-			name:        "日志级别控制",
-			description: "演示动态调整日志级别和监听级别变化",
-			fn:          demoLogLevels,
-		},
-		{
-			name:        "基本日志记录",
-			description: "演示基本的日志记录功能",
-			fn:          func() { demoBasicLogging(logger) },
-		},
-		{
-			name:        "格式化日志",
-			description: "演示不同格式的日志输出",
-			fn:          func() { demoFormattedLogging(logger) },
+			name:        "基础日志功能",
+			description: "演示所有日志级别和基本功能",
+			fn:          demoBasicLogging,
 		},
 		{
 			name:        "结构化日志",
-			description: "演示结构化日志记录",
+			description: "演示结构化字段和格式化日志",
 			fn:          func() { demoStructuredLogging(logger) },
 		},
 		{
-			name:        "日志分组和模块化",
-			description: "演示日志分组和模块管理",
-			fn:          demoGroupsAndModules,
+			name:        "动态级别控制",
+			description: "演示生产环境动态级别切换",
+			fn:          demoDynamicLevelControl,
 		},
 		{
-			name:        "上下文和值传递",
-			description: "演示使用上下文和值传递",
-			fn:          func() { demoContextAndValues(logger) },
-		},
-		{
-			name:        "输出格式控制",
-			description: "演示不同的日志输出格式",
-			fn:          func() { demoOutputFormat(logger) },
-		},
-		{
-			name:        "日志脱敏",
+			name:        "DLP数据脱敏",
 			description: "演示敏感信息脱敏功能",
-			fn:          func() { demoSensitiveData(logger) },
+			fn:          demoDLPMasking,
 		},
 		{
-			name:        "高级特性",
-			description: "演示高级日志特性",
-			fn:          func() { demoAdvancedFeatures(logger) },
-		},
-		{
-			name:        "前缀和格式化",
-			description: "演示日志前缀和格式化功能",
-			fn:          demoPrefixAndFormatting,
+			name:        "模块注册系统",
+			description: "演示模块注册中心和各种使用方式",
+			fn:          demoModuleSystem,
 		},
 		{
 			name:        "异步日志处理",
-			description: "演示异步日志记录功能",
+			description: "演示异步日志和订阅者模式",
 			fn:          demoAsyncLogging,
 		},
 		{
-			name:        "多订阅者模式",
-			description: "演示多个订阅者处理日志的场景",
-			fn:          demoMultipleSubscribers,
+			name:        "性能基准测试",
+			description: "演示各种场景下的性能表现",
+			fn:          demoPerformanceTests,
 		},
 		{
-			name:        "链路追踪",
-			description: "演示日志链路追踪功能",
-			fn:          demoTracing,
+			name:        "上下文和追踪",
+			description: "演示上下文传递和链路追踪",
+			fn:          func() { demoContextAndTracing(logger) },
 		},
 		{
 			name:        "错误处理",
-			description: "演示错误日志处理",
-			fn:          demoErrorHandling,
+			description: "演示错误日志和异常处理",
+			fn:          func() { demoErrorHandling(logger) },
+		},
+		{
+			name:        "生产环境场景",
+			description: "演示真实生产环境使用场景",
+			fn:          demoProductionScenarios,
 		},
 	}
 
 	// 执行所有演示
-	for _, demo := range demos {
-		// 打印分隔线
-		logger.Info("========================================")
-		logger.Info("开始演示: "+demo.name,
-			"description", demo.description,
-		)
+	for i, demo := range demos {
+		fmt.Printf("\n📋 [%d/%d] %s\n", i+1, len(demos), demo.name)
+		fmt.Printf("📝 %s\n", demo.description)
+		fmt.Println(strings.Repeat("-", 40))
 
-		// 执行演示函数
 		demo.fn()
 
-		// 打印完成信息
-		logger.Info("演示完成: " + demo.name)
-
-		// 暂停一会，让输出更清晰
-		time.Sleep(200 * time.Millisecond)
+		fmt.Printf("✅ %s 演示完成\n", demo.name)
+		time.Sleep(300 * time.Millisecond)
 	}
+
+	fmt.Printf("\n🎉 所有演示完成！\n")
+	fmt.Printf("📚 更多信息请查看项目文档和代码注释\n")
 }
 
-// demoLogLevels 演示日志级别控制
-func demoLogLevels() {
-	// 设置全局日志级别
-	slog.SetLevelDebug() // 设置为Debug级别
-	// 获取当前日志级别
-	currentLevel := slog.GetLevel()
-	slog.Trace("Current log level", "level", currentLevel)
-	slog.Debug("Current log level", "level", currentLevel)
-	slog.Info("Current log level", "level", currentLevel)
-	slog.Warn("Current log level", "level", currentLevel)
-	slog.Error("Current log level", "level", currentLevel)
-}
+// 基础日志功能演示
+func demoBasicLogging() {
+	fmt.Println("🎯 日志级别演示:")
 
-// demoBasicLogging 演示基本日志记录
-func demoBasicLogging(logger *slog.Logger) {
+	// 设置为最详细级别
 	slog.SetLevelTrace()
-	// 不同级别的日志记录
-	logger.Trace("这是一条跟踪日志") // 最详细的日志级别
-	logger.Debug("这是一条调试日志") // 用于调试信息
-	logger.Info("这是一条信息日志")  // 普通信息
-	logger.Warn("这是一条警告日志")  // 警告信息
-	logger.Error("这是一条错误日志") // 错误信息
-	logger.Trace("这是一条路由日志") // 路由日志
-	// logger.Fatal("这是一条致命错误日志") // 致命错误，会导致程序退出
 
-	// 使用全局方法记录日志
-	slog.Debug("使用全局Debug记录")
-	slog.Info("使用全局Info记录")
-	slog.Warn("使用全局Warn记录")
-	slog.Error("使用全局Error记录")
+	// 不同级别的日志
+	slog.Trace("最详细的追踪信息 - 通常用于复杂问题诊断")
+	slog.Debug("调试信息 - 开发阶段使用")
+	slog.Info("普通信息 - 业务流程记录")
+	slog.Warn("警告信息 - 需要注意但不影响运行")
+	slog.Error("错误信息 - 发生错误但程序可继续")
 
-	// 动态效果使用示例
-	slog.Dynamic("请稍候", 10, 500)
-	slog.Progress("加载中", 3000)
-	slog.Countdown("即将开始", 5)
-	slog.Loading("处理中...", 3)
-}
-
-// demoFormattedLogging 演示格式化日志
-func demoFormattedLogging(logger *slog.Logger) {
+	fmt.Println("\n🎨 格式化日志:")
 	username := "张三"
-	ip := "192.168.1.1"
-	duration := 100
+	userID := 12345
+	loginTime := time.Now()
 
-	// 使用格式化方法记录日志
-	logger.Debugf("用户 %s 从 %s 登录", username, ip)
-	logger.Infof("处理耗时 %d ms", duration)
-	logger.Warnf("CPU使用率: %.2f%%", 75.5)
-	logger.Errorf("连接失败: %v", "超时")
+	slog.Infof("用户 %s (ID: %d) 在 %s 登录成功",
+		username, userID, loginTime.Format("15:04:05"))
+	slog.Warnf("用户 %s 连续登录失败 %d 次", username, 3)
+	slog.Errorf("用户 %s 权限验证失败: %v", username, "无效令牌")
 
-	// 兼容fmt风格的方法
-	logger.Printf("这是一条Printf格式的日志 - %s", "测试")
-	logger.Println("这是一条Println格式的日志")
+	fmt.Println("\n✨ 动态效果:")
+	slog.Dynamic("系统初始化", 8, 200)
+	slog.Progress("加载配置", 1500)
+	slog.Countdown("服务启动", 3)
+	slog.Loading("连接数据库", 2)
 }
 
-// demoStructuredLogging 演示结构化日志
+// 结构化日志演示
 func demoStructuredLogging(logger *slog.Logger) {
-	// 模拟用户登录场景
-	logger.Info("用户登录",
+	fmt.Println("🏗️ 结构化字段:")
+
+	// 用户操作场景
+	logger.Info("用户操作事件",
 		"user_id", 12345,
-		"ip", "192.168.1.100",
-		"device", "iPhone",
-		"location", "Beijing",
+		"username", "张三",
+		"action", "查询订单",
+		"ip_address", "192.168.1.100",
+		"user_agent", "Mozilla/5.0 Chrome/91.0",
 		"timestamp", time.Now(),
+		"session_id", "sess_abc123",
 	)
 
-	// 模拟API请求场景
+	// API请求场景
 	logger.Info("API请求处理",
 		"method", "POST",
-		"path", "/api/v1/orders",
-		"duration_ms", 45,
-		"status", 200,
-		"client_ip", "10.0.0.1",
+		"endpoint", "/api/orders",
+		"status_code", 200,
+		"response_time_ms", 245,
+		"request_size", 1024,
+		"response_size", 2048,
 	)
 
-	// 模拟系统监控场景
-	logger.Info("系统状态",
-		"cpu_usage", 65.5,
-		"memory_used_mb", 1024,
-		"disk_free_gb", 128,
-		"network_in_mbps", 75.2,
-		"network_out_mbps", 45.8,
+	// 系统监控场景
+	logger.Warn("系统资源监控",
+		"cpu_usage", 78.5,
+		"memory_usage", 65.2,
+		"disk_usage", 45.8,
+		"active_connections", 150,
+		"queue_size", 25,
+	)
+
+	fmt.Println("\n📊 业务指标:")
+	logger.Info("订单处理完成",
+		"order_id", "ORD-2024-001",
+		"customer_id", 9876,
+		"amount", 299.99,
+		"currency", "CNY",
+		"payment_method", "微信支付",
+		"processing_time", 3.2,
 	)
 }
 
-// demoGroupsAndModules 演示日志分组和模块化
-func demoGroupsAndModules() {
-	// 创建不同模块的日志记录器
-	userLogger := slog.Default("user")
-	authLogger := slog.Default("auth")
-	dbLogger := slog.Default("database")
+// 动态级别控制演示
+func demoDynamicLevelControl() {
+	fmt.Println("🎚️ 生产环境级别切换场景:")
 
-	// 使用不同模块记录日志
-	userLogger.Info("用户模块日志")
-	authLogger.Warn("认证模块警告")
-	dbLogger.Error("数据库模块错误")
+	// 1. 生产模式 - 只记录重要信息
+	fmt.Println("\n1. 生产模式启动 (level: error)")
+	slog.SetLevel("error")
+	fmt.Printf("   当前级别: %v\n", slog.GetLevel())
 
-	// 使用分组功能
-	apiLogger := slog.WithGroup("api")
-	apiLogger.Info("接收到请求",
-		"method", "GET",
-		"path", "/users",
-		"ip", "127.0.0.1",
-	)
+	fmt.Println("   正常业务运行:")
+	simulateBusinessOperations("生产模式")
 
-	// 链式调用分组
-	apiLogger.WithGroup("auth").With(
-		"request_id", "req-123",
-	).Info("用户认证成功")
+	// 2. 发现异常 - 开启详细日志
+	fmt.Println("\n2. 发现异常，开启调试模式 (level: debug)")
+	slog.SetLevel("debug")
+	fmt.Printf("   当前级别: %v\n", slog.GetLevel())
+
+	fmt.Println("   详细排查模式:")
+	simulateBusinessOperations("调试模式")
+
+	// 3. 恢复生产模式
+	fmt.Println("\n3. 问题解决，恢复生产模式 (level: error)")
+	slog.SetLevel("error")
+	fmt.Printf("   当前级别: %v\n", slog.GetLevel())
+
+	fmt.Println("   恢复正常运行:")
+	simulateBusinessOperations("恢复模式")
 }
 
-// demoContextAndValues 演示上下文和值传递
-func demoContextAndValues(logger *slog.Logger) {
-	// 创建上下文
-	ctx := context.Background()
+// DLP数据脱敏演示
+func demoDLPMasking() {
+	fmt.Println("🔒 敏感信息脱敏功能:")
 
-	// 使用上下文
-	ctxLogger := logger.WithContext(ctx)
+	// 启用DLP引擎
+	dlpEngine := dlp.NewDlpEngine()
+	dlpEngine.Enable()
 
-	// 添加值到日志上下文
-	ctxLogger = ctxLogger.WithValue("trace_id", "trace-123")
-	ctxLogger = ctxLogger.WithValue("request_id", "req-456")
+	// 清除可能存在的缓存，确保测试准确
+	dlpEngine.ClearCache()
 
-	// 使用带上下文的日志记录
-	ctxLogger.Info("处理请求")
-	ctxLogger.Debug("详细信息")
-}
-
-// demoOutputFormat 演示输出格式控制
-func demoOutputFormat(logger *slog.Logger) {
-	// 1. 演示纯文本格式
-	slog.EnableTextLogger()
-	slog.DisableJsonLogger()
-	logger.Info("=== 文本格式日志演示 ===")
-	logger.Info("这是一条文本格式的日志",
-		"field1", "value1",
-		"field2", 123,
-	)
-
-	time.Sleep(100 * time.Millisecond)
-
-	// 2. 演示JSON格式
-	slog.DisableTextLogger()
-	slog.EnableJsonLogger()
-	logger.Info("=== JSON格式日志演示 ===")
-	logger.Info("这是一条JSON格式的日志",
-		"field1", "value1",
-		"field2", 123,
-	)
-
-	time.Sleep(100 * time.Millisecond)
-
-	// 3. 恢复默认设置
-	slog.EnableTextLogger()
-	slog.DisableJsonLogger()
-}
-
-// demoSensitiveData 演示日志脱敏功能
-func demoSensitiveData(logger *slog.Logger) {
-	// 启用DLP
-	slog.EnableDLPLogger()
-	time.Sleep(100 * time.Millisecond)
-
-	// 这里不需要重新注册规则，因为内置规则已经在dlp包初始化时注册
-	// 直接使用包中定义好的规则名称即可
-
-	// 注册常用的脱敏规则
-	//slog.RegisterDLPStrategy("mobile_phone", func(text string) string {
-	//	if matched, _ := regexp.MatchString(`^1[3-9]\d{9}$`, text); matched {
-	//		return text[:3] + "****" + text[len(text)-4:]
-	//	}
-	//	return text
-	//})
-
-	logger = slog.NewLogger(os.Stdout, false, true)
-
-	// 测试不同类型数据的脱敏
-	sensitiveData := []struct {
-		name     string
-		value    string
-		strategy string // 对应内置规则的名称
+	// 测试各种敏感信息
+	testData := []struct {
+		name string
+		data string
 	}{
-		{"手机号", "13800138000", "mobile_phone"},
-		{"身份证", "440101199001011234", "id_card"},
-		{"银行卡", "6222021234567890123", "bank_card"},
-		{"电子邮箱", "test@example.com", "email"},
-		{"中文姓名", "张小三", "chinese_name"},
-		{"固定电话", "0755-12345678", "landline"},
-		{"邮政编码", "518000", "postal_code"},
-		{"护照号", "E12345678", "passport"},
-		{"驾驶证", "440101199001011234", "device_id"},
-		{"IPv4地址", "192.168.1.1", "ipv4"},
-		{"MAC地址", "00:0A:95:9D:68:16", "mac"},
-		{"车牌号", "粤B12345", "plate"},
-		{"信用卡", "4111111111111111", "credit_card"},
-		{"统一社会信用代码", "91110000100000589B", "company_id"},
-		{"地址", "广东省深圳市南山区科技园", "address"},
-		{"密码", "password123", "password"},
-		{"JWT令牌", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...", "jwt"},
-		{"密钥", "sk_live_51Mx9fK2eZvKYlo2CJyxB", "private_key"},
-		{"用户名", "admin123", "username"},
-		{"设备ID", "A1B2C3D4-E5F6-G7H8-I9J0-K1L2M3N4O5P6", "device_id"},
+		{"手机号", "用户手机号：13812345678"},
+		{"邮箱地址", "邮箱：zhangsan@company.com"},
+		{"身份证号", "身份证：110101199001011237"},
+		{"银行卡号", "工商银行卡：6222021234567890123"},
+		{"IP地址", "客户端IP：192.168.1.100"},
+		{"网址链接", "访问地址：https://www.example.com/api?token=123456789"},
+		{"中文姓名", "客户姓名：张三丰"},
+		{"综合信息", "张三(13812345678)使用银行卡6222021234567890123支付"},
 	}
 
-	// 测试每种类型的脱敏效果
-	for _, data := range sensitiveData {
-		// 直接使用原始值,让DLP引擎自动处理脱敏
-		logger.Info("脱敏测试",
-			"数据类型", data.name,
-			"规则名称", data.strategy,
-			"原始值", data.value, // DLP引擎会自动处理脱敏
-		)
+	fmt.Println("\n脱敏前后对比:")
+	for _, test := range testData {
+		original := test.data
+		masked := dlpEngine.DesensitizeText(original)
+
+		fmt.Printf("   %s:\n", test.name)
+		fmt.Printf("     原文: %s\n", original)
+		fmt.Printf("     脱敏: %s\n", masked)
+		fmt.Println()
 	}
 
-	// 测试复合信息脱敏
-	logger.Info("用户完整信息",
-		"姓名", "张三",
-		"身份证", "440101199001011234",
-		"手机", "13800138000",
-		"邮箱", "zhangsan@example.com",
-		"银行卡", "6222021234567890123",
-		"家庭住址", "广东省深圳市南山区科技园1号楼101室",
-		"车牌号", "粤B12345",
-		"工作单位", "某某科技有限公司",
-	)
-
-	// 测试 URL 中的敏感信息
-	logger.Info("API调用信息",
-		"url", "https://api.example.com/users?access_token=12345&api_key=secret",
-		"authorization", "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-		"client_ip", "192.168.1.100",
-		"user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-	)
-
-	// 测试JSON格式的复合数据
-	logger.Info("JSON数据脱敏测试",
-		"data", `{
-            "user": {
-                "name": "张三",
-                "id_card": "440101199001011234",
-                "phone": "13800138000",
-                "email": "zhangsan@example.com",
-                "address": "广东省深圳市南山区科技园"
-            },
-            "payment": {
-                "card_no": "6222021234567890123",
-                "card_holder": "张三"
-            }
-        }`,
-	)
-
-	// 显示当前启用的脱敏功能
-	if slog.IsDLPEnabled() {
-		logger.Info("当前脱敏功能已启用")
+	// 结构体脱敏演示
+	fmt.Println("📋 结构体脱敏:")
+	type UserInfo struct {
+		Name     string `dlp:"chinese_name"`
+		Phone    string `dlp:"mobile_phone"`
+		Email    string `dlp:"email"`
+		BankCard string `dlp:"bank_card"`
+		IDCard   string `dlp:"id_card"`
 	}
 
-	// 禁用脱敏功能进行对比
-	slog.DisableDLPLogger()
-	logger.Info("禁用脱敏后的日志",
-		"姓名", "张三",
-		"身份证", "440101199001011234",
-		"手机", "13800138000",
-		"银行卡", "6222021234567890123",
-	)
+	user := UserInfo{
+		Name:     "李四",
+		Phone:    "13987654321",
+		Email:    "lisi@example.com",
+		BankCard: "6217001234567890123",
+		IDCard:   "440301199001011234",
+	}
+
+	fmt.Printf("   脱敏前: %+v\n", user)
+	dlpEngine.DesensitizeStruct(&user)
+	fmt.Printf("   脱敏后: %+v\n", user)
 }
 
-// demoAdvancedFeatures 演示高级特性
-func demoAdvancedFeatures(logger *slog.Logger) {
-	// 获取原始slog.Logger
-	slogLogger := logger.GetSlogLogger()
-	slogLogger.Info("使用原始slog记录日志")
+// 模块注册系统演示
+func demoModuleSystem() {
+	fmt.Println("🔧 模块注册中心:")
 
-	// 订阅日志记录
-	ch, cancel := slog.Subscribe(1000) // 指定缓冲大小
-	defer cancel()                     // 确保取消订阅
+	// 查看已注册的模块工厂
+	registry := modules.GetRegistry()
+	factories := registry.ListFactories()
+	fmt.Printf("   已注册工厂数量: %d\n", len(factories))
+	for _, name := range factories {
+		fmt.Printf("     ✓ %s\n", name)
+	}
 
-	// 启动异步处理
-	go func() {
-		for record := range ch {
-			// 在这里处理订阅到的日志
-			fmt.Printf("收到日志记录: %v\n", record)
-		}
-	}()
+	// 查看已创建的模块实例
+	moduleInstances := registry.List()
+	fmt.Printf("   已创建模块实例数量: %d\n", len(moduleInstances))
 
-	// 使用Group和With的组合
-	logger.WithGroup("api").
-		With("version", "v1").
-		WithGroup("auth").
-		With("client_id", "123").
-		Info("API调用")
+	fmt.Println("\n🚀 模块使用方式:")
 
-	// 等待一会儿确保日志被处理
-	time.Sleep(100 * time.Millisecond)
+	// 方式1: 快速启用单个模块
+	fmt.Println("   1. 快速启用:")
+	logger1 := slog.UseFactory("formatter", modules.Config{
+		"type": "time",
+	}).Build()
+	if logger1 != nil {
+		logger1.Info("使用时间格式化模块",
+			"timestamp", time.Now().Format("2006-01-02 15:04:05"))
+	}
+
+	// 方式2: 配置驱动方式
+	fmt.Println("\n   2. 配置驱动:")
+	configs := []modules.ModuleConfig{
+		{
+			Type:     "formatter",
+			Name:     "time-fmt",
+			Enabled:  true,
+			Priority: 10,
+			Config: modules.Config{
+				"type": "time",
+			},
+		},
+		{
+			Type:     "multi",
+			Name:     "multi-output",
+			Enabled:  true,
+			Priority: 20,
+			Config: modules.Config{
+				"outputs": []string{"stdout", "file"},
+			},
+		},
+	}
+
+	logger2 := slog.UseConfig(configs).Build()
+	if logger2 != nil {
+		logger2.Info("配置驱动创建的Logger")
+		logger2.Warn("支持多种模块组合")
+	}
+
+	fmt.Println("\n   3. 链式调用语法示例:")
+	fmt.Println("      slog.EnableFormatter(\"time\").EnableMulti(config).Build()")
+	fmt.Println("      (为避免副作用，此处仅展示语法)")
 }
 
-// demoPrefixAndFormatting 演示日志前缀和格式化功能
-func demoPrefixAndFormatting() {
-	// 1. 基本前缀使用
-	// Default方法会自动添加module前缀
-	userLogger := slog.Default("user")          // [user] 日志内容
-	apiLogger := slog.Default("api")            // [api] 日志内容
-	dbLogger := slog.Default("db", "mysql")     // [db:mysql] 日志内容
-	authLogger := slog.Default("auth", "oauth") // [auth:oauth] 日志内容
-
-	// 记录带前缀的日志
-	userLogger.Info("用户登录")    // 输出: [user] 用户登录
-	apiLogger.Info("接收到请求")    // 输出: [api] 接收到请求
-	dbLogger.Info("执行SQL查询")   // 输出: [db:mysql] 执行SQL查询
-	authLogger.Info("验证token") // 输出: [auth:oauth] 验证token
-
-	// 2. 多级模块前缀
-	// 使用多个参数创建更具体的模块路径
-	serviceLogger := slog.Default("service", "user", "register") // [service:user:register]
-	serviceLogger.Info("处理注册请求")                                 // 输出: [service:user:register] 处理注册请求
-
-	// 3. 组合使用前缀和结构化字段
-	userLogger.Info("创建新用户",
-		"user_id", 12345,
-		"username", "zhangsan",
-	)
-	// 输出: [user] 创建新用户 user_id=12345 username=zhangsan
-
-	// 4. 组合使用前缀和分组
-	apiLogger.WithGroup("request").Info("处理API请求",
-		"method", "POST",
-		"path", "/api/v1/users",
-		"duration", "100ms",
-	)
-	// 输出: [api] 处理API请求 request.method=POST request.path=/api/v1/users request.duration=100ms
-
-	// 5. 前缀和上下文结合
-	authLogger.WithValue("request_id", "req-123").
-		Info("验证用户身份")
-	// 输出: [auth:oauth] 验证用户身份 request_id=req-123
-
-	// 6. 不同日志级别的前缀使用
-	dbLogger.Debug("连接数据库") // 输出: [D] [db:mysql] 连接数据库
-	dbLogger.Info("查询成功")   // 输出: [I] [db:mysql] 查询成功
-	dbLogger.Warn("连接超时")   // 输出: [W] [db:mysql] 连接超时
-	dbLogger.Error("查询失败")  // 输出: [E] [db:mysql] 查询失败
-
-	// 7. 在其他功能中使用前缀
-	serviceLogger.With(
-		"trace_id", "trace-456",
-		"user_id", "user-789",
-	).Info("处理业务逻辑")
-	// 输出: [service:user:register] 处理业务逻辑 trace_id=trace-456 user_id=user-789
-
-	// 8. 前缀和格式化日志
-	userLogger.Infof("用户 %s 的登录次数: %d", "zhangsan", 5)
-	// 输出: [user] 用户 zhangsan 的登录次数: 5
-
-	// 9. 链式调用中使用前缀
-	apiLogger.
-		WithGroup("metrics").
-		With("latency", "50ms").
-		Info("API性能统计")
-	// 输出: [api] API性能统计 metrics.latency=50ms
-}
-
-// demoAsyncLogging 演示异步日志记录功能
+// 异步日志处理演示
 func demoAsyncLogging() {
-	// 订阅日志
-	ch, cancel := slog.Subscribe(1000)
+	fmt.Println("⚡ 异步日志处理:")
+
+	// 创建订阅者
+	records, cancel := slog.Subscribe(1000)
 	defer cancel()
 
-	// 启动异步处理
+	// 启动异步消费者
+	var wg sync.WaitGroup
+	processedCount := 0
+
+	wg.Add(1)
 	go func() {
-		for record := range ch {
-			fmt.Printf("异步处理日志: %s [%s] %s\n",
-				record.Time.Format(slog.TimeFormat),
-				record.Level,
-				record.Message,
-			)
-		}
-	}()
-
-	// 记录一些测试日志
-	logger := slog.Default("async")
-	for i := 0; i < 5; i++ {
-		logger.Info("异步日志测试",
-			"index", i,
-			"timestamp", time.Now(),
-		)
-		time.Sleep(100 * time.Millisecond)
-	}
-
-	// 等待最后的日志处理完成
-	time.Sleep(200 * time.Millisecond)
-}
-
-// demoMultipleSubscribers 演示多订阅者场景
-func demoMultipleSubscribers() {
-	// 创建两个不同的订阅者
-	ch1, cancel1 := slog.Subscribe(500)
-	defer cancel1()
-
-	ch2, cancel2 := slog.Subscribe(1000)
-	defer cancel2()
-
-	// 第一个订阅者：打印完整日志
-	go func() {
-		for record := range ch1 {
-			fmt.Printf("订阅者1 - 完整日志: %v\n", record)
-		}
-	}()
-
-	// 第二个订阅者：只关注错误日志
-	go func() {
-		for record := range ch2 {
-			if record.Level >= slog.LevelError {
-				fmt.Printf("订阅者2 - 错误日志: %v\n", record)
+		defer wg.Done()
+		for record := range records {
+			processedCount++
+			// 模拟处理日志记录
+			if processedCount <= 5 { // 只打印前5条
+				fmt.Printf("   处理日志: [%s] %s\n",
+					record.Level, record.Message)
 			}
 		}
 	}()
 
-	// 生成一些测试日志
-	logger := slog.Default("multi")
-	logger.Info("这是一条普通信息")
-	logger.Error("这是一条错误信息", "error", fmt.Errorf("test error"))
+	// 生产日志记录
+	logger := slog.NewLogger(&bytes.Buffer{}, false, false)
 
-	// 等待日志处理完成
+	fmt.Println("   生产日志记录...")
+	for i := 0; i < 20; i++ {
+		logger.Info("异步处理测试",
+			"序号", i,
+			"时间", time.Now().Format("15:04:05.000"))
+	}
+
+	// 等待处理完成
 	time.Sleep(200 * time.Millisecond)
+	cancel() // 关闭通道
+	wg.Wait()
+
+	fmt.Printf("   ✅ 共处理 %d 条日志记录\n", processedCount)
 }
 
-// demoTracing 演示日志链路追踪功能
-func demoTracing() {
-	// 创建带追踪ID的logger
-	traceLogger := slog.Default("trace").With(
-		"trace_id", "trace-123",
-		"span_id", "span-456",
-	)
+// 性能基准测试演示
+func demoPerformanceTests() {
+	fmt.Println("📊 性能基准测试:")
 
-	// 模拟请求处理链路
-	traceLogger.Info("开始处理请求")
+	// 基础性能测试
+	fmt.Println("\n   1. 基础日志性能:")
+	testBasicPerformance()
 
-	// 模拟服务调用
-	serviceLogger := traceLogger.WithGroup("service")
-	serviceLogger.Info("调用用户服务",
-		"service", "user",
-		"method", "GetUserInfo",
-	)
+	// 并发性能测试
+	fmt.Println("\n   2. 并发性能测试:")
+	testConcurrencyPerformance()
 
-	// 模拟数据库操作
-	dbLogger := traceLogger.WithGroup("database")
-	dbLogger.Info("执行数据库查询",
-		"sql", "SELECT * FROM users WHERE id = ?",
-		"params", []interface{}{123},
-	)
-
-	traceLogger.Info("请求处理完成")
+	// 内存使用测试
+	fmt.Println("\n   3. 内存使用测试:")
+	testMemoryUsage()
 }
 
-// demoErrorHandling 演示错误日志处理
-func demoErrorHandling() {
-	logger := slog.Default("error")
+// 上下文和追踪演示
+func demoContextAndTracing(logger *slog.Logger) {
+	fmt.Println("📋 上下文传递和链路追踪:")
 
-	// 模拟不同类型的错误处理
-	err1 := fmt.Errorf("数据库连接失败")
-	logger.Error("系统错误",
-		"error", err1,
-		"component", "database",
+	// 设置合适的日志级别以显示所有日志
+	slog.SetLevel("debug")
+
+	// 创建带追踪ID的上下文
+	ctx := context.Background()
+	ctx = context.WithValue(ctx, "trace_id", "trace-"+fmt.Sprintf("%d", time.Now().Unix()))
+	ctx = context.WithValue(ctx, "user_id", "user-12345")
+
+	// 模拟API调用链
+	fmt.Println("\n   API调用链路:")
+
+	// 1. 接收请求
+	logger.Info("收到API请求",
+		"trace_id", ctx.Value("trace_id"),
+		"user_id", ctx.Value("user_id"),
+		"endpoint", "/api/orders",
+		"method", "POST",
 	)
 
-	// 模拟带堆栈的错误
-	err2 := fmt.Errorf("验证失败: %w", err1)
-	logger.Error("业务错误",
-		"error", err2,
-		"component", "auth",
-		"stack", string(debug.Stack()),
+	// 2. 验证权限
+	logger.Debug("验证用户权限",
+		"trace_id", ctx.Value("trace_id"),
+		"user_id", ctx.Value("user_id"),
+		"permission", "order:create",
 	)
 
-	// 使用WithGroup组织错误信息
-	logger.WithGroup("error_details").Error("详细错误信息",
-		"error", err2,
-		"stack", string(debug.Stack()),
-		"context", map[string]interface{}{
-			"user_id": 123,
-			"action":  "login",
-			"time":    time.Now(),
+	// 3. 数据库操作
+	logger.Debug("执行数据库操作",
+		"trace_id", ctx.Value("trace_id"),
+		"user_id", ctx.Value("user_id"),
+		"operation", "INSERT INTO orders",
+		"duration_ms", 45,
+	)
+
+	// 4. 返回响应
+	logger.Info("API请求完成",
+		"trace_id", ctx.Value("trace_id"),
+		"user_id", ctx.Value("user_id"),
+		"status_code", 201,
+		"total_duration_ms", 128,
+	)
+}
+
+// 错误处理演示
+func demoErrorHandling(logger *slog.Logger) {
+	fmt.Println("🚨 错误处理和日志:")
+
+	// 模拟各种错误场景
+	errors := []struct {
+		scenario string
+		err      error
+		context  map[string]interface{}
+	}{
+		{
+			scenario: "数据库连接失败",
+			err:      fmt.Errorf("connection timeout after 5s"),
+			context: map[string]interface{}{
+				"host":     "db.example.com",
+				"port":     3306,
+				"database": "orders",
+				"retries":  3,
+			},
 		},
+		{
+			scenario: "API调用失败",
+			err:      fmt.Errorf("HTTP 503 Service Unavailable"),
+			context: map[string]interface{}{
+				"url":           "https://api.payment.com/charge",
+				"method":        "POST",
+				"timeout":       "30s",
+				"response_code": 503,
+			},
+		},
+		{
+			scenario: "文件操作失败",
+			err:      fmt.Errorf("permission denied"),
+			context: map[string]interface{}{
+				"file_path":  "/var/log/app.log",
+				"operation":  "write",
+				"file_size":  "125MB",
+				"free_space": "256MB",
+			},
+		},
+	}
+
+	fmt.Println("\n   错误场景处理:")
+	for i, errCase := range errors {
+		fmt.Printf("\n   场景 %d: %s\n", i+1, errCase.scenario)
+
+		// 记录错误日志，包含丰富的上下文信息
+		fields := []interface{}{"error", errCase.err.Error()}
+		for key, value := range errCase.context {
+			fields = append(fields, key, value)
+		}
+
+		logger.Error(errCase.scenario, fields...)
+
+		// 记录恢复操作
+		logger.Info("错误恢复操作",
+			"action", "fallback_mechanism",
+			"status", "attempting_recovery",
+		)
+	}
+}
+
+// 生产环境场景演示
+func demoProductionScenarios() {
+	fmt.Println("🏭 生产环境真实场景:")
+
+	// 设置合适的日志级别以显示所有日志
+	slog.SetLevel("debug")
+
+	scenarios := []struct {
+		name string
+		fn   func()
+	}{
+		{"Web服务请求处理", simulateWebRequest},
+		{"数据库事务处理", simulateDatabaseTransaction},
+		{"微服务通信", simulateMicroserviceCall},
+		{"定时任务执行", simulateScheduledJob},
+	}
+
+	for _, scenario := range scenarios {
+		fmt.Printf("\n   📋 %s:\n", scenario.name)
+		scenario.fn()
+	}
+}
+
+// 辅助函数实现
+
+func simulateBusinessOperations(mode string) {
+	slog.Debug("解析请求参数", "mode", mode, "user_id", 12345)
+	slog.Info("处理业务逻辑", "mode", mode, "operation", "query_orders")
+	slog.Warn("系统负载较高", "mode", mode, "cpu_usage", "85%")
+	slog.Error("处理失败", "mode", mode, "error", "database_timeout")
+}
+
+func testBasicPerformance() {
+	logger := slog.NewLogger(io.Discard, false, false)
+	iterations := 10000
+
+	start := time.Now()
+	for i := 0; i < iterations; i++ {
+		logger.Info("性能测试", "iteration", i, "data", "test_payload")
+	}
+	duration := time.Since(start)
+
+	opsPerSec := float64(iterations) / duration.Seconds()
+	fmt.Printf("     %d 次操作耗时: %v\n", iterations, duration)
+	fmt.Printf("     性能: %.0f ops/sec\n", opsPerSec)
+}
+
+func testConcurrencyPerformance() {
+	logger := slog.NewLogger(io.Discard, false, false)
+	goroutines := 4
+	iterationsPerGoroutine := 2500
+
+	var wg sync.WaitGroup
+	start := time.Now()
+
+	for i := 0; i < goroutines; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			for j := 0; j < iterationsPerGoroutine; j++ {
+				logger.Info("并发测试", "goroutine", id, "iteration", j)
+			}
+		}(i)
+	}
+
+	wg.Wait()
+	duration := time.Since(start)
+	totalOps := goroutines * iterationsPerGoroutine
+
+	fmt.Printf("     %d 协程 x %d 操作耗时: %v\n",
+		goroutines, iterationsPerGoroutine, duration)
+	fmt.Printf("     并发性能: %.0f ops/sec\n",
+		float64(totalOps)/duration.Seconds())
+}
+
+func testMemoryUsage() {
+	logger := slog.NewLogger(io.Discard, false, false)
+	iterations := 5000
+
+	runtime.GC()
+	var m1, m2 runtime.MemStats
+	runtime.ReadMemStats(&m1)
+
+	for i := 0; i < iterations; i++ {
+		logger.Info("内存测试",
+			"iteration", i,
+			"timestamp", time.Now(),
+			"data", fmt.Sprintf("payload_%d", i),
+		)
+	}
+
+	runtime.GC()
+	runtime.ReadMemStats(&m2)
+
+	memUsed := m2.TotalAlloc - m1.TotalAlloc
+	memUsedMB := float64(memUsed) / 1024 / 1024
+	bytesPerOp := float64(memUsed) / float64(iterations)
+
+	fmt.Printf("     %d 次操作内存分配: %.2f MB\n", iterations, memUsedMB)
+	fmt.Printf("     平均每次操作: %.2f bytes\n", bytesPerOp)
+}
+
+func simulateWebRequest() {
+	logger := slog.NewLogger(os.Stdout, false, false)
+
+	requestID := fmt.Sprintf("req_%d", time.Now().Unix())
+
+	logger.Info("接收HTTP请求",
+		"request_id", requestID,
+		"method", "POST",
+		"path", "/api/users",
+		"ip", "192.168.1.100",
+		"user_agent", "Chrome/91.0",
+	)
+
+	logger.Debug("路由匹配",
+		"request_id", requestID,
+		"handler", "UserController.Create",
+		"middleware", []string{"auth", "ratelimit", "cors"},
+	)
+
+	logger.Info("请求处理完成",
+		"request_id", requestID,
+		"status_code", 201,
+		"response_time_ms", 156,
+		"response_size", 245,
+	)
+}
+
+func simulateDatabaseTransaction() {
+	logger := slog.NewLogger(os.Stdout, false, false)
+
+	txID := fmt.Sprintf("tx_%d", time.Now().Unix())
+
+	logger.Debug("开启数据库事务",
+		"transaction_id", txID,
+		"isolation_level", "READ_COMMITTED",
+	)
+
+	logger.Debug("执行SQL语句",
+		"transaction_id", txID,
+		"sql", "INSERT INTO users (name, email) VALUES (?, ?)",
+		"params", []string{"张三", "zhangsan@example.com"},
+		"execution_time_ms", 23,
+	)
+
+	logger.Info("事务提交成功",
+		"transaction_id", txID,
+		"affected_rows", 1,
+		"total_time_ms", 45,
+	)
+}
+
+func simulateMicroserviceCall() {
+	logger := slog.NewLogger(os.Stdout, false, false)
+
+	callID := fmt.Sprintf("call_%d", time.Now().Unix())
+
+	logger.Info("调用下游服务",
+		"call_id", callID,
+		"service", "user-service",
+		"endpoint", "/internal/users/validate",
+		"timeout", "5s",
+	)
+
+	logger.Debug("服务响应",
+		"call_id", callID,
+		"status_code", 200,
+		"response_time_ms", 89,
+		"cache_hit", true,
+	)
+}
+
+func simulateScheduledJob() {
+	logger := slog.NewLogger(os.Stdout, false, false)
+
+	jobID := fmt.Sprintf("job_%d", time.Now().Unix())
+
+	logger.Info("定时任务开始",
+		"job_id", jobID,
+		"job_name", "数据同步任务",
+		"schedule", "0 */10 * * * *", // 每10分钟
+		"trigger", "cron",
+	)
+
+	logger.Debug("处理数据批次",
+		"job_id", jobID,
+		"batch_size", 1000,
+		"processed", 856,
+		"errors", 3,
+	)
+
+	logger.Info("定时任务完成",
+		"job_id", jobID,
+		"duration_sec", 45,
+		"status", "success",
+		"next_run", time.Now().Add(10*time.Minute).Format("15:04:05"),
 	)
 }
