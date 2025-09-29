@@ -1,0 +1,51 @@
+version: 2
+updates:
+  # 主模块依赖管理
+  - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    assignees:
+      - "maintainer"
+    reviewers:
+      - "maintainer"
+    commit-message:
+      prefix: "deps"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "go"
+
+  # 基准测试模块依赖管理
+  - package-ecosystem: "gomod"
+    directory: "/benchmark"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 3
+    assignees:
+      - "maintainer"
+    reviewers:
+      - "maintainer"
+    commit-message:
+      prefix: "deps(benchmark)"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "benchmark"
+      - "go"
+
+  # GitHub Actions 依赖管理
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 2
+    assignees:
+      - "maintainer"
+    commit-message:
+      prefix: "ci"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "github-actions"

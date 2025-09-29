@@ -171,8 +171,11 @@ Dockerfile.dev
 docker-compose.override.yml
 .dockerignore
 
-# GitHub 相关
+# GitHub 相关（工作流文件除外）
 .github/
+!.github/workflows/
+!.github/ISSUE_TEMPLATE/
+!.github/PULL_REQUEST_TEMPLATE.md
 
 # 监控和日志
 prometheus.yml

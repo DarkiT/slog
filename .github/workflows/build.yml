@@ -1,0 +1,178 @@
+name: "构建与测试"
+
+on:
+  push:
+    branches: [ "master" ]
+  pull_request:
+    branches: [ "master" ]
+
+env:
+  GO_VERSION: '1.23'
+
+jobs:
+  # 代码质量检查
+  lint:
+    name: 代码质量检查
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Go 环境
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: 格式化检查
+        run: |
+          if [ "$(gofmt -s -l . | wc -l)" -gt 0 ]; then
+            echo "代码格式不正确，请运行 gofmt -s -w ."
+            gofmt -s -l .
+            exit 1
+          fi
+
+      - name: Go Vet 检查
+        run: go vet ./...
+
+      - name: 安装 golangci-lint
+        uses: golangci/golangci-lint-action@v3
+        with:
+          version: latest
+          args: --timeout=5m
+
+  # 构建测试
+  build:
+    name: 构建验证
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Go 环境
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: 下载依赖
+        run: go mod download
+
+      - name: 构建主模块
+        run: go build -v ./...
+
+      - name: 构建基准测试模块
+        working-directory: ./benchmark
+        run: |
+          go mod download
+          go build -v ./...
+
+  # 单元测试与覆盖率
+  test:
+    name: 单元测试与覆盖率
+    runs-on: ubuntu-latest
+    needs: [lint]
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Go 环境
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: 下载依赖
+        run: go mod download
+
+      - name: 运行单元测试
+        run: |
+          go test -race -covermode=atomic -coverprofile=coverage.out -coverpkg=./... ./...
+
+      - name: 生成覆盖率报告
+        run: |
+          go tool cover -html=coverage.out -o coverage.html
+          go tool cover -func=coverage.out
+
+      - name: 上传覆盖率报告
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: |
+            coverage.out
+            coverage.html
+
+      - name: 发送覆盖率到 Coveralls
+        uses: coverallsapp/github-action@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path-to-lcov: coverage.out
+          format: golang
+
+  # 集成测试
+  integration:
+    name: 集成测试
+    runs-on: ubuntu-latest
+    needs: [build]
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Go 环境
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: 运行集成测试
+        run: |
+          go test -tags=integration -timeout=10m ./...
+
+  # DLP 模块专项测试
+  dlp-tests:
+    name: DLP 模块专项测试
+    runs-on: ubuntu-latest
+    needs: [lint]
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Go 环境
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: DLP 功能测试
+        run: |
+          go test -v -timeout=5m ./dlp/...
+
+      - name: DLP 安全测试
+        run: |
+          go test -v -run="Security" ./dlp/...
+
+  # 模块测试
+  modules-tests:
+    name: 模块系统测试
+    runs-on: ubuntu-latest
+    needs: [lint]
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Go 环境
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: 模块接口测试
+        run: |
+          go test -v -timeout=5m ./modules/...
+
+      - name: 插件管理器测试
+        run: |
+          go test -v -run="Plugin" ./modules/...

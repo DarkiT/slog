@@ -1,0 +1,231 @@
+# golangci-lint 配置文件
+# 项目代码质量检查配置
+
+run:
+  # 超时时间
+  timeout: 5m
+
+  # 要分析的包路径模式
+  modules-download-mode: readonly
+
+  # 跳过的目录
+  skip-dirs:
+    - vendor
+    - .git
+    - bin
+    - dist
+
+  # 跳过的文件
+  skip-files:
+    - ".*_test.go"
+    - ".*\\.pb\\.go"
+
+# 输出配置
+output:
+  # 输出格式：colored-line-number|line-number|json|tab|checkstyle|code-climate|junit-xml|github-actions
+  format: colored-line-number
+
+  # 打印发出问题的行
+  print-issued-line: true
+
+  # 打印 linter 名称
+  print-linter-name: true
+
+  # 使所有输出不重复
+  uniq-by-line: true
+
+# linters 设置
+linters-settings:
+  # gofmt 检查是否格式化
+  gofmt:
+    simplify: true
+
+  # goimports 检查导入
+  goimports:
+    local-prefixes: github.com/your-org/slog
+
+  # golint 代码风格检查
+  revive:
+    min-confidence: 0.8
+    rules:
+      - name: var-naming
+      - name: package-comments
+      - name: exported
+      - name: var-declaration
+      - name: blank-imports
+
+  # govet 检查
+  govet:
+    check-shadowing: true
+    enable-all: true
+    disable:
+      - fieldalignment  # 结构体字段对齐检查，可能过于严格
+
+  # 圈复杂度检查
+  gocyclo:
+    min-complexity: 15
+
+  # 检查函数行数
+  funlen:
+    lines: 100
+    statements: 50
+
+  # 检查文件行数
+  lll:
+    line-length: 120
+
+  # 未使用变量检查
+  unused:
+    check-exported: false
+
+  # 拼写检查
+  misspell:
+    locale: US
+    ignore-words:
+      - "colour"
+
+  # 安全检查
+  gosec:
+    severity: medium
+    confidence: medium
+    excludes:
+      - G104  # 错误未检查（在某些情况下可能是预期的）
+
+  # 效率检查
+  prealloc:
+    simple: true
+    range-loops: true
+    for-loops: false
+
+  # 导入顺序检查
+  gci:
+    sections:
+      - standard
+      - default
+      - prefix(github.com/your-org/slog)
+    skip-generated: true
+
+  # 错误检查
+  errcheck:
+    check-type-assertions: true
+    check-blank: false
+    ignore: fmt:.*,io/ioutil:^Read.*
+
+  # 接口检查
+  ireturn:
+    allow:
+      - anon
+      - error
+      - empty
+      - stdlib
+      - generic
+
+# 启用的 linters
+linters:
+  enable:
+    - bodyclose
+    - deadcode
+    - depguard
+    - dogsled
+    - dupl
+    - errcheck
+    - funlen
+    - gochecknoinits
+    - goconst
+    - gocritic
+    - gocyclo
+    - gofmt
+    - goimports
+    - gomnd
+    - goprintffuncname
+    - gosec
+    - gosimple
+    - govet
+    - ineffassign
+    - interfacer
+    - lll
+    - misspell
+    - nakedret
+    - noctx
+    - nolintlint
+    - rowserrcheck
+    - scopelint
+    - staticcheck
+    - structcheck
+    - stylecheck
+    - typecheck
+    - unconvert
+    - unparam
+    - unused
+    - varcheck
+    - whitespace
+    - revive
+    - prealloc
+    - gci
+    - ireturn
+
+  # 禁用的 linters（按需调整）
+  disable:
+    - maligned    # 已弃用
+    - golint      # 已弃用，使用 revive 替代
+
+# 问题排除规则
+issues:
+  # 排除默认的排除规则
+  exclude-use-default: false
+
+  # 最大问题数，0 表示无限制
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+  # 要排除的问题
+  exclude:
+    # 排除某些常见的但不关键的问题
+    - "Error return value of .((os\\.)?std(out|err)\\..*|.*Close|.*Flush|os\\.Remove(All)?|.*printf?|os\\.(Un)?Setenv). is not checked"
+    - "func name will be used as test\\.Test.* by other packages, and that stutters; consider calling this"
+    - "G304: Potential file inclusion via variable"
+
+  # 按路径排除
+  exclude-rules:
+    # 在测试文件中允许某些规则
+    - path: _test\.go
+      linters:
+        - gomnd
+        - funlen
+        - gocyclo
+        - lll
+
+    # 在示例文件中允许某些规则
+    - path: example/
+      linters:
+        - gomnd
+        - errcheck
+
+    # 在 DLP 模块中允许某些复杂度（因为处理敏感数据的复杂性）
+    - path: dlp/
+      linters:
+        - gocyclo
+        - funlen
+      text: "complexity"
+
+    # 在基准测试中允许某些规则
+    - path: benchmark/
+      linters:
+        - gomnd
+        - funlen
+
+    # 允许在 init 函数中进行一些操作
+    - text: "don't use `init` function"
+      linters:
+        - gochecknoinits
+
+# 严重程度配置
+severity:
+  default-severity: error
+  rules:
+    - linters:
+        - dupl
+      severity: info
+    - linters:
+        - gomnd
+      severity: warning
