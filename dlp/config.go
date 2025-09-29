@@ -62,7 +62,7 @@ func (c *DlpConfig) GetStrategy(name string) (DesensitizeFunc, bool) {
 func (c *DlpConfig) registerDefaultStrategies() {
 	// 个人信息
 	c.RegisterStrategy("chinese_name", ChineseNameDesensitize)
-	c.RegisterStrategy("id_card", IdCardDesensitize)
+	c.RegisterStrategy("id_card", IDCardDesensitize)
 	c.RegisterStrategy("passport", PassportDesensitize)
 	c.RegisterStrategy("license_number", DriversLicenseDesensitize)
 	c.RegisterStrategy("nickname", NicknameDesensitize)

@@ -27,7 +27,7 @@ import (
 // Sensitive 定义敏感信息结构体
 type Sensitive struct {
 	Name           string `dlp:"chinese_name" json:"name,omitempty"`               // 姓名
-	IdCard         string `dlp:"id_card" json:"id_card,omitempty"`                 // 身份证
+	IDCard         string `dlp:"id_card" json:"id_card,omitempty"`                 // 身份证
 	FixedPhone     string `dlp:"landline" json:"landline,omitempty"`               // 固定电话
 	MobilePhone    string `dlp:"mobile" json:"mobile,omitempty"`                   // 手机号
 	Address        string `dlp:"address" json:"address,omitempty"`                 // 地址
@@ -36,8 +36,8 @@ type Sensitive struct {
 	LicensePlate   string `dlp:"plate" json:"plate,omitempty"`                     // 车牌
 	BankCard       string `dlp:"bank_card" json:"bank_card,omitempty"`             // 银行卡
 	CreditCard     string `dlp:"credit_card" json:"credit_card,omitempty"`         // 信用卡
-	Ipv4           string `dlp:"ipv4" json:"ipv_4,omitempty"`                      // IPv4
-	Ipv6           string `dlp:"ipv6" json:"ipv_6,omitempty"`                      // IPv6
+	IPv4           string `dlp:"ipv4" json:"ipv_4,omitempty"`                      // IPv4
+	IPv6           string `dlp:"ipv6" json:"ipv_6,omitempty"`                      // IPv6
 	Base64         string `dlp:"base64" json:"base_64,omitempty"`                  // Base64编码
 	URL            string `dlp:"url" json:"url,omitempty"`                         // URL
 	FirstMask      string `dlp:"first_mask" json:"first_mask,omitempty"`           // 仅保留首字符
@@ -190,7 +190,7 @@ func getDesensitizeFunc(tag string) DesensitizeFunc {
 	case "chinese_name":
 		return ChineseNameDesensitize
 	case "id_card":
-		return IdCardDesensitize
+		return IDCardDesensitize
 	case "landline":
 		return FixedPhoneDesensitize
 	case "mobile_phone":
@@ -264,36 +264,27 @@ func getDesensitizeFunc(tag string) DesensitizeFunc {
 	}
 }
 
-// URLDesensitize URL脱敏实现
+// URLDesensitize URL脱敏实现 - 全面考虑各种敏感组合
 func URLDesensitize(rawURL string) string {
 	parsedURL, err := url.Parse(rawURL)
 	if err != nil {
 		return rawURL
 	}
 
-	// 脱敏用户名和密码
+	// 1. 脱敏用户名和密码
 	var userInfo string
 	if parsedURL.User != nil {
 		userInfo = "****:****@"
 	}
 
-	// 脱敏主机名中的IP地址
-	host := parsedURL.Hostname()
+	// 2. 智能主机名脱敏
+	host := desensitizeHost(parsedURL.Hostname())
 	port := parsedURL.Port()
-
-	if ip := net.ParseIP(host); ip != nil {
-		if ip4 := ip.To4(); ip4 != nil {
-			host = IPv4Desensitize(host)
-		} else {
-			host = IPv6Desensitize(host)
-		}
-	}
-
 	if port != "" {
 		host = net.JoinHostPort(host, port)
 	}
 
-	// 脱敏查询参数中的敏感信息
+	// 3. 脱敏查询参数中的敏感信息
 	values := parsedURL.Query()
 	for key := range values {
 		for _, param := range sensitiveURLParams {
@@ -303,7 +294,10 @@ func URLDesensitize(rawURL string) string {
 		}
 	}
 
-	// 手动构建URL字符串
+	// 4. 脱敏Fragment中的敏感信息
+	fragment := desensitizeFragment(parsedURL.Fragment)
+
+	// 5. 重新构建URL
 	var buf strings.Builder
 	if parsedURL.Scheme != "" {
 		buf.WriteString(parsedURL.Scheme)
@@ -318,12 +312,79 @@ func URLDesensitize(rawURL string) string {
 		buf.WriteByte('?')
 		buf.WriteString(values.Encode())
 	}
-	if parsedURL.Fragment != "" {
+	if fragment != "" {
 		buf.WriteByte('#')
-		buf.WriteString(parsedURL.Fragment)
+		buf.WriteString(fragment)
 	}
 
 	return buf.String()
+}
+
+// desensitizeHost 智能主机名脱敏
+func desensitizeHost(host string) string {
+	if host == "" {
+		return host
+	}
+
+	// IP地址脱敏
+	if ip := net.ParseIP(host); ip != nil {
+		if ip4 := ip.To4(); ip4 != nil {
+			return IPv4Desensitize(host)
+		} else {
+			return IPv6Desensitize(host)
+		}
+	}
+
+	// 域名脱敏 - 分级策略
+	return desensitizeDomain(host)
+}
+
+// desensitizeDomain 保持域名完整 - 域名信息对调试很重要
+func desensitizeDomain(domain string) string {
+	// 域名保持完整，便于调试和分析
+	// 真正敏感的认证信息已经由其他规则处理
+	return domain
+}
+
+// desensitizeFragment 脱敏Fragment中的敏感信息
+func desensitizeFragment(fragment string) string {
+	if fragment == "" {
+		return fragment
+	}
+
+	// 解析Fragment中的键值对 (如: access_token=xxx&refresh_token=yyy)
+	if strings.Contains(fragment, "=") {
+		pairs := strings.Split(fragment, "&")
+		var result []string
+
+		for _, pair := range pairs {
+			if strings.Contains(pair, "=") {
+				kv := strings.SplitN(pair, "=", 2)
+				key := strings.ToLower(kv[0])
+
+				// 检查是否为敏感参数
+				isSensitive := false
+				for _, param := range sensitiveURLParams {
+					if strings.Contains(key, param) {
+						isSensitive = true
+						break
+					}
+				}
+
+				if isSensitive {
+					result = append(result, kv[0]+"=****")
+				} else {
+					result = append(result, pair)
+				}
+			} else {
+				result = append(result, pair)
+			}
+		}
+
+		return strings.Join(result, "&")
+	}
+
+	return fragment
 }
 
 // ClearToNullDesensitize 清空为null的脱敏实现
@@ -347,16 +408,36 @@ func ChineseNameDesensitize(name string) string {
 	if len(runes) <= 1 {
 		return name
 	}
-	return string(runes[0]) + strings.Repeat("*", utf8.RuneCountInString(name)-2) + string(runes[len(runes)-1])
+	if len(runes) == 2 {
+		// 两字姓名：保留第一个字，第二个字用*代替
+		return string(runes[0]) + "*"
+	}
+	// 三字及以上姓名：保留第一个和最后一个字，中间用*代替
+	return string(runes[0]) + strings.Repeat("*", len(runes)-2) + string(runes[len(runes)-1])
 }
 
-// IdCardDesensitize 身份证脱敏
-func IdCardDesensitize(idCard string) string {
+// IDCardDesensitize 身份证脱敏
+// 身份证号结构：前6位地区码 + 8位出生日期(YYYYMMDD) + 3位顺序码 + 1位校验码
+// 脱敏策略：保留前6位（地区码）和后4位（后3位顺序码+校验码），中间的出生日期全部脱敏
+func IDCardDesensitize(idCard string) string {
 	runes := []rune(idCard)
-	if len(runes) <= 10 {
-		return idCard
+
+	// 15位老身份证：保留前6位和后3位
+	if len(runes) == 15 {
+		return string(runes[:6]) + strings.Repeat("*", 6) + string(runes[12:])
 	}
-	return string(runes[:6]) + strings.Repeat("*", len(runes)-10) + string(runes[len(runes)-4:])
+
+	// 18位新身份证：保留前6位和后4位，中间8位出生日期脱敏
+	if len(runes) == 18 {
+		return string(runes[:6]) + strings.Repeat("*", 8) + string(runes[14:])
+	}
+
+	// 其他长度，保留前6位和后4位
+	if len(runes) > 10 {
+		return string(runes[:6]) + strings.Repeat("*", len(runes)-10) + string(runes[len(runes)-4:])
+	}
+
+	return idCard
 }
 
 // ChineseIDCardDesensitize 验证中国身份证号
@@ -424,24 +505,31 @@ func AddressDesensitize(address string) string {
 
 // EmailDesensitize 邮箱脱敏，隐藏用户名中间3位，域名不打码
 func EmailDesensitize(email string) string {
-	parts := strings.Split(email, "@")
-	if len(parts) != 2 {
+	if email == "" {
 		return email
 	}
 
-	username := parts[0]
-	domain := parts[1]
-
-	// 用户名处理
-	runes := []rune(username)
-	if len(runes) <= 5 { // 用户名太短则保持原样
-		return email
+	// 查找@符号位置
+	atIndex := strings.LastIndex(email, "@")
+	if atIndex <= 0 {
+		// 无效邮箱，返回全部掩码
+		return strings.Repeat("*", len(email))
 	}
 
-	// 保留前两位和后两位，中间用3个星号替换
-	maskedUsername := string(runes[:2]) + "***" + string(runes[len(runes)-2:])
+	// 提取用户名和域名部分
+	username := email[:atIndex]
+	domain := email[atIndex:]
 
-	return maskedUsername + "@" + domain
+	// 处理用户名部分，保留第一个和最后一个字符（如果长度>2）
+	var maskedUsername string
+	if len(username) <= 2 {
+		maskedUsername = strings.Repeat("*", len(username))
+	} else {
+		maskedUsername = username[:1] + strings.Repeat("*", len(username)-2) + username[len(username)-1:]
+	}
+
+	// 返回掩码后的邮箱
+	return maskedUsername + domain
 }
 
 // PasswordDesensitize 密码脱敏
@@ -465,12 +553,7 @@ func BankCardDesensitize(card string) string {
 		return strings.Repeat("*", len(runes))
 	}
 
-	// 验证银行卡号有效性
-	if !validateCreditCard(card) {
-		return strings.Repeat("*", len(runes))
-	}
-
-	// 保留前6位和后4位，中间用*代替
+	// 保留前6位和后4位，中间用*代替（和身份证脱敏规则一致）
 	return string(runes[:6]) + strings.Repeat("*", len(runes)-10) + string(runes[len(runes)-4:])
 }
 
@@ -782,31 +865,14 @@ func PostalCodeDesensitize(code string) string {
 	return code
 }
 
-// CreditCardDesensitize 处理信用卡号，只显示后四位
+// CreditCardDesensitize 处理信用卡号，保留前6位和后4位，中间用*代替
 func CreditCardDesensitize(card string) string {
 	runes := []rune(card)
-	if len(runes) >= 4 {
-		return strings.Repeat("*", len(runes)-4) + string(runes[len(runes)-4:])
+	if len(runes) <= 10 {
+		return strings.Repeat("*", len(runes))
 	}
-	return card
-}
-
-// validateCreditCard 验证信用卡号，使用简单的Luhn算法
-func validateCreditCard(card string) bool {
-	sum := 0
-	alternate := false
-	for i := len(card) - 1; i >= 0; i-- {
-		n := int(card[i] - '0')
-		if alternate {
-			n *= 2
-			if n > 9 {
-				n -= 9
-			}
-		}
-		sum += n
-		alternate = !alternate
-	}
-	return sum%10 == 0
+	// 保留前6位和后4位，中间用*代替（和身份证脱敏规则一致）
+	return string(runes[:6]) + strings.Repeat("*", len(runes)-10) + string(runes[len(runes)-4:])
 }
 
 // APIKeyDesensitize 处理API密钥，隐藏前面部分

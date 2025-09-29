@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestNewRegexSearcher(t *testing.T) {
@@ -128,6 +129,14 @@ func TestSearchSensitiveByType(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			results := searcher.SearchSensitiveByType(tt.text, tt.matchType)
+
+			if tt.name == "Chinese Name" {
+				t.Logf("Testing text: %s", tt.text)
+				for i, r := range results {
+					t.Logf("Match %d: Type=%s, Content=%s, Position=%v", i, r.Type, r.Content, r.Position)
+				}
+			}
+
 			if len(results) != tt.expected {
 				t.Errorf("Expected %d matches, got %d for type %s",
 					tt.expected, len(results), tt.matchType)
@@ -226,40 +235,6 @@ func TestValidateChineseIDCard(t *testing.T) {
 			if result != tt.expected {
 				t.Errorf("Expected %v for ID card %s, got %v",
 					tt.expected, tt.idCard, result)
-			}
-		})
-	}
-}
-
-func TestValidateCreditCard(t *testing.T) {
-	tests := []struct {
-		name     string
-		card     string
-		expected bool
-	}{
-		{
-			name:     "Valid Visa",
-			card:     "4532015112830366",
-			expected: true,
-		},
-		{
-			name:     "Invalid Number",
-			card:     "4532015112830367",
-			expected: false,
-		},
-		{
-			name:     "Invalid Length",
-			card:     "453201511283",
-			expected: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := validateCreditCard(tt.card)
-			if result != tt.expected {
-				t.Errorf("Expected %v for credit card %s, got %v",
-					tt.expected, tt.card, result)
 			}
 		})
 	}
@@ -461,4 +436,171 @@ func TestEdgeCases(t *testing.T) {
 			searcher.ReplaceParallel(tt.text, tt.matchType)
 		})
 	}
+}
+
+// 基准测试新的优化版本
+func BenchmarkEngine_DesensitizeText(b *testing.B) {
+	engine := NewDlpEngine()
+	engine.Enable()
+
+	testText := "张三的手机号是13812345678，身份证号是110101199001011237，邮箱是zhangsan@example.com，IP地址是192.168.1.1"
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		engine.DesensitizeText(testText)
+	}
+}
+
+func BenchmarkEngine_DesensitizeTextLarge(b *testing.B) {
+	engine := NewDlpEngine()
+	engine.Enable()
+
+	// 构造大文本
+	baseText := "张三的手机号是13812345678，身份证号是110101199001011237，邮箱是zhangsan@example.com，IP地址是192.168.1.1。"
+	largeText := ""
+	for i := 0; i < 100; i++ {
+		largeText += baseText
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		engine.DesensitizeText(largeText)
+	}
+}
+
+func BenchmarkReplaceAllTypes(b *testing.B) {
+	searcher := NewRegexSearcher()
+	testText := "张三的手机号是13812345678，身份证号是110101199001011237，邮箱是zhangsan@example.com，IP地址是192.168.1.1"
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		searcher.ReplaceAllTypes(testText)
+	}
+}
+
+func BenchmarkDetectAllTypes(b *testing.B) {
+	searcher := NewRegexSearcher()
+	testText := "张三的手机号是13812345678，身份证号是110101199001011237，邮箱是zhangsan@example.com，IP地址是192.168.1.1"
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		searcher.DetectAllTypes(testText)
+	}
+}
+
+// 对比旧方法和新方法
+func BenchmarkOldMethod(b *testing.B) {
+	searcher := NewRegexSearcher()
+	testText := "张三的手机号是13812345678，身份证号是110101199001011237，邮箱是zhangsan@example.com，IP地址是192.168.1.1"
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		result := testText
+		types := searcher.GetAllSupportedTypes()
+		for _, typeName := range types {
+			result = searcher.ReplaceParallel(result, typeName)
+		}
+	}
+}
+
+// 性能对比测试
+func TestPerformanceComparison(t *testing.T) {
+	engine := NewDlpEngine()
+	engine.Enable()
+
+	testText := "张三的手机号是13812345678，身份证号是110101199001011237，邮箱是zhangsan@example.com，IP地址是192.168.1.1"
+
+	// 第一次运行（无缓存）
+	start := time.Now()
+	result1 := engine.DesensitizeText(testText)
+	firstRun := time.Since(start)
+
+	// 第二次运行（有缓存）
+	start = time.Now()
+	result2 := engine.DesensitizeText(testText)
+	secondRun := time.Since(start)
+
+	// 验证结果一致性
+	if result1 != result2 {
+		t.Errorf("Results differ: %s vs %s", result1, result2)
+	}
+
+	// 缓存统计
+	hits, misses := engine.GetCacheStats()
+
+	t.Logf("第一次运行时间: %v", firstRun)
+	t.Logf("第二次运行时间: %v", secondRun)
+	t.Logf("性能提升: %.2fx", float64(firstRun)/float64(secondRun))
+	t.Logf("缓存统计 - 命中: %d, 未命中: %d", hits, misses)
+	t.Logf("脱敏结果: %s", result1)
+}
+
+// 内存使用和大批量处理测试
+func TestMemoryAndBatchProcessing(t *testing.T) {
+	engine := NewDlpEngine()
+	engine.Enable()
+
+	// 测试大批量相同文本处理（验证缓存效果）
+	testText := "张三的手机号是13812345678，身份证号是110101199001011237"
+	batchSize := 10000
+
+	start := time.Now()
+	for i := 0; i < batchSize; i++ {
+		engine.DesensitizeText(testText)
+	}
+	duration := time.Since(start)
+
+	hits, misses := engine.GetCacheStats()
+
+	t.Logf("批量处理 %d 次相同文本:", batchSize)
+	t.Logf("总用时: %v", duration)
+	t.Logf("平均每次: %v", duration/time.Duration(batchSize))
+	t.Logf("缓存命中率: %.2f%%", float64(hits)/float64(hits+misses)*100)
+
+	// 测试不同文本的处理
+	engine.ClearCache()
+
+	start = time.Now()
+	for i := 0; i < 1000; i++ {
+		text := fmt.Sprintf("用户%d的手机号是1381234%04d", i, i)
+		engine.DesensitizeText(text)
+	}
+	duration = time.Since(start)
+
+	hits, misses = engine.GetCacheStats()
+
+	t.Logf("\n批量处理 1000 次不同文本:")
+	t.Logf("总用时: %v", duration)
+	t.Logf("平均每次: %v", duration/1000)
+	t.Logf("缓存命中率: %.2f%%", float64(hits)/float64(hits+misses)*100)
+}
+
+// 测试资源占用优化
+func TestResourceOptimization(t *testing.T) {
+	engine := NewDlpEngine()
+	engine.Enable()
+
+	// 测试各种长度的文本
+	texts := []string{
+		"短文本",
+		"中等长度的文本包含手机号13812345678",
+		strings.Repeat("这是一个较长的文本，包含敏感信息手机号13812345678，", 10),
+		strings.Repeat("超长文本重复内容", 1000), // 超长文本不会被缓存
+	}
+
+	for i, text := range texts {
+		start := time.Now()
+		result := engine.DesensitizeText(text)
+		duration := time.Since(start)
+
+		t.Logf("文本 %d (长度 %d): %v", i+1, len(text), duration)
+		if len(result) < 100 {
+			t.Logf("  结果: %s", result)
+		} else {
+			t.Logf("  结果: %s...(truncated)", result[:100])
+		}
+	}
+
+	hits, misses := engine.GetCacheStats()
+	t.Logf("\n总缓存统计 - 命中: %d, 未命中: %d", hits, misses)
 }
