@@ -21,20 +21,20 @@ func Router() *router {
 
 // Add a new handler to the router. The handler will be called if all matchers return true.
 func (h *router) Add(handler slog.Handler, matchers ...func(ctx context.Context, r slog.Record) bool) *router {
-    newRouter := &router{
-        handlers: make([]slog.Handler, len(h.handlers)+1),
-    }
+	newRouter := &router{
+		handlers: make([]slog.Handler, len(h.handlers)+1),
+	}
 
-    copy(newRouter.handlers, h.handlers)
+	copy(newRouter.handlers, h.handlers)
 
-    newRouter.handlers[len(h.handlers)] = &RoutableHandler{
-        matchers: matchers,
-        handler:  handler,
-        groups:   []string{},
-        attrs:    []slog.Attr{},
-    }
+	newRouter.handlers[len(h.handlers)] = &RoutableHandler{
+		matchers: matchers,
+		handler:  handler,
+		groups:   []string{},
+		attrs:    []slog.Attr{},
+	}
 
-    return newRouter
+	return newRouter
 }
 
 func (h *router) Handler() slog.Handler {

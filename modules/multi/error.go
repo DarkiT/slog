@@ -15,5 +15,5 @@ func try(callback func() error) (err error) {
 
 	err = callback()
 
-	return
+	return err
 }

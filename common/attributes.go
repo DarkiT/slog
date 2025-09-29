@@ -15,20 +15,20 @@ import (
 type ReplaceAttrFn = func(groups []string, a slog.Attr) slog.Attr
 
 func AppendRecordAttrsToAttrs(attrs []slog.Attr, groups []string, record *slog.Record) []slog.Attr {
-    output := slices.Clone(attrs)
+	output := slices.Clone(attrs)
 
-    reversed := slices.Clone(groups)
-    slices.Reverse(reversed)
+	reversed := slices.Clone(groups)
+	slices.Reverse(reversed)
 
-    record.Attrs(func(attr slog.Attr) bool {
-        for i := range reversed {
-            attr = slog.Group(reversed[i], attr)
-        }
-        output = append(output, attr)
-        return true
-    })
+	record.Attrs(func(attr slog.Attr) bool {
+		for i := range reversed {
+			attr = slog.Group(reversed[i], attr)
+		}
+		output = append(output, attr)
+		return true
+	})
 
-    return output
+	return output
 }
 
 func ReplaceAttrs(fn ReplaceAttrFn, groups []string, attrs ...slog.Attr) []slog.Attr {
