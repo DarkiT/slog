@@ -10,8 +10,8 @@ import (
 	"time"
 )
 
-// BenchmarkDynamicOptimized 测试优化后的Dynamic函数性能
-func BenchmarkDynamicOptimized(b *testing.B) {
+// BenchmarkDynamic 测试优化后的Dynamic函数性能
+func BenchmarkDynamic(b *testing.B) {
 	var buf bytes.Buffer
 	logger := NewLogger(&buf, true, false) // 禁用颜色以便测试
 

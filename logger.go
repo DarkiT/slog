@@ -1198,17 +1198,6 @@ func scanFormatSpecifiers(msg string) bool {
 	return false
 }
 
-// Dynamic 动态输出带点号动画效果
-//
-//   - msg: 要显示的消息内容
-//   - frames: 动画更新的总帧数
-//   - interval: 每次更新的时间间隔(毫秒)
-//   - writer: 可选的输出writer，如果为nil则使用默认的l.w
-func (l *Logger) Dynamic(msg string, frames int, interval int, writer ...io.Writer) {
-	// 使用高性能的优化版本
-	l.DynamicOptimized(msg, frames, interval, writer...)
-}
-
 // ProgressBarWithValueTo 显示指定进度值的进度条并输出到指定writer
 //
 //   - msg: 要显示的消息内容

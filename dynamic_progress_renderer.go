@@ -231,12 +231,13 @@ func (dpr *DynamicProgressRenderer) GetActiveCount() int {
 	return len(dpr.activeRenders)
 }
 
-// 高性能的Logger.Dynamic方法重写
-// 替换原来的低性能实现
-
-// DynamicOptimized 高性能的动态进度条方法
-// 性能目标：从30.4ms/op优化到<1ms/op
-func (l *Logger) DynamicOptimized(msg string, frames int, interval int, writer ...io.Writer) {
+// Dynamic 动态输出带点号动画效果
+//
+//   - msg: 要显示的消息内容
+//   - frames: 动画更新的总帧数
+//   - interval: 每次更新的时间间隔(毫秒)
+//   - writer: 可选的输出writer，如果为nil则使用默认的l.w
+func (l *Logger) Dynamic(msg string, frames int, interval int, writer ...io.Writer) {
 	// 确定输出目标
 	w := l.w
 	if len(writer) > 0 && writer[0] != nil {
@@ -291,7 +292,7 @@ func (l *Logger) FastDynamic(msg string, durationMs int, writer ...io.Writer) {
 		frames = 50 // 最多50帧
 	}
 
-	l.DynamicOptimized(msg, frames, 100, writer...)
+	l.Dynamic(msg, frames, 100, writer...)
 }
 
 // 统计和监控

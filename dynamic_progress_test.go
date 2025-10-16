@@ -52,18 +52,18 @@ func TestDynamicProgressRenderer_PrecomputeFrames(t *testing.T) {
 	}
 }
 
-func TestDynamicOptimized(t *testing.T) {
+func TestDynamic(t *testing.T) {
 	var buf bytes.Buffer
 	logger := NewLogger(&buf, true, false)
 
 	// 测试优化后的Dynamic方法
 	start := time.Now()
-	logger.DynamicOptimized("优化测试", 3, 10, &buf)
+	logger.Dynamic("优化测试", 3, 10, &buf)
 	elapsed := time.Since(start)
 
 	// 由于是异步的，应该很快返回
 	if elapsed > 50*time.Millisecond {
-		t.Errorf("DynamicOptimized应该快速返回，实际用时: %v", elapsed)
+		t.Errorf("Dynamic应该快速返回，实际用时: %v", elapsed)
 	}
 
 	// 等待渲染完成
@@ -183,7 +183,7 @@ func BenchmarkDynamicRenderer(b *testing.B) {
 		// 为每次迭代创建独立的buffer，避免并发问题
 		var buf bytes.Buffer
 		logger := NewLogger(&buf, true, false)
-		logger.DynamicOptimized("基准测试", 3, 1, &buf)
+		logger.Dynamic("基准测试", 3, 1, &buf)
 		// 不等待完成，测试启动性能
 	}
 }
