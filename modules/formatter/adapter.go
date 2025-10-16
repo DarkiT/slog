@@ -27,28 +27,36 @@ func (f *FormatterAdapter) Configure(config modules.Config) error {
 		return err
 	}
 
+	var cfg struct {
+		Type        string `json:"type"`
+		Format      string `json:"format"`
+		Replacement string `json:"replacement"`
+	}
+
+	if err := config.Bind(&cfg); err != nil {
+		return err
+	}
+
 	// 根据配置创建格式化器
-	if formatterType, ok := config["type"].(string); ok {
-		switch formatterType {
-		case "time":
-			format := "2006-01-02 15:04:05"
-			if customFormat, ok := config["format"].(string); ok {
-				format = customFormat
-			}
-			f.formatters = append(f.formatters, TimeFormatter(format, time.Local))
-		case "error":
-			replacement := "error"
-			if customReplacement, ok := config["replacement"].(string); ok {
-				replacement = customReplacement
-			}
-			f.formatters = append(f.formatters, ErrorFormatter(replacement))
-		case "pii":
-			replacement := "*****"
-			if customReplacement, ok := config["replacement"].(string); ok {
-				replacement = customReplacement
-			}
-			f.formatters = append(f.formatters, PIIFormatter(replacement))
+	switch cfg.Type {
+	case "time":
+		format := cfg.Format
+		if format == "" {
+			format = "2006-01-02 15:04:05"
 		}
+		f.formatters = append(f.formatters, TimeFormatter(format, time.Local))
+	case "error":
+		replacement := cfg.Replacement
+		if replacement == "" {
+			replacement = "error"
+		}
+		f.formatters = append(f.formatters, ErrorFormatter(replacement))
+	case "pii":
+		replacement := cfg.Replacement
+		if replacement == "" {
+			replacement = "*****"
+		}
+		f.formatters = append(f.formatters, PIIFormatter(replacement))
 	}
 
 	return nil

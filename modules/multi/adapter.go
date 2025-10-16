@@ -27,8 +27,16 @@ func (m *MultiAdapter) Configure(config modules.Config) error {
 		return err
 	}
 
-	if strategy, ok := config["strategy"].(string); ok {
-		m.strategy = strategy
+	var cfg struct {
+		Strategy string `json:"strategy"`
+	}
+
+	if err := config.Bind(&cfg); err != nil {
+		return err
+	}
+
+	if cfg.Strategy != "" {
+		m.strategy = cfg.Strategy
 	} else {
 		m.strategy = "fanout" // 默认策略
 	}

@@ -28,31 +28,36 @@ func (s *SyslogAdapter) Configure(config modules.Config) error {
 		return err
 	}
 
-	// 配置syslog选项
-	network, _ := config["network"].(string)
-	addr, _ := config["addr"].(string)
+	var cfg struct {
+		Network string `json:"network"`
+		Addr    string `json:"addr"`
+		Level   string `json:"level"`
+	}
 
-	if network != "" && addr != "" {
-		if conn, err := net.Dial(network, addr); err == nil {
+	if err := config.Bind(&cfg); err != nil {
+		return err
+	}
+
+	// 配置syslog选项
+	if cfg.Network != "" && cfg.Addr != "" {
+		if conn, err := net.Dial(cfg.Network, cfg.Addr); err == nil {
 			s.conn = conn
 			s.option.Writer = conn
 		}
 	}
 
-	if level, ok := config["level"].(string); ok {
-		switch level {
-		case "debug":
-			s.option.Level = slog.LevelDebug
-		case "info":
-			s.option.Level = slog.LevelInfo
-		case "warn":
-			s.option.Level = slog.LevelWarn
-		case "error":
-			s.option.Level = slog.LevelError
-		default:
-			s.option.Level = slog.LevelDebug
-		}
-	} else {
+	switch cfg.Level {
+	case "debug":
+		s.option.Level = slog.LevelDebug
+	case "info":
+		s.option.Level = slog.LevelInfo
+	case "warn":
+		s.option.Level = slog.LevelWarn
+	case "error":
+		s.option.Level = slog.LevelError
+	case "":
+		s.option.Level = slog.LevelDebug
+	default:
 		s.option.Level = slog.LevelDebug
 	}
 

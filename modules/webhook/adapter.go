@@ -27,34 +27,44 @@ func (w *WebhookAdapter) Configure(config modules.Config) error {
 		return err
 	}
 
-	// 配置webhook选项
-	if endpoint, ok := config["endpoint"].(string); ok {
-		w.option.Endpoint = endpoint
+	var cfg struct {
+		Endpoint  string        `json:"endpoint"`
+		Timeout   time.Duration `json:"timeout"`
+		Level     string        `json:"level"`
+		AddSource bool          `json:"add_source"`
 	}
 
-	if timeout, ok := config["timeout"].(string); ok {
-		if d, err := time.ParseDuration(timeout); err == nil {
-			w.option.Timeout = d
-		}
+	if err := config.Bind(&cfg); err != nil {
+		return err
+	}
+
+	if cfg.Endpoint != "" {
+		w.option.Endpoint = cfg.Endpoint
+	}
+
+	if cfg.Timeout > 0 {
+		w.option.Timeout = cfg.Timeout
 	} else {
 		w.option.Timeout = 10 * time.Second
 	}
 
-	if level, ok := config["level"].(string); ok {
-		switch level {
-		case "debug":
-			w.option.Level = slog.LevelDebug
-		case "info":
-			w.option.Level = slog.LevelInfo
-		case "warn":
-			w.option.Level = slog.LevelWarn
-		case "error":
-			w.option.Level = slog.LevelError
-		default:
-			w.option.Level = slog.LevelDebug
-		}
-	} else {
+	switch cfg.Level {
+	case "debug":
 		w.option.Level = slog.LevelDebug
+	case "info":
+		w.option.Level = slog.LevelInfo
+	case "warn":
+		w.option.Level = slog.LevelWarn
+	case "error":
+		w.option.Level = slog.LevelError
+	case "":
+		w.option.Level = slog.LevelDebug
+	default:
+		w.option.Level = slog.LevelDebug
+	}
+
+	if cfg.AddSource {
+		w.option.AddSource = true
 	}
 
 	// 创建处理器
