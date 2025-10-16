@@ -19,6 +19,9 @@ slog 是一个高性能、功能丰富的 Go 语言日志库，基于 Go 1.23+ �
 - [日志脱敏（DLP）](#日志脱敏dlp)
 - [进度条功能](#进度条功能)
 - [模块注册系统](#模块注册系统)
+  - [内置模块详解](#内置模块详解)
+  - [插件管理器与注册中心](#插件管理器与注册中心)
+  - [边界场景提示](#边界场景提示)
 - [日志订阅与写入器](#日志订阅机制)
 - [常见问题与更多示例](#基础用法)
 
@@ -120,6 +123,8 @@ logger.Info("configurable logger")
 - `DefaultConfig` 返回可复用的配置对象；`SetEnableText/SetEnableJSON` 会显式锁定实例的输出格式。
 - 调用 `InheritTextOutput/InheritJSONOutput` 时，实例将重新遵循 `EnableTextLogger`、`DisableTextLogger`、`EnableJSONLogger` 等全局函数。
 - `NewLogger` 返回遵循全局配置的默认实例，`NewLoggerWithConfig` 允许在同一进程中创建互不影响的独立 logger。
+
+⚠️ 注意：`EnableJSONLogger`、`EnableTextLogger`、`EnableDLPLogger` 等全局开关会立即影响所有选择“继承”模式的记录器。在多租户或多模块进程中，优先为每个 `Logger` 设置显式的 `SetEnableText/SetEnableJSON` 等配置，避免因为其他协程切换全局状态而导致输出格式突变。需要临时调整全局配置时，请结合明确的作用域（例如只在调试阶段打开，并确保退出前恢复），并避免跨 goroutine 共享并写入同一个配置实例。
 
 ### 日志级别控制
 
@@ -443,6 +448,8 @@ logger.ProgressBarWithValueAndOptionsTo("处理状态", 65.5, 40, opts, os.Stdou
 - **自定义输出**: 可以输出到任意writer
 - **线程安全**: 所有操作都是并发安全的
 
+⚠️ 提示：进度条与动态动画会在标准输出上产生多行或回退字符，适合 TTY 或纯文本日志。当同时启用 JSON、Webhook、Syslog 等结构化输出时，请将这类效果定向到单独的 `io.Writer`，或在该 logger 上禁用 JSON 输出，避免破坏上游解析。
+
 进度条选项说明:
 
 | 选项 | 类型 | 默认值 | 描述 |
@@ -526,150 +533,114 @@ logger := slog.UseConfig(configs).Build()
 logger.Error("系统错误", "error", "database connection failed")
 ```
 
-#### 7.4 内置模块说明
+提示：若模块配置来自 JSON/YAML 等动态来源，可直接调用 `modules.Config.Bind` 将弱类型 `map[string]any` 映射为强类型结构体，避免在 `Configure` 中散布显式断言：
 
-**Formatter 模块**：
 ```go
-// 时间格式化器
-slog.UseFactory("formatter", modules.Config{
-    "type":   "time", 
-    "format": "2006-01-02 15:04:05",
-})
+var opts struct {
+    Endpoint   string        `json:"endpoint"`
+    Recipients []string      `json:"recipients"`
+    Timeout    time.Duration `json:"timeout"`
+}
 
-// 错误信息脱敏
-slog.UseFactory("formatter", modules.Config{
-    "type":        "error",
-    "replacement": "[ERROR]",
-})
-
-// PII信息脱敏  
-slog.UseFactory("formatter", modules.Config{
-    "type":        "pii",
-    "replacement": "*****",
-})
+if err := config.Bind(&opts); err != nil {
+    return err
+}
 ```
 
-**Webhook 模块**：
-```go
-slog.UseFactory("webhook", modules.Config{
-    "endpoint": "https://hooks.slack.com/services/YOUR/WEBHOOK/URL",
-    "timeout":  "30s",
-    "level":    "warn", // 只发送 warn 及以上级别的日志
-})
-```
+`Bind` 基于标准库 `encoding/json` 实现，天然兼容字符串形式的 `time.Duration` 等常见类型，并在配置缺失时返回零值，让模块装配更加稳定、优雅。
 
-**Syslog 模块**：
+#### 7.4 内置模块详解
+
+##### Formatter 模块
+- **功能概览**: 通过 `Format`、`FormatByType`、`FormatByKind` 等组合函数为 `slog` 属性链提供二次格式化，兼容嵌套 `slog.Group`。
+- **关键实现**: 时间格式化器会在传入的 `location` 为空时自动降级为 `time.UTC`；`UnixTimestampFormatter` 仅接受纳秒、微秒、毫秒与秒四档精度，超出范围会直接 panic，部署前务必由配置层校验。
+- **边界处理**: `PIIFormatter` 会递归遍历所有子属性并保留 `id`、`*_id`、`-id` 字段原值，长度不超过 5 的字符串会完全遮挡；`HTTPRequestFormatter` / `HTTPResponseFormatter` 在 `ignoreHeaders` 为 `true` 时统一返回 `[hidden]`，避免意外泄露头部信息。
+- **配置提示**: 当前适配器使用 `replacement` 字段承载目标字段名，等价于调用 `PIIFormatter("user")`；如需自定义掩码字符，可直接将 formatter 函数组合后通过 `EnableFormatters` 注入。
+- **快速示例**:
 ```go
-slog.UseFactory("syslog", modules.Config{
-    "network": "udp",
-    "addr":    "localhost:514", 
-    "level":   "info",
+// 通过模块工厂启用时间与 PII 脱敏
+logger := slog.
+    UseFactory("formatter", modules.Config{"type": "time", "format": time.RFC3339}).
+    UseFactory("formatter", modules.Config{"type": "pii", "replacement": "user"}).
+    Build()
+
+logger.Info("profile update", "user", map[string]any{
+    "id": "42", "email": "alice@example.com",
 })
 ```
 
-#### 7.5 自定义模块开发
-
-创建自定义模块需要实现 `modules.Module` 接口：
-
+##### Multi 模块
+- **功能概览**: 提供 `Fanout`、`Failover`、`Router`、`RecoverHandlerError` 等模式，将多个 `slog.Handler` 组合为一条链路。
+- **关键实现**: `Fanout` 在分发前调用 `record.Clone()`，避免下游修改互相干扰；`Failover` 顺序尝试 handler，首个成功后立即终止并返回 `nil`，全部失败时回传最后一个错误。
+- **边界处理**: 内部的 `try` 方法会捕获 panic 并转换成错误，因此不会打断主链路；`RoutableHandler` 复制分组信息并在 `WithAttrs` 时重新打平属性，防止跨组丢字段；`WithGroup` 遵循 slog 规范，对空字符串直接返回当前实例，避免无意义层级。
+- **扩展建议**: 需要更多策略时，可复用 `MultiAdapter.AddHandler` 追加自定义 handler，再结合 `RecoverHandlerError` 注册统一的告警回调。
+- **快速示例**:
 ```go
-import "github.com/darkit/slog/modules"
+multiAdapter := multi.NewMultiAdapter()
+multiAdapter.AddHandler(slog.NewJSONHandler(os.Stdout, nil))
+multiAdapter.AddHandler(slog.NewTextHandler(os.Stderr, nil))
 
-// 自定义邮件通知模块
-type EmailModule struct {
-    *modules.BaseModule
-    smtpServer string
-    recipients []string
-}
-
-func NewEmailModule() *EmailModule {
-    return &EmailModule{
-        BaseModule: modules.NewBaseModule("email", modules.TypeSink, 150),
-    }
-}
-
-func (e *EmailModule) Configure(config modules.Config) error {
-    if err := e.BaseModule.Configure(config); err != nil {
-        return err
-    }
-    
-    if server, ok := config["smtp_server"].(string); ok {
-        e.smtpServer = server
-    }
-    
-    if recipients, ok := config["recipients"].([]string); ok {
-        e.recipients = recipients
-    }
-    
-    // 创建自定义处理器
-    e.SetHandler(e.createEmailHandler())
-    return nil
-}
-
-func (e *EmailModule) createEmailHandler() slog.Handler {
-    // 实现邮件发送处理器逻辑
-    // ...
-}
-
-// 注册模块工厂
-func init() {
-    modules.RegisterFactory("email", func(config modules.Config) (modules.Module, error) {
-        module := NewEmailModule()
-        return module, module.Configure(config)
-    })
-}
+logger := slog.UseModule(multiAdapter).Build()
+logger.Info("同步输出到多个目标", "trace_id", "abc123")
 ```
 
-#### 7.6 模块管理
-
+##### Webhook 模块
+- **功能概览**: 将日志异步转换为 JSON 并通过 HTTP POST 发送到外部服务。
+- **关键实现**: `Option.Timeout` 默认 10 秒，`send` 会通过 `context.WithTimeout` 控制请求生命周期；`DefaultConverter` 会展开 `error`、`*http.Request` 与 `user` 字段，并将剩余属性放入 `extra`。
+- **边界处理**: `Handle` 在 goroutine 中调用 `send`，错误会被静默丢弃，必须通过外部监控或自定义 `Converter` 注入补偿逻辑；适配器仅在成功拨号 `Endpoint` 时才创建 handler，因此需在部署前验证网络连通性。
+- **使用提示**: 若需要复用已有 `http.Client` 或启用连接池，可参考 `send` 实现自定义版本，并通过 `Option.Marshaler` 与 `Option.Converter` 托管。
+- **快速示例**:
 ```go
-// 获取全局注册中心
-registry := modules.GetRegistry()
-
-// 查看已注册的模块
-moduleList := registry.List()
-for _, module := range moduleList {
-    fmt.Printf("模块: %s, 类型: %s, 优先级: %d\n", 
-        module.Name(), module.Type(), module.Priority())
-}
-
-// 获取特定模块
-if module, exists := modules.GetModule("webhook"); exists {
-    fmt.Printf("找到模块: %s\n", module.Name())
-}
-
-// 按类型获取模块
-formatters := registry.GetByType(modules.TypeFormatter)
-for _, formatter := range formatters {
-    fmt.Printf("格式化器: %s\n", formatter.Name())
-}
+logger := slog.
+    UseFactory("webhook", modules.Config{
+        "endpoint": "https://hooks.example.com/logs",
+        "timeout":  "15s",
+        "level":    "warn",
+    }).
+    Build()
+logger.Warn("订单异常", "order_id", 12345)
 ```
 
-#### 7.7 模块特性
-
-**优先级控制**：
-- 数字越小优先级越高
-- 相同类型的模块按优先级排序执行
-- 建议优先级范围：Formatter(1-50), Middleware(51-100), Handler(101-150), Sink(151-200)
-
-**配置热更新**：
+##### Syslog 模块
+- **功能概览**: 生成符合 `@cee` JSON 格式的 payload 并写入远端 syslog。
+- **关键实现**: `NewSyslogHandler` 在 `Option.Level` 为空时自动降级到 `slog.LevelDebug`，并在处理时将上下文属性与记录属性统一转为 map；写入操作在 goroutine 中执行，避免阻塞主线程。
+- **边界处理**: 异步写入意味着 Writer 的错误会被忽略；使用适配器时若 `network` 或 `addr` 配置为空则不会创建 handler，需要在配置阶段提前检查。
+- **使用提示**: 推荐在退出阶段手动关闭 `SyslogAdapter` 持有的 `net.Conn`，或替换为具备自动重连能力的 Writer，实现更稳定的持久连接。
+- **快速示例**:
 ```go
-// 动态更新模块配置
-if module, exists := modules.GetModule("webhook"); exists {
-    newConfig := modules.Config{
-        "endpoint": "https://new-webhook-url.com",
-        "timeout":  "60s",
-    }
-    module.Configure(newConfig)
+conn, err := net.Dial("udp", "127.0.0.1:514")
+if err != nil {
+    log.Fatalf("连接 syslog 失败: %v", err)
 }
+
+handler := syslog.NewSyslogHandler(conn, &syslog.Option{
+    Writer: conn,
+    Level:  slog.LevelInfo,
+})
+
+logger := slog.NewLogger(handler, false, false)
+logger.Info("service started", "pid", os.Getpid())
 ```
 
-**模块生命周期**：
-1. **注册阶段**：模块工厂注册到全局注册中心
-2. **创建阶段**：通过工厂函数创建模块实例  
-3. **配置阶段**：使用配置参数初始化模块
-4. **构建阶段**：将模块集成到处理器链中
-5. **运行阶段**：模块参与日志处理流程
-6. **销毁阶段**：模块清理和资源释放
+##### Formatter/Handler 组合实践
+- **时间戳与时区**: 同时启用 `TimeFormatter` 与 `TimezoneConverter` 时需保证调用顺序，先转换时区再输出字符串。
+- **隐私合规**: 将 `PIIFormatter` 与 DLP 模块串联时，可先在 formatter 阶段做结构化裁剪，再交由 DLP 模式识别，降低误杀概率。
+
+#### 7.5 插件管理器与注册中心
+
+- **线程安全**: `PluginManager` 通过 `sync.RWMutex` 与 `atomic.Bool` 管理注册表与启用状态，`EnableAll` / `DisableAll` 会逐一更新快照，适合热插拔场景。
+- **统计信息**: `GetStats` 返回深拷贝，包含总数、各类型数量以及每个插件的启用状态与优先级，方便制作仪表盘。
+- **配置读取**: `BasePlugin.Configure` 会复制传入 `map`，避免调用方后续写入导致状态串联；读取时请使用 `GetConfig` 单独提取。
+- **模块注册中心**: `Registry.Register` 会校验重名模块并按优先级排序，`BaseModule` 默认启用且直接存储配置引用，如需并发修改请在外部复制配置。
+- **工厂模式**: 通过 `modules.RegisterFactory` 注册的工厂支持延迟实例化，可结合 `Config.Bind` 自动映射强类型配置结构体。
+
+#### 7.6 边界场景提示
+
+- **配置校验**: `UnixTimestampFormatter` 对非法精度会 panic，建议在加载配置阶段提前校验；`Webhook` 缺少 `endpoint` 时 handler 不会发送任何请求。
+- **异步写入**: Webhook 与 Syslog 均在 goroutine 内发送日志，无返回值反馈；关键告警可搭配 `multi.Failover` 或自定义重试逻辑，避免静默失败。
+- **资源释放**: Multi 模块不会自动关闭下游资源，组合 Syslog / Webhook 等长连接时需在应用退出阶段手动调用 `Close`。
+- **上下文属性**: Webhook 与 Syslog 可通过 `Option.AttrFromContext` 注入额外属性，回调必须幂等且快速，避免放大写入延迟。
+- **命名一致性**: 目前 formatter 适配器将 `replacement` 字段作为目标键名使用，既有配置需保持一致；计划后续重构可统一迁移到 `key` 字段。
 
 ### 日志订阅机制
 
@@ -720,6 +691,11 @@ go func() {
 - 自动资源清理
 - 无阻塞设计
 - 支持选择性处理
+
+⚠️ 注意：`Subscribe` 返回的 channel 仍然是固定容量的缓冲队列；如果消费端处理速度跟不上，缓冲写满后主日志路径会被阻塞。高吞吐场景下建议：
+- 根据业务峰值调大缓冲区容量；
+- 为订阅者准备独立的消费 goroutine，并妥善处理错误；
+- 在需要完全异步的场景中，自行实现带丢弃策略的桥接或使用队列系统。
 
 ## 日志文件管理
 
@@ -833,73 +809,7 @@ logs/
 
 ## 数据脱敏 (DLP) 功能
 
-slog 提供了强大的数据脱敏功能，支持自动识别和脱敏敏感信息：
-
-### 支持的脱敏类型
-
-| 类型 | 示例输入 | 脱敏输出 | 描述 |
-|------|----------|----------|------|
-| 手机号 | `13812345678` | `138****5678` | 中国手机号格式 |
-| 邮箱 | `user@example.com` | `us***@example.com` | 保留前2位和域名 |
-| 身份证 | `110101199001010001` | `110101********0001` | 保留前6位和后4位，隐藏生日 |
-| 银行卡 | `6227123456781234` | `6227****1234` | 保留前4位和后4位 |
-| IPv4 | `192.168.1.1` | `192.*.*.1` | 保留首尾段 |
-| IPv6 | `2001:db8::1` | `2001:db8:****:1` | 保留前缀和后缀 |
-| JWT | `eyJ0...` | `eyJ0.****.[signature]` | 保留header和signature |
-
-### 使用方式
-
-```go
-import "github.com/darkit/slog"
-
-// 启用DLP功能
-slog.EnableDLPLogger()
-
-// 自动脱敏
-logger := slog.Default()
-logger.Info("用户登录", "phone", "13812345678", "email", "user@example.com")
-// 输出: 用户登录 phone=138****5678 email=us***@example.com
-```
-
-### 结构体脱敏
-
-支持通过标签自动脱敏结构体字段：
-
-```go
-type User struct {
-    Name  string `dlp:"chinese_name"`
-    Phone string `dlp:"mobile"`
-    Email string `dlp:"email"`
-    IDCard string `dlp:"id_card"`
-}
-
-user := User{
-    Name:   "张三",
-    Phone:  "13812345678", 
-    Email:  "zhangsan@example.com",
-    IDCard: "123456789012345678",
-}
-
-logger.Info("用户信息", "user", user)
-// 自动脱敏所有标记字段
-```
-
-### 自定义脱敏器
-
-```go
-import "github.com/darkit/slog/dlp"
-
-// 创建自定义脱敏器
-manager := dlp.NewDefaultDesensitizerManager()
-phoneDesensitizer := dlp.NewPhoneDesensitizer()
-manager.RegisterDesensitizer(phoneDesensitizer)
-
-// 处理敏感数据
-result, err := manager.ProcessWithType("phone", "13812345678")
-if err == nil {
-    fmt.Println(result.Result) // 138****5678
-}
-```
+完整的脱敏类型、结构体标签、批量处理与自定义策略示例已在前文的 [日志脱敏（DLP）](#日志脱敏dlp) 章节详细介绍。此处作为方法索引保留标题，避免重复内容，建议直接跳转查看该章节以获取最新的指导。
 
 ## 性能优化
 
