@@ -3,6 +3,7 @@ package slog
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"runtime"
 	"strings"
 	"sync"
@@ -10,9 +11,41 @@ import (
 	"time"
 )
 
+// syncBuffer 是一个线程安全的 bytes.Buffer 包装器
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (sb *syncBuffer) Write(p []byte) (n int, err error) {
+	sb.mu.Lock()
+	defer sb.mu.Unlock()
+	return sb.buf.Write(p)
+}
+
+func (sb *syncBuffer) Len() int {
+	sb.mu.Lock()
+	defer sb.mu.Unlock()
+	return sb.buf.Len()
+}
+
+func (sb *syncBuffer) String() string {
+	sb.mu.Lock()
+	defer sb.mu.Unlock()
+	return sb.buf.String()
+}
+
+func (sb *syncBuffer) Reset() {
+	sb.mu.Lock()
+	defer sb.mu.Unlock()
+	sb.buf.Reset()
+}
+
+var _ io.Writer = (*syncBuffer)(nil)
+
 // BenchmarkDynamic 测试优化后的Dynamic函数性能
 func BenchmarkDynamic(b *testing.B) {
-	var buf bytes.Buffer
+	var buf syncBuffer
 	logger := NewLogger(&buf, true, false) // 禁用颜色以便测试
 
 	b.ResetTimer()
@@ -52,7 +85,7 @@ func BenchmarkStringBuilderPool(b *testing.B) {
 
 // BenchmarkErrorHandling 测试优化后的错误处理性能
 func BenchmarkErrorHandling(b *testing.B) {
-	var buf bytes.Buffer
+	var buf syncBuffer
 	logger := NewLogger(&buf, true, false)
 
 	b.ResetTimer()
@@ -162,7 +195,7 @@ func BenchmarkMemoryUsage(b *testing.B) {
 
 // TestConcurrentSafety 并发安全测试
 func TestConcurrentSafety(t *testing.T) {
-	var buf bytes.Buffer
+	var buf syncBuffer
 	logger := NewLogger(&buf, true, false)
 
 	var wg sync.WaitGroup
