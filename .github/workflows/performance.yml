@@ -23,7 +23,7 @@ on:
           - modules
 
 env:
-  GO_VERSION: '1.23'
+  GO_VERSION: '1.25'
 
 jobs:
   # 基准测试
@@ -32,7 +32,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        test_type: [cache, dlp, logger, integration]
+        test_type: [cache, dlp, logger, runtime, integration]
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
@@ -47,17 +47,28 @@ jobs:
         run: |
           case "${{ matrix.test_type }}" in
             "cache")
+              # 缓存相关基准测试 (cache_benchmark_test.go, pool_benchmark_test.go)
               go test -bench=BenchmarkLRU -benchmem -run=^$ ./...
               go test -bench=BenchmarkTieredPools -benchmem -run=^$ ./common/
+              go test -bench=BenchmarkCache -benchmem -run=^$ ./common/
               ;;
             "dlp")
+              # DLP 模块基准测试
               go test -bench=BenchmarkDLP -benchmem -run=^$ ./dlp/
               go test -bench=BenchmarkDesensitizer -benchmem -run=^$ ./dlp/
               ;;
             "logger")
+              # 日志记录器基准测试
               go test -bench=BenchmarkLogger -benchmem -run=^$ ./...
               ;;
+            "runtime")
+              # 运行时控制功能基准测试 (v0.1.2 新增)
+              go test -bench=BenchmarkContext -benchmem -run=^$ ./...
+              go test -bench=BenchmarkDiagnostics -benchmem -run=^$ ./...
+              go test -bench=BenchmarkRateLimiter -benchmem -run=^$ ./...
+              ;;
             "integration")
+              # 集成基准测试
               go test -bench=. -benchmem -run=^$ ./benchmark/
               ;;
           esac
@@ -69,6 +80,7 @@ jobs:
             "cache")
               go test -bench=BenchmarkLRU -benchmem -run=^$ ./... > benchmark-results/cache-bench.txt
               go test -bench=BenchmarkTieredPools -benchmem -run=^$ ./common/ >> benchmark-results/cache-bench.txt
+              go test -bench=BenchmarkCache -benchmem -run=^$ ./common/ >> benchmark-results/cache-bench.txt
               ;;
             "dlp")
               go test -bench=BenchmarkDLP -benchmem -run=^$ ./dlp/ > benchmark-results/dlp-bench.txt
@@ -76,6 +88,11 @@ jobs:
               ;;
             "logger")
               go test -bench=BenchmarkLogger -benchmem -run=^$ ./... > benchmark-results/logger-bench.txt
+              ;;
+            "runtime")
+              go test -bench=BenchmarkContext -benchmem -run=^$ ./... > benchmark-results/runtime-bench.txt
+              go test -bench=BenchmarkDiagnostics -benchmem -run=^$ ./... >> benchmark-results/runtime-bench.txt
+              go test -bench=BenchmarkRateLimiter -benchmem -run=^$ ./... >> benchmark-results/runtime-bench.txt
               ;;
             "integration")
               cd benchmark && go test -bench=. -benchmem -run=^$ ./... > ../benchmark-results/integration-bench.txt
@@ -201,15 +218,15 @@ jobs:
 
       - name: LRU 缓存性能测试
         run: |
-          echo "=== LRU 缓存基准测试 ===" > cache-performance.txt
+          echo "=== LRU 缓存基准测试 (cache_benchmark_test.go) ===" > cache-performance.txt
           go test -bench=BenchmarkLRU -benchmem -benchtime=10s ./common/ >> cache-performance.txt
 
           echo "" >> cache-performance.txt
-          echo "=== 分层池基准测试 ===" >> cache-performance.txt
+          echo "=== 分层池基准测试 (pool_benchmark_test.go) ===" >> cache-performance.txt
           go test -bench=BenchmarkTieredPools -benchmem -benchtime=10s ./common/ >> cache-performance.txt
 
           echo "" >> cache-performance.txt
-          echo "=== 缓存集成测试 ===" >> cache-performance.txt
+          echo "=== 缓存集成测试 (cache_integration_test.go) ===" >> cache-performance.txt
           go test -bench=BenchmarkCache -benchmem -benchtime=10s ./... >> cache-performance.txt
 
       - name: 生成缓存性能图表

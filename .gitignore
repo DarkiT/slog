@@ -176,6 +176,7 @@ docker-compose.override.yml
 !.github/workflows/
 !.github/ISSUE_TEMPLATE/
 !.github/PULL_REQUEST_TEMPLATE.md
+!.github/dependabot.yml
 
 # 监控和日志
 prometheus.yml

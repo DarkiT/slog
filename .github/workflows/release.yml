@@ -17,7 +17,7 @@ on:
         type: boolean
 
 env:
-  GO_VERSION: '1.23'
+  GO_VERSION: '1.25'
 
 jobs:
   # 版本验证
@@ -88,6 +88,22 @@ jobs:
       - name: 运行测试
         run: |
           go test -race -covermode=atomic ./...
+
+      - name: 验证版本功能 (v0.1.2+)
+        run: |
+          # 验证新功能的存在性
+          echo "验证运行时控制与诊断功能..."
+
+          # 检查关键文件是否存在
+          test -f context_propagation.go || { echo "❌ context_propagation.go 缺失"; exit 1; }
+          test -f logger_diagnostics.go || { echo "❌ logger_diagnostics.go 缺失"; exit 1; }
+          test -f rate_limiter.go || { echo "❌ rate_limiter.go 缺失"; exit 1; }
+
+          # 检查重命名后的文件
+          test -f cache_benchmark_test.go || { echo "❌ cache_benchmark_test.go 缺失"; exit 1; }
+          test -f dlp/desensitizers.go || { echo "❌ dlp/desensitizers.go 缺失"; exit 1; }
+
+          echo "✅ 版本功能验证通过"
 
       - name: 构建二进制文件
         env:
