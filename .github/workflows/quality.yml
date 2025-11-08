@@ -64,7 +64,7 @@ jobs:
           echo "" >> quality-report.txt
 
       - name: 上传质量分析报告
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: quality-analysis-report
           path: quality-report.txt
@@ -114,7 +114,7 @@ jobs:
           echo '```' >> security-summary.md
 
       - name: 上传安全扫描结果
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: security-scan-results
           path: |
@@ -168,7 +168,7 @@ jobs:
           go mod download -json | jq -r '.Module + "@" + .Version' >> dependency-vulnerabilities.txt 2>/dev/null || echo "许可证检查需要手动执行" >> dependency-vulnerabilities.txt
 
       - name: 上传依赖检查报告
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: dependency-check-report
           path: dependency-vulnerabilities.txt
@@ -211,7 +211,7 @@ jobs:
           grep -r -n -i "password\|secret\|key\|token" . --include="*.go" --exclude-dir=".git" >> dlp-security-report.txt || echo "未发现明显的敏感信息泄露" >> dlp-security-report.txt
 
       - name: 上传 DLP 安全报告
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: dlp-security-report
           path: dlp-security-report.txt
@@ -258,7 +258,7 @@ jobs:
             echo "未发现诊断 API 泄露敏感信息" >> runtime-security-report.txt
 
       - name: 上传运行时安全报告
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: runtime-security-report
           path: runtime-security-report.txt
@@ -321,7 +321,7 @@ jobs:
           echo "- 确保诊断 API 不泄露敏感信息" >> final-quality-report.md
 
       - name: 上传汇总报告
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: final-quality-report
           path: final-quality-report.md

@@ -98,7 +98,7 @@ jobs:
           go tool cover -func=coverage.out
 
       - name: 上传覆盖率报告
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: coverage-report
           path: |

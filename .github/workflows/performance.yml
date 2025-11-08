@@ -100,7 +100,7 @@ jobs:
           esac
 
       - name: 上传基准测试结果
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: benchmark-results-${{ matrix.test_type }}
           path: benchmark-results/
@@ -194,7 +194,7 @@ jobs:
           go tool pprof -text cpu.prof > cpu-analysis.txt
 
       - name: 上传性能分析结果
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: stress-test-results
           path: |
@@ -238,7 +238,7 @@ jobs:
           echo "缓存性能分析完成" >> cache-performance.txt
 
       - name: 上传缓存性能报告
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: cache-performance-report
           path: cache-performance.txt
