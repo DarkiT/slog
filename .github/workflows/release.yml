@@ -80,7 +80,7 @@ jobs:
           fetch-depth: 0
 
       - name: 设置 Go 环境
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
@@ -137,7 +137,7 @@ jobs:
           fi
 
       - name: 上传构建产物
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: release-${{ matrix.os }}-${{ matrix.arch }}
           path: dist/*.{tar.gz,zip}
@@ -210,7 +210,7 @@ jobs:
           echo "EOF" >> $GITHUB_OUTPUT
 
       - name: 上传变更日志
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: changelog
           path: CHANGELOG.md
