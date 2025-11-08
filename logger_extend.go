@@ -2,8 +2,13 @@ package slog
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"log/slog"
+	"os"
 	"slices"
+	"sync"
+	"sync/atomic"
 
 	"github.com/darkit/slog/dlp"
 	"github.com/darkit/slog/modules"
@@ -12,13 +17,67 @@ import (
 // FormatterFunc 内部格式化器接口，避免直接依赖formatter包
 type FormatterFunc func(groups []string, attr slog.Attr) (slog.Value, bool)
 
+// RegisterFormatter 在运行时注册新的格式化函数，返回可用于移除的 ID。
+func RegisterFormatter(name string, fn FormatterFunc) string {
+	if ext == nil {
+		ext = &extensions{}
+	}
+	return ext.registerFormatterInternal(name, fn)
+}
+
+// RemoveFormatter 根据 ID 移除先前注册的格式化函数。
+func RemoveFormatter(id string) bool {
+	if ext == nil {
+		return false
+	}
+	return ext.removeFormatterInternal(id)
+}
+
+// ListFormatters 返回当前激活的格式化器名称列表。
+func ListFormatters() []string {
+	if ext == nil {
+		return nil
+	}
+	return ext.listFormatterNames()
+}
+
+// EnableDiagnosticsLogging 控制扩展管线的调试输出，可选自定义输出目标。
+func EnableDiagnosticsLogging(on bool, writer ...io.Writer) {
+	if ext == nil {
+		ext = &extensions{}
+	}
+	if !on {
+		ext.diagnostics.Store(false)
+		return
+	}
+	if len(writer) > 0 && writer[0] != nil {
+		ext.diagnosticsWriter.Store(&writer[0])
+	} else if ext.diagnosticsWriter.Load() == nil {
+		w := io.Writer(os.Stderr)
+		ext.diagnosticsWriter.Store(&w)
+	}
+	ext.diagnostics.Store(true)
+}
+
 type extensions struct {
 	prefixKeys        []string
-	formatters        []FormatterFunc
+	formatters        []formatterEntry
 	dlpEnabled        bool
 	dlpEngine         *dlp.DlpEngine
 	moduleRegistry    *modules.Registry
 	registeredModules []modules.Module
+	formatterMu       sync.RWMutex
+	modulesMu         sync.RWMutex
+	nextFormatterID   atomic.Int64
+	moduleIndex       map[string]modules.Module
+	diagnostics       atomic.Bool
+	diagnosticsWriter atomic.Pointer[io.Writer]
+}
+
+type formatterEntry struct {
+	id   string
+	name string
+	f    FormatterFunc
 }
 
 // enableDLP 启用日志脱敏功能
@@ -50,15 +109,25 @@ func (e *extensions) registerModule(module modules.Module) error {
 	}
 
 	// 添加到本地模块列表
+	e.modulesMu.Lock()
+	if e.moduleIndex == nil {
+		e.moduleIndex = make(map[string]modules.Module)
+	}
 	e.registeredModules = append(e.registeredModules, module)
+	e.moduleIndex[module.Name()] = module
+	e.modulesMu.Unlock()
 
 	// 根据模块类型进行相应的处理
 	switch module.Type() {
 	case modules.TypeFormatter:
-		// 如果是格式化器模块，通过反射提取其格式化器并转换为内部接口
+		// 优先使用强类型接口，避免反射带来的额外开销
+		if provider, ok := module.(modules.FormatterProvider); ok {
+			e.addFormatterFuncs(provider.FormatterFunctions())
+			break
+		}
+		// 向后兼容旧接口
 		if adapter, ok := module.(interface{ GetFormatters() interface{} }); ok {
 			if formatters := adapter.GetFormatters(); formatters != nil {
-				// 使用反射来转换格式化器函数
 				e.addFormattersFromModule(formatters)
 			}
 		}
@@ -67,34 +136,124 @@ func (e *extensions) registerModule(module modules.Module) error {
 	return nil
 }
 
-// addFormattersFromModule 从模块中添加格式化器（通过反射处理类型转换）
 func (e *extensions) addFormattersFromModule(formatters interface{}) {
-	// 这里使用类型断言来处理不同类型的格式化器
-	// 由于我们无法直接导入formatter包，我们使用interface{}并在运行时处理
-
-	// 如果适配器提供了正确的格式化器函数，我们将其转换为内部格式
-	// 这是一个简化的实现，实际的格式化器转换会在适配器中处理
 	switch v := formatters.(type) {
 	case []func([]string, slog.Attr) (slog.Value, bool):
-		// 直接兼容的格式化器函数
-		for _, f := range v {
-			e.formatters = append(e.formatters, FormatterFunc(f))
-		}
+		e.addFormatterFuncs(v)
 	case []interface{}:
-		// 通用接口列表，需要进一步转换
 		for _, item := range v {
 			if f, ok := item.(func([]string, slog.Attr) (slog.Value, bool)); ok {
-				e.formatters = append(e.formatters, FormatterFunc(f))
+				e.addFormatterFuncs([]func([]string, slog.Attr) (slog.Value, bool){f})
 			}
 		}
 	}
+}
+
+func (e *extensions) addFormatterFuncs(funcs []func([]string, slog.Attr) (slog.Value, bool)) {
+	for _, f := range funcs {
+		if f == nil {
+			continue
+		}
+		e.registerFormatterInternal("module", FormatterFunc(f))
+	}
+}
+
+func (e *extensions) registerFormatterInternal(name string, fn FormatterFunc) string {
+	if fn == nil {
+		return ""
+	}
+	id := fmt.Sprintf("%s-%d", name, e.nextFormatterID.Add(1))
+	entry := formatterEntry{id: id, name: name, f: fn}
+	e.formatterMu.Lock()
+	e.formatters = append(e.formatters, entry)
+	e.formatterMu.Unlock()
+	return id
+}
+
+func (e *extensions) removeFormatterInternal(id string) bool {
+	if id == "" {
+		return false
+	}
+	e.formatterMu.Lock()
+	defer e.formatterMu.Unlock()
+	for i, entry := range e.formatters {
+		if entry.id == id {
+			e.formatters = append(e.formatters[:i], e.formatters[i+1:]...)
+			return true
+		}
+	}
+	return false
+}
+
+func (e *extensions) listFormatterNames() []string {
+	e.formatterMu.RLock()
+	defer e.formatterMu.RUnlock()
+	names := make([]string, len(e.formatters))
+	for i, entry := range e.formatters {
+		names[i] = entry.name
+	}
+	return names
+}
+
+func (e *extensions) snapshotModules() []modules.Module {
+	e.modulesMu.RLock()
+	defer e.modulesMu.RUnlock()
+	return append([]modules.Module(nil), e.registeredModules...)
+}
+
+func (e *extensions) getModule(name string) (modules.Module, bool) {
+	e.modulesMu.RLock()
+	defer e.modulesMu.RUnlock()
+	if e.moduleIndex == nil {
+		return nil, false
+	}
+	m, ok := e.moduleIndex[name]
+	return m, ok
+}
+
+func (e *extensions) applyFormatters(groups []string, attr slog.Attr) slog.Attr {
+	e.formatterMu.RLock()
+	defer e.formatterMu.RUnlock()
+	for _, entry := range e.formatters {
+		if entry.f == nil {
+			continue
+		}
+		if v, ok := entry.f(groups, attr); ok {
+			attr.Value = v
+		}
+	}
+	return attr
+}
+
+func (e *extensions) emitDiagnostics(stage string, groups []string, before, after slog.Attr) {
+	if e == nil || !e.diagnostics.Load() || !attrChanged(before, after) {
+		return
+	}
+	writerPtr := e.diagnosticsWriter.Load()
+	if writerPtr == nil {
+		w := io.Writer(os.Stderr)
+		e.diagnosticsWriter.Store(&w)
+		writerPtr = &w
+	}
+	w := *writerPtr
+	if w == nil {
+		return
+	}
+	fmt.Fprintf(w, "[slog-diagnostics] stage=%s groups=%v key=%s before=%s after=%s\n", stage, groups, after.Key, before.Value, after.Value)
+}
+
+func attrChanged(before, after slog.Attr) bool {
+	if before.Key != after.Key {
+		return true
+	}
+	return before.Value.String() != after.Value.String()
 }
 
 // eHandler 是一个自定义的 slog 处理器，用于在日志消息前添加前缀，并将其传递给下一个处理器。
 // 前缀从日志记录的属性中获取，使用 prefixKeys 中指定的键。
 type eHandler struct {
 	handler  slog.Handler // 链中的下一个日志处理器。
-	opts     extensions   // 此处理器的配置选项。
+	opts     *extensions  // 此处理器的配置选项。
 	prefixes []slog.Value // 前缀值的缓存列表。
 	groups   []string
 	ctx      context.Context
@@ -110,10 +269,24 @@ func newAddonsHandler(next slog.Handler, opts *extensions) *eHandler {
 
 	return &eHandler{
 		handler:  next,
-		opts:     *opts,
+		opts:     opts,
 		groups:   []string{},
 		prefixes: make([]slog.Value, len(opts.prefixKeys)),
 	}
+}
+
+func cloneHandlerWithContext(handler slog.Handler, ctx context.Context) slog.Handler {
+	if eh, ok := handler.(*eHandler); ok {
+		clone := &eHandler{
+			handler:  eh.handler,
+			opts:     eh.opts,
+			groups:   slices.Clone(eh.groups),
+			prefixes: slices.Clone(eh.prefixes),
+			ctx:      ctx,
+		}
+		return clone
+	}
+	return newAddonsHandler(handler, ext)
 }
 
 func (h *eHandler) Enabled(ctx context.Context, level slog.Level) bool {
@@ -156,6 +329,14 @@ func (h *eHandler) Handle(ctx context.Context, r slog.Record) error {
 				}
 			}
 			fields.mu.RUnlock()
+		}
+	}
+
+	if propagator := currentContextPropagator(); propagator != nil {
+		if attrs := propagator(ctx); len(attrs) > 0 {
+			for _, attr := range attrs {
+				nr.AddAttrs(h.transformAttr(h.groups, attr))
+			}
 		}
 	}
 
@@ -220,14 +401,15 @@ func (h *eHandler) transformAttr(groups []string, attr slog.Attr) slog.Attr {
 		attr.Value = attr.Value.LogValuer().LogValue()
 	}
 	// 应用所有formatters
-	for _, f := range h.opts.formatters {
-		if v, ok := f(groups, attr); ok {
-			attr.Value = v
-		}
+	if h.opts != nil {
+		before := attr
+		attr = h.opts.applyFormatters(groups, attr)
+		h.opts.emitDiagnostics("formatter", groups, before, attr)
 	}
 
 	// DLP处理
 	if h.opts.dlpEnabled && h.opts.dlpEngine != nil {
+		before := attr
 		switch attr.Value.Kind() {
 		case slog.KindString:
 			attr.Value = slog.StringValue(h.opts.dlpEngine.DesensitizeText(attr.Value.String()))
@@ -239,6 +421,7 @@ func (h *eHandler) transformAttr(groups []string, attr slog.Attr) slog.Attr {
 			}
 			attr.Value = slog.GroupValue(newAttrs...)
 		}
+		h.opts.emitDiagnostics("dlp", groups, before, attr)
 	}
 
 	return attr

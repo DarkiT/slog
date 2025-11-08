@@ -198,6 +198,17 @@ func (r *Registry) Remove(name string) error {
 	return nil
 }
 
+// Update 重新配置已注册模块
+func (r *Registry) Update(name string, config Config) error {
+	r.mu.RLock()
+	module, exists := r.modules[name]
+	r.mu.RUnlock()
+	if !exists {
+		return fmt.Errorf("module %s not found", name)
+	}
+	return module.Configure(config)
+}
+
 // BaseModule 基础模块实现
 type BaseModule struct {
 	name     string
@@ -264,4 +275,9 @@ func CreateModule(name string, config Config) (Module, error) {
 // GetRegistry 获取全局注册中心
 func GetRegistry() *Registry {
 	return globalRegistry
+}
+
+// UpdateModuleConfig 重新配置现有模块
+func UpdateModuleConfig(name string, config Config) error {
+	return globalRegistry.Update(name, config)
 }

@@ -23,6 +23,7 @@ slog 是一个高性能、功能丰富的 Go 语言日志库，基于 Go 1.23+ �
   - [插件管理器与注册中心](#插件管理器与注册中心)
   - [边界场景提示](#边界场景提示)
 - [日志订阅与写入器](#日志订阅机制)
+- [运行时控制与诊断](#运行时控制与诊断)
 - [常见问题与更多示例](#基础用法)
 
 ## 特性
@@ -641,6 +642,49 @@ logger.Info("service started", "pid", os.Getpid())
 - **资源释放**: Multi 模块不会自动关闭下游资源，组合 Syslog / Webhook 等长连接时需在应用退出阶段手动调用 `Close`。
 - **上下文属性**: Webhook 与 Syslog 可通过 `Option.AttrFromContext` 注入额外属性，回调必须幂等且快速，避免放大写入延迟。
 - **命名一致性**: 目前 formatter 适配器将 `replacement` 字段作为目标键名使用，既有配置需保持一致；计划后续重构可统一迁移到 `key` 字段。
+
+## 运行时控制与诊断
+
+### 动态 Formatter 管理
+
+借助 `slog.RegisterFormatter/RemoveFormatter/ListFormatters` 可以在不停机的情况下插入、移除或巡检格式化函数：
+
+```go
+id := slog.RegisterFormatter("mask-email", func(groups []string, attr slog.Attr) (slog.Value, bool) {
+    if attr.Key == "email" {
+        return slog.StringValue("***@example.com"), true
+    }
+    return attr.Value, false
+})
+
+fmt.Println("当前 formatter:", slog.ListFormatters())
+slog.RemoveFormatter(id)
+```
+
+配合 `slog.EnableDiagnosticsLogging(true, io.Writer)` 可实时输出 formatter / DLP 的修改前后值，便于观察链路；未显式指定写入目标时默认写入 `stderr`。
+
+### 模块热更新与路由
+
+- `slog.UpdateModuleConfig("webhook", modules.Config{"endpoint": "https://api"})`：重新加载已注册模块配置。
+- `slog.RegisteredModules()`：查看当前生效的模块列表。
+- `slog.SetRecordRouter(func(r slog.Record) []string { ... })`：按日志内容筛选需要触发的模块（例如只让 Error 级别进入 Webhook 或 Syslog）。
+- `logger.Diagnostics()` / `slog.CollectModuleDiagnostics()`：汇总每个模块的健康状态与自定义指标，实现面板化监控。
+
+### 记录限流与上下文传播
+
+- `slog.ConfigureRecordLimiter(rate, burst)` 为所有 logger 加上令牌桶限流，防止突发日志压垮下游；被限流的记录会提示到 `stderr`。
+- `slog.SetContextPropagator(func(ctx context.Context) []slog.Attr { ... })` 可将自定义 trace id、tenant id 等从 `context.Context` 自动投递到日志属性，所有 handler（包含模块）都会看到同样字段。
+
+示例：
+
+```go
+diags := logger.Diagnostics()
+for _, d := range diags {
+    fmt.Printf("module=%s priority=%d healthy=%v metrics=%v\n", d.Name, d.Priority, d.Healthy, d.Metrics)
+}
+```
+
+结合上述 API，即可在生产环境实现“低干扰”的热调整：模块可在不重启的前提下更新配置、临时上/下线 formatter，必要时启用限流或定位 DLP、Webhook 的具体行为。
 
 ### 日志订阅机制
 

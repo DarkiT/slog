@@ -3,6 +3,7 @@ package common
 import (
 	"container/list"
 	"sync"
+	"sync/atomic"
 )
 
 // LRUCache LRU (Least Recently Used) 缓存实现
@@ -12,14 +13,14 @@ type LRUCache struct {
 	capacity int                           // 缓存容量
 	cache    map[interface{}]*list.Element // 键到链表节点的映射
 	list     *list.List                    // 双向链表，维护访问顺序
-	misses   int64                         // 全局未命中次数
+	misses   atomic.Int64                  // 全局未命中次数（原子操作）
+	hits     atomic.Int64                  // 全局命中次数（原子操作）
 }
 
 // CacheEntry 缓存条目
 type CacheEntry struct {
 	Key   interface{} // 缓存键
 	Value interface{} // 缓存值
-	Hits  int64       // 命中次数
 }
 
 // LRUCacheStats LRU缓存统计信息
@@ -53,15 +54,15 @@ func (lru *LRUCache) Get(key interface{}) (interface{}, bool) {
 		// 移动到链表头部（最近使用）
 		lru.list.MoveToFront(elem)
 
-		// 更新命中统计
-		entry := elem.Value.(*CacheEntry)
-		entry.Hits++
+		// 更新命中统计（原子操作）
+		lru.hits.Add(1)
 
+		entry := elem.Value.(*CacheEntry)
 		return entry.Value, true
 	}
 
-	// 未命中，增加miss计数
-	lru.misses++
+	// 未命中，增加miss计数（原子操作）
+	lru.misses.Add(1)
 	return nil, false
 }
 
@@ -83,7 +84,6 @@ func (lru *LRUCache) Put(key interface{}, value interface{}) {
 	entry := &CacheEntry{
 		Key:   key,
 		Value: value,
-		Hits:  0,
 	}
 
 	// 添加到链表头部和映射中
@@ -136,7 +136,8 @@ func (lru *LRUCache) Clear() {
 
 	lru.cache = make(map[interface{}]*list.Element)
 	lru.list = list.New()
-	lru.misses = 0 // 重置miss计数器
+	lru.misses.Store(0) // 重置miss计数器
+	lru.hits.Store(0)   // 重置hits计数器
 }
 
 // Size 获取当前缓存大小
@@ -172,18 +173,12 @@ func (lru *LRUCache) SetCapacity(capacity int) {
 // GetStats 获取缓存统计信息
 func (lru *LRUCache) GetStats() LRUCacheStats {
 	lru.mu.RLock()
-	defer lru.mu.RUnlock()
+	size := lru.list.Len()
+	lru.mu.RUnlock()
 
-	var totalHits int64
-
-	// 统计所有条目的命中次数
-	for elem := lru.list.Front(); elem != nil; elem = elem.Next() {
-		entry := elem.Value.(*CacheEntry)
-		totalHits += entry.Hits
-	}
-
-	// 使用全局miss计数器
-	totalMisses := lru.misses
+	// 使用原子操作读取统计信息，避免遍历链表
+	totalHits := lru.hits.Load()
+	totalMisses := lru.misses.Load()
 
 	// 计算命中率
 	total := totalHits + totalMisses
@@ -193,7 +188,7 @@ func (lru *LRUCache) GetStats() LRUCacheStats {
 	}
 
 	return LRUCacheStats{
-		Size:     lru.list.Len(),
+		Size:     size,
 		Capacity: lru.capacity,
 		Hits:     totalHits,
 		Misses:   totalMisses,

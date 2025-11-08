@@ -46,7 +46,6 @@ type TieredBuffer struct {
 	data     []byte
 	capacity int
 	size     BufferSize
-	useCount int32
 }
 
 // TieredPools 分级对象池管理器
@@ -240,8 +239,8 @@ func (tp *TieredPools) PutBuffer(buffer *TieredBuffer) {
 		return // 未知大小，直接丢弃
 	}
 
-	// 检查是否适合放回池中
-	if cap(buffer.data) <= pool.maxSize && atomic.LoadInt32(&buffer.useCount) < 1000 {
+	// 检查容量是否适合放回池中（允许一定的容量膨胀）
+	if cap(buffer.data) <= pool.maxSize*2 {
 		atomic.AddInt64(&pool.stats.puts, 1)
 		pool.pool.Put(buffer)
 	} else {
@@ -307,19 +306,16 @@ func (tp *TieredPools) GetStats() map[BufferSize]BufferPoolStats {
 // Reset 重置buffer
 func (tb *TieredBuffer) Reset() {
 	tb.data = tb.data[:0]
-	atomic.StoreInt32(&tb.useCount, 0)
 }
 
 // Write 实现io.Writer接口
 func (tb *TieredBuffer) Write(p []byte) (n int, err error) {
-	atomic.AddInt32(&tb.useCount, 1)
 	tb.data = append(tb.data, p...)
 	return len(p), nil
 }
 
 // WriteString 写入字符串
 func (tb *TieredBuffer) WriteString(s string) (n int, err error) {
-	atomic.AddInt32(&tb.useCount, 1)
 	tb.data = append(tb.data, s...)
 	return len(s), nil
 }

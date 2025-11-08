@@ -22,6 +22,8 @@ var (
 	subscribers              sync.Map // 存储所有订阅者 - 实际类型为 map[int64]*subscriber
 	textEnabled, jsonEnabled = true, false
 	levelVar                 = slog.LevelVar{}
+	attrFormatterOrder       atomic.Value
+	globalRateLimiter        = newRateLimiter(0, 0)
 )
 
 // subscriberState 订阅者状态
@@ -97,6 +99,16 @@ func init() {
 		EnableJSON:     false,
 	}
 	globalManager.Configure(config)
+	attrFormatterOrder.Store(defaultAttrFormatterOrder)
+}
+
+// ConfigureRecordLimiter 设置全局日志速率限制（ratePerSecond<=0 关闭限制）。
+func ConfigureRecordLimiter(ratePerSecond, burst int) {
+	if globalRateLimiter == nil {
+		globalRateLimiter = newRateLimiter(ratePerSecond, burst)
+		return
+	}
+	globalRateLimiter.configure(ratePerSecond, burst, ratePerSecond > 0)
 }
 
 func New(handler Handler) *slog.Logger {
@@ -169,36 +181,189 @@ func NewLoggerWithJSON(writer io.Writer, addSource bool) Logger {
 }
 */
 
+type AttrFormatterRule int
+
+const (
+	AttrFormatterRuleSource AttrFormatterRule = iota
+	AttrFormatterRuleLevel
+	AttrFormatterRuleTime
+)
+
+var defaultAttrFormatterOrder = []AttrFormatterRule{
+	AttrFormatterRuleSource,
+	AttrFormatterRuleLevel,
+	AttrFormatterRuleTime,
+}
+
+// SetAttrFormatterOrder 允许自定义内置属性格式化规则顺序，传入空列表时会恢复默认顺序。
+func SetAttrFormatterOrder(order ...AttrFormatterRule) {
+	if len(order) == 0 {
+		order = defaultAttrFormatterOrder
+	}
+	copyOrder := append([]AttrFormatterRule(nil), order...)
+	attrFormatterOrder.Store(copyOrder)
+}
+
 // NewOptions 创建新的处理程序选项。
 func NewOptions(options *slog.HandlerOptions) *slog.HandlerOptions {
-	if options == nil {
-		options = &slog.HandlerOptions{
-			Level: &levelVar,
-		}
+	var opts slog.HandlerOptions
+	if options != nil {
+		opts = *options
+	}
+
+	if opts.Level == nil {
+		opts.Level = &levelVar
 	}
 
 	if levelVar.Level() < LevelDebug {
-		options.AddSource = true
+		opts.AddSource = true
 	}
 
-	options.Level = &levelVar
-	options.ReplaceAttr = func(groups []string, a slog.Attr) slog.Attr {
-		switch a.Key {
-		case slog.SourceKey:
-			source := a.Value.Any().(*slog.Source)
-			source.File = filepath.Base(source.File)
-		case LevelKey:
-			level := a.Value.Any().(Level)
-			a.Value = slog.StringValue(levelJSONNames[level])
-		case TimeKey:
-			if t, ok := a.Value.Any().(time.Time); ok {
-				a.Value = slog.StringValue(t.Format(TimeFormat))
-			}
+	normalizer := newAttrFormatter(TimeFormat)
+	opts.ReplaceAttr = chainReplaceAttr(opts.ReplaceAttr, normalizer.replace)
+
+	return &opts
+}
+
+// attrFormatter 负责根据项目约定格式化特殊字段，支持递归 group 处理。
+type attrFormatter struct {
+	timeFormat string
+	order      []AttrFormatterRule
+}
+
+func newAttrFormatter(timeFormat string) attrFormatter {
+	return attrFormatter{
+		timeFormat: timeFormat,
+		order:      getAttrFormatterOrder(),
+	}
+}
+
+func getAttrFormatterOrder() []AttrFormatterRule {
+	if v := attrFormatterOrder.Load(); v != nil {
+		stored := v.([]AttrFormatterRule)
+		return append([]AttrFormatterRule(nil), stored...)
+	}
+	return append([]AttrFormatterRule(nil), defaultAttrFormatterOrder...)
+}
+
+func (f attrFormatter) replace(groups []string, a slog.Attr) slog.Attr {
+	return f.walk(groups, a)
+}
+
+func (f attrFormatter) walk(groups []string, a slog.Attr) slog.Attr {
+	a.Value = a.Value.Resolve()
+	if a.Value.Kind() == slog.KindGroup {
+		attrs := a.Value.Group()
+		if len(attrs) == 0 {
+			return a
 		}
+		nextGroups := groups
+		if a.Key != "" {
+			nextGroups = append(nextGroups, a.Key)
+		}
+		newAttrs := make([]slog.Attr, len(attrs))
+		for i, child := range attrs {
+			newAttrs[i] = f.walk(nextGroups, child)
+		}
+		a.Value = slog.GroupValue(newAttrs...)
 		return a
 	}
+	for _, rule := range f.order {
+		switch rule {
+		case AttrFormatterRuleSource:
+			a = f.normalizeSource(a)
+		case AttrFormatterRuleLevel:
+			a = f.normalizeLevel(a)
+		case AttrFormatterRuleTime:
+			a = f.normalizeTime(a)
+		}
+		if a.Equal(slog.Attr{}) {
+			return a
+		}
+	}
+	return a
+}
 
-	return options
+func (f attrFormatter) normalizeSource(a slog.Attr) slog.Attr {
+	if a.Key != slog.SourceKey {
+		return a
+	}
+	if src := sourceFromValue(a.Value); src != nil {
+		copy := *src
+		copy.File = filepath.Base(copy.File)
+		a.Value = slog.AnyValue(&copy)
+	}
+	return a
+}
+
+func (f attrFormatter) normalizeLevel(a slog.Attr) slog.Attr {
+	if a.Key != LevelKey {
+		return a
+	}
+	if level, ok := levelFromValue(a.Value); ok {
+		if name, exists := levelJSONNames[level]; exists {
+			a.Value = slog.StringValue(name)
+		}
+	}
+	return a
+}
+
+func (f attrFormatter) normalizeTime(a slog.Attr) slog.Attr {
+	if a.Key != TimeKey {
+		return a
+	}
+	if formatted, ok := f.formatTime(a.Value); ok {
+		a.Value = slog.StringValue(formatted)
+	}
+	return a
+}
+
+func (f attrFormatter) formatTime(val slog.Value) (string, bool) {
+	switch val.Kind() {
+	case slog.KindTime:
+		return val.Time().Format(f.timeFormat), true
+	case slog.KindAny:
+		if t, ok := val.Any().(time.Time); ok {
+			return t.Format(f.timeFormat), true
+		}
+	}
+	return "", false
+}
+
+func sourceFromValue(val slog.Value) *slog.Source {
+	if val.Kind() != slog.KindAny {
+		return nil
+	}
+	src, ok := val.Any().(*slog.Source)
+	if !ok || src == nil {
+		return nil
+	}
+	return src
+}
+
+func levelFromValue(val slog.Value) (Level, bool) {
+	if val.Kind() != slog.KindAny {
+		return 0, false
+	}
+	level, ok := val.Any().(Level)
+	return level, ok
+}
+
+func chainReplaceAttr(first, second func([]string, slog.Attr) slog.Attr) func([]string, slog.Attr) slog.Attr {
+	switch {
+	case first == nil:
+		return second
+	case second == nil:
+		return first
+	default:
+		return func(groups []string, a slog.Attr) slog.Attr {
+			a = first(groups, a)
+			if a.Equal(slog.Attr{}) {
+				return a
+			}
+			return second(groups, a)
+		}
+	}
 }
 
 // Default 返回一个新的带前缀的日志记录器
@@ -235,6 +400,8 @@ func Default(modules ...string) *Logger {
 func GetSlogLogger() *slog.Logger {
 	return globalManager.GetDefault().GetSlogLogger()
 }
+
+// ModuleDiagnostics 快速获取当前已注册模块的健康状态
 
 // GetLevel 获取全局日志级别。
 func GetLevel() Level { return levelVar.Level() }

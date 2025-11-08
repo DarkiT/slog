@@ -52,7 +52,8 @@ func MapEntries[K1 comparable, V1 any, K2 comparable, V2 any](in map[K1]V1, iter
 //
 // Play: https://go.dev/play/p/-AuYXfy7opz
 func FilterMap[T any, R any](collection []T, callback func(item T, index int) (R, bool)) []R {
-	result := []R{}
+	// 预分配容量（假设大部分元素会被保留）
+	result := make([]R, 0, len(collection))
 
 	for i := range collection {
 		if r, ok := callback(collection[i], i); ok {

@@ -135,6 +135,7 @@ type Matcher struct {
 	Transformer func(string) string // 转换函数
 	Priority    int                 // 优先级，数字越大优先级越高
 	Complexity  int                 // 正则表达式复杂度评分
+	FastFilters []string            // 快速包含过滤，全部缺失时跳过匹配
 }
 
 // MatchResult 定义匹配结果结构体
@@ -146,12 +147,11 @@ type MatchResult struct {
 
 // RegexSearcher 定义正则搜索器
 type RegexSearcher struct {
-	matchers    []*Matcher                // 按优先级排序的匹配器列表
-	pool        sync.Pool                 // 字符串构建器池
-	mu          sync.RWMutex              // 读写锁
-	cache       map[string]*regexp.Regexp // 正则表达式缓存
-	version     int64                     // 版本号，用于缓存失效
-	fastFilters map[string]string         // 快速过滤器，用于预筛选
+	matchers []*Matcher                // 按优先级排序的匹配器列表
+	pool     sync.Pool                 // 字符串构建器池
+	mu       sync.RWMutex              // 读写锁
+	cache    map[string]*regexp.Regexp // 正则表达式缓存
+	version  int64                     // 版本号，用于缓存失效
 }
 
 func init() {
@@ -204,7 +204,6 @@ func NewRegexSearcher() *RegexSearcher {
 				return new(strings.Builder)
 			},
 		},
-		fastFilters: make(map[string]string),
 	}
 
 	if err := searcher.registerDefaultMatchers(); err != nil {
@@ -272,6 +271,9 @@ func (s *RegexSearcher) Match(text string) []MatchResult {
 
 	// 按优先级顺序遍历匹配器
 	for _, matcher := range s.matchers {
+		if len(matcher.FastFilters) > 0 && !containsFastToken(text, matcher.FastFilters) {
+			continue
+		}
 		// 尝试匹配
 		matches := matcher.Regex.FindAllStringSubmatchIndex(text, -1)
 		if matches == nil {
@@ -310,6 +312,24 @@ func (s *RegexSearcher) Match(text string) []MatchResult {
 	})
 
 	return results
+}
+
+func containsFastToken(text string, tokens []string) bool {
+	for _, token := range tokens {
+		if token == "" {
+			continue
+		}
+		if len(token) == 1 {
+			if strings.IndexByte(text, token[0]) >= 0 {
+				return true
+			}
+			continue
+		}
+		if strings.Contains(text, token) {
+			return true
+		}
+	}
+	return false
 }
 
 // AddMatcher 添加新的匹配器
@@ -415,6 +435,10 @@ func (s *RegexSearcher) SearchSensitiveByType(text string, typeName string) []Ma
 	s.mu.RUnlock()
 
 	if matcher == nil {
+		return nil
+	}
+
+	if len(matcher.FastFilters) > 0 && !containsFastToken(text, matcher.FastFilters) {
 		return nil
 	}
 
@@ -834,10 +858,11 @@ func (s *RegexSearcher) registerDefaultMatchers() error {
 			},
 		},
 		{
-			Name:     Email,
-			Pattern:  EmailPattern,
-			Regex:    EmailRegex,
-			Priority: 930,
+			Name:        Email,
+			Pattern:     EmailPattern,
+			Regex:       EmailRegex,
+			Priority:    930,
+			FastFilters: []string{"@"},
 			Transformer: func(s string) string {
 				return EmailDesensitize(s)
 			},
@@ -879,28 +904,31 @@ func (s *RegexSearcher) registerDefaultMatchers() error {
 			},
 		},
 		{
-			Name:     IPv4,
-			Pattern:  IPv4Pattern,
-			Regex:    IPv4Regex,
-			Priority: 880,
+			Name:        IPv4,
+			Pattern:     IPv4Pattern,
+			Regex:       IPv4Regex,
+			Priority:    880,
+			FastFilters: []string{"."},
 			Transformer: func(s string) string {
 				return IPv4Desensitize(s)
 			},
 		},
 		{
-			Name:     IPv6,
-			Pattern:  IPv6Pattern,
-			Regex:    IPv6Regex,
-			Priority: 870,
+			Name:        IPv6,
+			Pattern:     IPv6Pattern,
+			Regex:       IPv6Regex,
+			Priority:    870,
+			FastFilters: []string{":"},
 			Transformer: func(s string) string {
 				return IPv6Desensitize(s)
 			},
 		},
 		{
-			Name:     MAC,
-			Pattern:  MACPattern,
-			Regex:    MACRegex,
-			Priority: 860,
+			Name:        MAC,
+			Pattern:     MACPattern,
+			Regex:       MACRegex,
+			Priority:    860,
+			FastFilters: []string{":", "-"},
 			Transformer: func(s string) string {
 				return MACDesensitize(s)
 			},
@@ -942,10 +970,11 @@ func (s *RegexSearcher) registerDefaultMatchers() error {
 			},
 		},
 		{
-			Name:     JWT,
-			Pattern:  JWTPattern,
-			Regex:    JWTRegex,
-			Priority: 810,
+			Name:        JWT,
+			Pattern:     JWTPattern,
+			Regex:       JWTRegex,
+			Priority:    810,
+			FastFilters: []string{"eyJ"},
 			Transformer: func(s string) string {
 				return JWTDesensitize(s)
 			},
@@ -1014,19 +1043,21 @@ func (s *RegexSearcher) registerDefaultMatchers() error {
 			},
 		},
 		{
-			Name:     URL,
-			Pattern:  URLPattern,
-			Regex:    URLRegex,
-			Priority: 730,
+			Name:        URL,
+			Pattern:     URLPattern,
+			Regex:       URLRegex,
+			Priority:    730,
+			FastFilters: []string{"://"},
 			Transformer: func(s string) string {
 				return URLDesensitize(s)
 			},
 		},
 		{
-			Name:     Domain,
-			Pattern:  DomainPattern,
-			Regex:    DomainRegex,
-			Priority: 720,
+			Name:        Domain,
+			Pattern:     DomainPattern,
+			Regex:       DomainRegex,
+			Priority:    720,
+			FastFilters: []string{"."},
 			Transformer: func(s string) string {
 				return DomainDesensitize(s)
 			},

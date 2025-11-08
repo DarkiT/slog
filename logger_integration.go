@@ -3,9 +3,19 @@ package slog
 import (
 	"context"
 	"log/slog"
+	"sync/atomic"
 
 	"github.com/darkit/slog/modules"
 )
+
+type RecordRouter func(record slog.Record) []string
+
+var recordRouter atomic.Value
+
+// SetRecordRouter 自定义模块路由策略（返回模块名称列表）。
+func SetRecordRouter(router RecordRouter) {
+	recordRouter.Store(router)
+}
 
 // ModuleBuilder 模块构建器，与现有系统集成
 type ModuleBuilder struct {
@@ -103,6 +113,24 @@ func UseConfig(configs []modules.ModuleConfig) *ModuleBuilder {
 	return GetGlobalLogger().UseConfig(configs)
 }
 
+// UpdateModuleConfig 热更新已注册模块的配置
+func UpdateModuleConfig(name string, config modules.Config) error {
+	return modules.UpdateModuleConfig(name, config)
+}
+
+// RegisteredModules 返回当前已注册的模块名称。
+func RegisteredModules() []string {
+	if ext == nil {
+		return nil
+	}
+	mods := ext.snapshotModules()
+	names := make([]string, 0, len(mods))
+	for _, m := range mods {
+		names = append(names, m.Name())
+	}
+	return names
+}
+
 // 便捷方法：通过工厂创建具体模块
 
 // EnableWebhook 全局方法：启用Webhook模块
@@ -156,17 +184,28 @@ func EnableMulti(strategy string, options ...modules.Config) *ModuleBuilder {
 
 // ApplyModulesToHandler 将模块处理器应用到基础处理器上
 func ApplyModulesToHandler(baseHandler slog.Handler, moduleList []modules.Module) slog.Handler {
-	currentHandler := baseHandler
+	router, _ := recordRouter.Load().(RecordRouter)
+	moduleHandlers := make(map[string]slog.Handler)
+	handlers := []slog.Handler{baseHandler}
 
-	// 简化处理：直接应用所有模块的处理器
 	for _, module := range moduleList {
-		if module.Enabled() && module.Handler() != nil {
-			// 对于接收器，我们创建fanout来同时输出到多个目标
-			currentHandler = NewFanoutHandler(currentHandler, module.Handler())
+		if !module.Enabled() {
+			continue
+		}
+		h := module.Handler()
+		if h == nil {
+			continue
+		}
+		moduleHandlers[module.Name()] = h
+		if router == nil {
+			handlers = append(handlers, h)
 		}
 	}
 
-	return currentHandler
+	if router == nil {
+		return NewFanoutHandler(handlers...)
+	}
+	return newRoutingHandler(baseHandler, moduleHandlers, router)
 }
 
 // ChainHandler 链式处理器
@@ -251,4 +290,76 @@ func (h *FanoutHandler) WithGroup(name string) slog.Handler {
 		newHandlers[i] = handler.WithGroup(name)
 	}
 	return NewFanoutHandler(newHandlers...)
+}
+
+type routingHandler struct {
+	base    slog.Handler
+	modules map[string]slog.Handler
+	router  RecordRouter
+}
+
+func newRoutingHandler(base slog.Handler, modules map[string]slog.Handler, router RecordRouter) slog.Handler {
+	return &routingHandler{
+		base:    base,
+		modules: modules,
+		router:  router,
+	}
+}
+
+func (h *routingHandler) Enabled(ctx context.Context, level slog.Level) bool {
+	return h.base.Enabled(ctx, level)
+}
+
+func (h *routingHandler) Handle(ctx context.Context, r slog.Record) error {
+	if err := h.base.Handle(ctx, r); err != nil {
+		return err
+	}
+	if h.router == nil {
+		return nil
+	}
+	targets := h.router(r)
+	if len(targets) == 0 {
+		return nil
+	}
+	for _, name := range targets {
+		handler, ok := h.modules[name]
+		if !ok || handler == nil {
+			continue
+		}
+		if handler.Enabled(ctx, r.Level) {
+			go handler.Handle(ctx, r.Clone())
+		}
+	}
+	return nil
+}
+
+func (h *routingHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	return newRoutingHandler(
+		h.base.WithAttrs(attrs),
+		cloneHandlerMap(h.modules, func(handler slog.Handler) slog.Handler { return handler.WithAttrs(attrs) }),
+		h.router,
+	)
+}
+
+func (h *routingHandler) WithGroup(name string) slog.Handler {
+	return newRoutingHandler(
+		h.base.WithGroup(name),
+		cloneHandlerMap(h.modules, func(handler slog.Handler) slog.Handler { return handler.WithGroup(name) }),
+		h.router,
+	)
+}
+
+func cloneHandlerMap(src map[string]slog.Handler, transform func(slog.Handler) slog.Handler) map[string]slog.Handler {
+	if src == nil {
+		return nil
+	}
+	dst := make(map[string]slog.Handler, len(src))
+	for k, v := range src {
+		if transform != nil {
+			dst[k] = transform(v)
+		} else {
+			dst[k] = v
+		}
+	}
+	return dst
 }

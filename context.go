@@ -83,12 +83,12 @@ func (l *Logger) WithContext(ctx context.Context) *Logger {
 		}
 	}()
 
-	// 更新handlers的context
+	// 更新 handlers 的 context，避免重复包装
 	if newLogger.text != nil {
-		newLogger.text = slog.New(newAddonsHandler(newLogger.text.Handler(), ext))
+		newLogger.text = slog.New(cloneHandlerWithContext(newLogger.text.Handler(), ctx))
 	}
 	if newLogger.json != nil {
-		newLogger.json = slog.New(newAddonsHandler(newLogger.json.Handler(), ext))
+		newLogger.json = slog.New(cloneHandlerWithContext(newLogger.json.Handler(), ctx))
 	}
 
 	return newLogger

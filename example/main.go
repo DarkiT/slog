@@ -24,6 +24,21 @@ func init() {
 	// 初始化日志设置
 	slog.EnableTextLogger()           // 启用文本日志
 	time.Sleep(50 * time.Millisecond) // 等待初始化完成
+
+	// 默认开启上下文自动传播，trace_id 和 user_id 会自动附加到日志中
+	slog.SetContextPropagator(func(ctx context.Context) []slog.Attr {
+		if ctx == nil {
+			return nil
+		}
+		attrs := make([]slog.Attr, 0, 2)
+		if traceID, ok := ctx.Value("trace_id").(string); ok {
+			attrs = append(attrs, slog.String("trace_id", traceID))
+		}
+		if userID, ok := ctx.Value("user_id").(string); ok {
+			attrs = append(attrs, slog.String("user_id", userID))
+		}
+		return attrs
+	})
 }
 
 func main() {
@@ -63,6 +78,11 @@ func main() {
 			name:        "模块注册系统",
 			description: "演示模块注册中心和各种使用方式",
 			fn:          demoModuleSystem,
+		},
+		{
+			name:        "运行时控制与诊断",
+			description: "演示 formatter 热插拔、诊断面板和限流",
+			fn:          func() { demoRuntimeControls(logger) },
 		},
 		{
 			name:        "异步日志处理",
@@ -406,39 +426,90 @@ func demoContextAndTracing(logger *slog.Logger) {
 	ctx = context.WithValue(ctx, "trace_id", "trace-"+fmt.Sprintf("%d", time.Now().Unix()))
 	ctx = context.WithValue(ctx, "user_id", "user-12345")
 
-	// 模拟API调用链
-	fmt.Println("\n   API调用链路:")
+	ctxLogger := logger.WithContext(ctx)
 
-	// 1. 接收请求
-	logger.Info("收到API请求",
-		"trace_id", ctx.Value("trace_id"),
-		"user_id", ctx.Value("user_id"),
+	// 模拟API调用链
+	fmt.Println("\n   API调用链路 (trace_id/user_id 自动注入):")
+
+	ctxLogger.Info("收到API请求",
 		"endpoint", "/api/orders",
 		"method", "POST",
 	)
 
-	// 2. 验证权限
-	logger.Debug("验证用户权限",
-		"trace_id", ctx.Value("trace_id"),
-		"user_id", ctx.Value("user_id"),
+	ctxLogger.Debug("验证用户权限",
 		"permission", "order:create",
 	)
 
-	// 3. 数据库操作
-	logger.Debug("执行数据库操作",
-		"trace_id", ctx.Value("trace_id"),
-		"user_id", ctx.Value("user_id"),
+	ctxLogger.Debug("执行数据库操作",
 		"operation", "INSERT INTO orders",
 		"duration_ms", 45,
 	)
 
-	// 4. 返回响应
-	logger.Info("API请求完成",
-		"trace_id", ctx.Value("trace_id"),
-		"user_id", ctx.Value("user_id"),
+	ctxLogger.Info("API请求完成",
 		"status_code", 201,
 		"total_duration_ms", 128,
 	)
+}
+
+// 运行时控制与诊断演示
+func demoRuntimeControls(logger *slog.Logger) {
+	fmt.Println("🧩 运行时控制与诊断:")
+
+	// 1. 动态 formatter 控制
+	fmt.Println("\n   1. Formatter 热插拔:")
+	formatterID := slog.RegisterFormatter("demo-upper", func(groups []string, attr slog.Attr) (slog.Value, bool) {
+		if attr.Key == "demo_tag" {
+			if val, ok := attr.Value.Any().(string); ok {
+				return slog.StringValue(strings.ToUpper(val)), true
+			}
+		}
+		return attr.Value, false
+	})
+	logger.Info("注册formatter后", "demo_tag", "runtime format", "status", "registered")
+	fmt.Printf("      当前 formatter: %v\n", slog.ListFormatters())
+	slog.RemoveFormatter(formatterID)
+	logger.Info("移除formatter后", "demo_tag", "runtime format", "status", "removed")
+
+	// 2. 模块诊断面板
+	fmt.Println("\n   2. 模块诊断:")
+	diags := logger.Diagnostics()
+	if len(diags) == 0 {
+		fmt.Println("      暂无模块实例")
+	} else {
+		for _, diag := range diags {
+			health := "未知"
+			if diag.Healthy != nil {
+				if *diag.Healthy {
+					health = "健康"
+				} else {
+					health = "异常"
+				}
+			}
+			metricsInfo := ""
+			if len(diag.Metrics) > 0 {
+				metricsInfo = fmt.Sprintf(", metrics=%d", len(diag.Metrics))
+			}
+			fmt.Printf("      - %s (type=%s, enabled=%v, priority=%d, 健康=%s%s)\n",
+				diag.Name, diag.Type.String(), diag.Enabled, diag.Priority, health, metricsInfo)
+		}
+	}
+
+	// 3. 日志限流演示
+	fmt.Println("\n   3. 日志限流:")
+	slog.ConfigureRecordLimiter(2, 2)
+	for i := 0; i < 5; i++ {
+		logger.Info("限流演示", "index", i, "timestamp", time.Now().Format("15:04:05.000"))
+	}
+	fmt.Println("      (部分日志会因限流被丢弃，上方 stderr 会提示)")
+	slog.ConfigureRecordLimiter(0, 0)
+	fmt.Println("      限流已关闭")
+
+	// 4. 上下文自动传播
+	fmt.Println("\n   4. 上下文自动传播:")
+	ctx := context.WithValue(context.Background(), "trace_id", "runtime-trace-001")
+	ctx = context.WithValue(ctx, "user_id", "runtime-user")
+	ctxLogger := logger.WithContext(ctx)
+	ctxLogger.Info("上下文字段已自动注入", "event", "runtime-demo")
 }
 
 // 错误处理演示

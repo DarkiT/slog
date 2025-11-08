@@ -76,6 +76,18 @@ func (f *FormatterAdapter) GetFormatters() interface{} {
 	return result
 }
 
+// FormatterFunctions 实现 modules.FormatterProvider，避免反射与 interface{} 转换。
+func (f *FormatterAdapter) FormatterFunctions() []func([]string, slog.Attr) (slog.Value, bool) {
+	funcs := make([]func([]string, slog.Attr) (slog.Value, bool), 0, len(f.formatters))
+	for _, formatter := range f.formatters {
+		lf := formatter
+		funcs = append(funcs, func(groups []string, attr slog.Attr) (slog.Value, bool) {
+			return lf(groups, attr)
+		})
+	}
+	return funcs
+}
+
 // init 注册formatter模块工厂
 func init() {
 	modules.RegisterFactory("formatter", func(config modules.Config) (modules.Module, error) {

@@ -1,9 +1,6 @@
 package formatter
 
-import (
-	"log/slog"
-	"slices"
-)
+import "log/slog"
 
 type (
 	LogValuerFunc func(any) (slog.Value, bool)
@@ -132,11 +129,11 @@ func FormatByFieldType[T any](key string, formatter func(T) slog.Value) Formatte
 }
 
 // FormatByGroup pass attributes under a group into a formatter.
-func FormatByGroup(groups []string, formatter func([]slog.Attr) slog.Value) Formatter {
+func FormatByGroup(targetGroup []string, formatter func([]slog.Attr) slog.Value) Formatter {
 	return func(currentGroup []string, attr slog.Attr) (slog.Value, bool) {
 		value := attr.Value
 
-		if value.Kind() != slog.KindGroup || !slices.Equal(groups, append(currentGroup, attr.Key)) {
+		if value.Kind() != slog.KindGroup || !matchFullGroupPath(currentGroup, attr.Key, targetGroup) {
 			return value, false
 		}
 
@@ -145,11 +142,11 @@ func FormatByGroup(groups []string, formatter func([]slog.Attr) slog.Value) Form
 }
 
 // FormatByGroupKey pass attributes under a group and matching key, into a formatter.
-func FormatByGroupKey(groups []string, key string, formatter func(slog.Value) slog.Value) Formatter {
+func FormatByGroupKey(targetGroup []string, key string, formatter func(slog.Value) slog.Value) Formatter {
 	return func(currentGroup []string, attr slog.Attr) (slog.Value, bool) {
 		value := attr.Value
 
-		if !slices.Equal(groups, currentGroup) || attr.Key != key {
+		if !equalStringSlices(targetGroup, currentGroup) || attr.Key != key {
 			return value, false
 		}
 
@@ -158,11 +155,11 @@ func FormatByGroupKey(groups []string, key string, formatter func(slog.Value) sl
 }
 
 // FormatByGroupKeyType pass attributes under a group, matching key and matching a generic type, into a formatter.
-func FormatByGroupKeyType[T any](groups []string, key string, formatter func(T) slog.Value) Formatter {
+func FormatByGroupKeyType[T any](targetGroup []string, key string, formatter func(T) slog.Value) Formatter {
 	return func(currentGroup []string, attr slog.Attr) (slog.Value, bool) {
 		value := attr.Value
 
-		if value.Kind() == slog.KindGroup || !slices.Equal(groups, currentGroup) || attr.Key != key {
+		if value.Kind() == slog.KindGroup || !equalStringSlices(targetGroup, currentGroup) || attr.Key != key {
 			return value, false
 		}
 
@@ -172,4 +169,28 @@ func FormatByGroupKeyType[T any](groups []string, key string, formatter func(T) 
 
 		return value, false
 	}
+}
+
+func matchFullGroupPath(current []string, key string, target []string) bool {
+	if len(target) != len(current)+1 {
+		return false
+	}
+	for i := 0; i < len(current); i++ {
+		if current[i] != target[i] {
+			return false
+		}
+	}
+	return target[len(target)-1] == key
+}
+
+func equalStringSlices(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }

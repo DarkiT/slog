@@ -12,6 +12,11 @@ import (
 	"strings"
 )
 
+const (
+	// maxRecursionDepth 最大递归深度，防止栈溢出
+	maxRecursionDepth = 32
+)
+
 type ReplaceAttrFn = func(groups []string, a slog.Attr) slog.Attr
 
 func AppendRecordAttrsToAttrs(attrs []slog.Attr, groups []string, record *slog.Record) []slog.Attr {
@@ -32,11 +37,20 @@ func AppendRecordAttrsToAttrs(attrs []slog.Attr, groups []string, record *slog.R
 }
 
 func ReplaceAttrs(fn ReplaceAttrFn, groups []string, attrs ...slog.Attr) []slog.Attr {
+	return replaceAttrsWithDepth(fn, groups, attrs, 0)
+}
+
+func replaceAttrsWithDepth(fn ReplaceAttrFn, groups []string, attrs []slog.Attr, depth int) []slog.Attr {
+	// 防止递归深度过大
+	if depth > maxRecursionDepth {
+		return attrs
+	}
+
 	for i := range attrs {
 		attr := attrs[i]
 		value := attr.Value.Resolve()
 		if value.Kind() == slog.KindGroup {
-			attrs[i].Value = slog.GroupValue(ReplaceAttrs(fn, append(groups, attr.Key), value.Group()...)...)
+			attrs[i].Value = slog.GroupValue(replaceAttrsWithDepth(fn, append(groups, attr.Key), value.Group(), depth+1)...)
 		} else if fn != nil {
 			attrs[i] = fn(groups, attr)
 		}
@@ -46,13 +60,23 @@ func ReplaceAttrs(fn ReplaceAttrFn, groups []string, attrs ...slog.Attr) []slog.
 }
 
 func AttrsToMap(attrs ...slog.Attr) map[string]any {
-	output := map[string]any{}
+	return attrsToMapWithDepth(attrs, 0)
+}
+
+func attrsToMapWithDepth(attrs []slog.Attr, depth int) map[string]any {
+	// 防止递归深度过大
+	if depth > maxRecursionDepth {
+		return make(map[string]any)
+	}
+
+	// 预分配map容量
+	output := make(map[string]any, len(attrs))
 
 	attrsByKey := groupValuesByKey(attrs)
 	for k, values := range attrsByKey {
 		v := mergeAttrValues(values...)
 		if v.Kind() == slog.KindGroup {
-			output[k] = AttrsToMap(v.Group()...)
+			output[k] = attrsToMapWithDepth(v.Group(), depth+1)
 		} else {
 			output[k] = v.Any()
 		}
@@ -275,11 +299,20 @@ func StringSource(sourceKey string, r *slog.Record) slog.Attr {
 }
 
 func FindAttribute(attrs []slog.Attr, groups []string, key string) (slog.Attr, bool) {
+	return findAttributeWithDepth(attrs, groups, key, 0)
+}
+
+func findAttributeWithDepth(attrs []slog.Attr, groups []string, key string, depth int) (slog.Attr, bool) {
+	// 防止递归深度过大
+	if depth > maxRecursionDepth {
+		return slog.Attr{}, false
+	}
+
 	// group traversal
 	if len(groups) > 0 {
 		for _, attr := range attrs {
 			if attr.Value.Kind() == slog.KindGroup && attr.Key == groups[0] {
-				attr, found := FindAttribute(attr.Value.Group(), groups[1:], key)
+				attr, found := findAttributeWithDepth(attr.Value.Group(), groups[1:], key, depth+1)
 				if found {
 					return attr, true
 				}
@@ -300,13 +333,22 @@ func FindAttribute(attrs []slog.Attr, groups []string, key string) (slog.Attr, b
 }
 
 func RemoveEmptyAttrs(attrs []slog.Attr) []slog.Attr {
+	return removeEmptyAttrsWithDepth(attrs, 0)
+}
+
+func removeEmptyAttrsWithDepth(attrs []slog.Attr, depth int) []slog.Attr {
+	// 防止递归深度过大
+	if depth > maxRecursionDepth {
+		return attrs
+	}
+
 	return FilterMap(attrs, func(attr slog.Attr, _ int) (slog.Attr, bool) {
 		if attr.Key == "" {
 			return attr, false
 		}
 
 		if attr.Value.Kind() == slog.KindGroup {
-			values := RemoveEmptyAttrs(attr.Value.Group())
+			values := removeEmptyAttrsWithDepth(attr.Value.Group(), depth+1)
 			if len(values) == 0 {
 				return attr, false
 			}

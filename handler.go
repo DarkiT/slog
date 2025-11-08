@@ -10,7 +10,6 @@ import (
 	"runtime"
 	"slices"
 	"strconv"
-	"strings"
 	"sync"
 	"unicode"
 	"unicode/utf8"
@@ -32,11 +31,54 @@ type handler struct {
 	w                  io.Writer
 	mu                 sync.Mutex
 	level              slog.Leveler
-	groups             []string
+	groupPrefix        groupState
 	attrs              string
 	timeFormat         string
 	replaceAttr        func(groups []string, a slog.Attr) slog.Attr
 	addSource, noColor bool
+}
+
+type groupState struct {
+	names  []string
+	joined []string
+}
+
+func (s groupState) clone() groupState {
+	return groupState{
+		names:  slices.Clone(s.names),
+		joined: slices.Clone(s.joined),
+	}
+}
+
+func (s *groupState) push(name string) {
+	if name == "" {
+		return
+	}
+	s.names = append(s.names, name)
+	if len(s.joined) == 0 {
+		s.joined = append(s.joined, name)
+		return
+	}
+	s.joined = append(s.joined, s.joined[len(s.joined)-1]+"."+name)
+}
+
+func (s *groupState) pop() {
+	if len(s.names) == 0 {
+		return
+	}
+	s.names = s.names[:len(s.names)-1]
+	s.joined = s.joined[:len(s.joined)-1]
+}
+
+func (s *groupState) prefix() string {
+	if len(s.joined) == 0 {
+		return ""
+	}
+	return s.joined[len(s.joined)-1]
+}
+
+func (s *groupState) values() []string {
+	return s.names
 }
 
 // NewConsoleHandler returns a [log/slog.Handler] using the receiver's options.
@@ -75,6 +117,8 @@ func (h *handler) Handle(_ context.Context, r slog.Record) error {
 
 	rep := h.replaceAttr
 
+	groups := h.groupPrefix.clone()
+
 	if !r.Time.IsZero() {
 		val := r.Time.Round(0)
 		if rep == nil {
@@ -103,7 +147,7 @@ func (h *handler) Handle(_ context.Context, r slog.Record) error {
 		sb.WriteString(h.attrs)
 	}
 	r.Attrs(func(a slog.Attr) bool {
-		h.appendAttr(sb, a)
+		h.appendAttr(sb, &groups, a)
 		return true
 	})
 	sb.WriteByte('\n')
@@ -124,8 +168,10 @@ func (h *handler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	sb := newBuffer()
 	defer sb.Free()
 
+	state := h2.groupPrefix.clone()
+
 	for _, a := range attrs {
-		h2.appendAttr(sb, a)
+		h2.appendAttr(sb, &state, a)
 	}
 	h2.attrs += sb.String()
 	return h2
@@ -137,7 +183,7 @@ func (h *handler) WithGroup(name string) slog.Handler {
 		return h
 	}
 	h2 := h.clone()
-	h2.groups = append(h2.groups, name)
+	h2.groupPrefix.push(name)
 	return h2
 }
 
@@ -146,7 +192,7 @@ func (h *handler) clone() *handler {
 		w:           h.w,
 		mu:          sync.Mutex{}, // Create new mutex instead of reusing
 		level:       h.level,
-		groups:      slices.Clip(h.groups),
+		groupPrefix: h.groupPrefix.clone(),
 		attrs:       h.attrs,
 		timeFormat:  h.timeFormat,
 		replaceAttr: h.replaceAttr,
@@ -168,7 +214,7 @@ func (h *handler) appendLevel(sb *buffer, level slog.Level) {
 	sb.WriteStringIf(!h.noColor, ansiReset)
 }
 
-func (h *handler) appendAttr(sb *buffer, a slog.Attr) {
+func (h *handler) appendAttr(sb *buffer, groups *groupState, a slog.Attr) {
 	a.Value = a.Value.Resolve()
 	if a.Value.Kind() == slog.KindGroup {
 		attrs := a.Value.Group()
@@ -176,29 +222,33 @@ func (h *handler) appendAttr(sb *buffer, a slog.Attr) {
 			return
 		}
 		if a.Key != "" {
-			h.groups = append(h.groups, a.Key)
+			groups.push(a.Key)
 		}
-		for _, a := range attrs {
-			h.appendAttr(sb, a)
+		for _, child := range attrs {
+			h.appendAttr(sb, groups, child)
 		}
 		if a.Key != "" {
-			h.groups = h.groups[:len(h.groups)-1]
+			groups.pop()
 		}
 		return
 	}
 	if h.replaceAttr != nil {
-		a = h.replaceAttr(h.groups, a)
+		a = h.replaceAttr(groups.values(), a)
 	}
 	if !a.Equal(slog.Attr{}) {
-		appendKey(sb, h.groups, a.Key)
+		appendKey(sb, groups.prefix(), a.Key)
 		h.appendVal(sb, a.Value)
 	}
 }
 
-func appendKey(sb *buffer, groups []string, key string) {
+func appendKey(sb *buffer, prefix string, key string) {
 	sb.WriteByte(' ')
-	if len(groups) > 0 {
-		key = strings.Join(groups, ".") + "." + key
+	if prefix != "" {
+		if key != "" {
+			key = prefix + "." + key
+		} else {
+			key = prefix
+		}
 	}
 	if needsQuoting(key) {
 		sb.WriteString(strconv.Quote(key))

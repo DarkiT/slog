@@ -63,6 +63,12 @@ type HandlerProvider interface {
 	SetHandler(handler slog.Handler)
 }
 
+// FormatterProvider 提供格式化函数，避免使用反射适配。
+type FormatterProvider interface {
+	// FormatterFunctions 返回一组与 slog.Handler ReplaceAttr 兼容的格式化函数。
+	FormatterFunctions() []func([]string, slog.Attr) (slog.Value, bool)
+}
+
 // Formatter 格式化器接口 - 只负责数据格式化
 type Formatter interface {
 	// Format 格式化数据

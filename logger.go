@@ -200,6 +200,11 @@ func (l *Logger) GetSlogLogger() *slog.Logger {
 	return l.text
 }
 
+// Diagnostics 返回模块健康与指标快照。
+func (l *Logger) Diagnostics() []ModuleDiagnostics {
+	return CollectModuleDiagnostics()
+}
+
 // logWithLevel 使用指定级别记录日志
 // 非格式化日志的内部实现
 func (l *Logger) logWithLevel(level Level, msg string, args ...any) {
@@ -219,6 +224,12 @@ func (l *Logger) logRecord(level Level, msg string, sprintf bool, args ...any) {
 	ctx := l.ctx
 	if ctx == nil {
 		ctx = context.Background()
+	}
+	if globalRateLimiter != nil && !globalRateLimiter.Allow() {
+		if l.config == nil || l.config.LogInternalErrors {
+			fmt.Fprintf(os.Stderr, "slog: record dropped by limiter level=%s msg=%q\n", level, msg)
+		}
+		return
 	}
 
 	var r slog.Record
@@ -1297,13 +1308,6 @@ func (l *Logger) ProgressBarWithValueAndOptionsTo(msg string, progress float64, 
 func NewLoggerWithConfig(w io.Writer, config *Config) *Logger {
 	if config == nil {
 		config = DefaultConfig()
-	}
-
-	// 不修改全局配置，仅将配置应用到本实例
-	// 全局配置通过其他函数管理
-	timeFormat := config.TimeFormat
-	if timeFormat == "" {
-		timeFormat = TimeFormat
 	}
 
 	options := NewOptions(nil)
