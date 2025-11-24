@@ -5,7 +5,7 @@ go 1.24.2
 require (
 	github.com/darkit/slog v0.0.0
 	github.com/sirupsen/logrus v1.9.3
-	go.uber.org/zap v1.27.0
+	go.uber.org/zap v1.27.1
 )
 
 require (
