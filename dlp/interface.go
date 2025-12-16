@@ -111,6 +111,9 @@ type DesensitizerManager interface {
 	// RegisterDesensitizer 注册脱敏器
 	RegisterDesensitizer(desensitizer Desensitizer) error
 
+	// UpsertDesensitizer 注册或热替换脱敏器，返回版本号
+	UpsertDesensitizer(desensitizer Desensitizer) (int64, error)
+
 	// UnregisterDesensitizer 注销脱敏器
 	UnregisterDesensitizer(name string) error
 
@@ -131,6 +134,9 @@ type DesensitizerManager interface {
 
 	// GetStats 获取管理器统计信息
 	GetStats() ManagerStats
+
+	// CurrentVersion 获取当前版本号
+	CurrentVersion() int64
 }
 
 // ManagerStats 管理器统计信息
@@ -139,6 +145,7 @@ type ManagerStats struct {
 	EnabledDesensitizers int                           // 启用的脱敏器数量
 	TypeCoverage         map[string]int                // 类型覆盖情况
 	PerformanceMetrics   map[string]PerformanceMetrics // 性能指标
+	Version              int64                         // 版本号（热更新标记）
 }
 
 // PerformanceMetrics 性能指标

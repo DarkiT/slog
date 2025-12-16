@@ -6,7 +6,7 @@ import (
 	"io"
 	"log/slog"
 
-	"github.com/darkit/slog/common"
+	"github.com/darkit/slog/internal/common"
 )
 
 const ceePrefix = "@cee: "

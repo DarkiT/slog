@@ -6,7 +6,7 @@ import (
 	"log/slog"
 	"slices"
 
-	"github.com/darkit/slog/common"
+	"github.com/darkit/slog/internal/common"
 )
 
 var _ slog.Handler = (*FanoutHandler)(nil)

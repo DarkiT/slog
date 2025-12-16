@@ -276,13 +276,10 @@ func TestDynamicProgressRenderer_Concurrent(t *testing.T) {
 		<-done
 	}
 
-	// 添加短暂延迟以确保所有进度条都已启动
-	time.Sleep(10 * time.Millisecond)
-
-	// 验证并发启动成功（由于 timing 问题，放宽要求）
+	// 验证并发启动成功
 	activeCount := renderer.GetActiveCount()
-	if activeCount < numGoroutines/2 {
-		t.Errorf("期望至少%d个活跃进度条，实际: %d", numGoroutines/2, activeCount)
+	if activeCount < numGoroutines {
+		t.Errorf("期望至少%d个活跃进度条，实际: %d", numGoroutines, activeCount)
 	}
 
 	// 清理

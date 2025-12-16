@@ -6,7 +6,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/darkit/slog/common"
+	"github.com/darkit/slog/internal/common"
 )
 
 // TestTieredPoolsIntegration 测试分级池在logger系统中的集成

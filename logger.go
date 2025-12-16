@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/darkit/slog/common"
+	"github.com/darkit/slog/internal/common"
 )
 
 const (
@@ -208,20 +208,18 @@ func (l *Logger) Diagnostics() []ModuleDiagnostics {
 // logWithLevel 使用指定级别记录日志
 // 非格式化日志的内部实现
 func (l *Logger) logWithLevel(level Level, msg string, args ...any) {
-	l.logRecord(level, msg, false, args...)
+	l.logRecord(level, l.ctx, msg, false, args...)
 }
 
 // logfWithLevel 使用指定级别记录格式化日志
 // 格式化日志的内部实现
 func (l *Logger) logfWithLevel(level Level, format string, args ...any) {
-	l.logRecord(level, fmt.Sprintf(format, args...), true, args...)
+	l.logRecord(level, l.ctx, fmt.Sprintf(format, args...), true, args...)
 }
 
 // logRecord 日志记录的核心实现
 // 处理所有类型的日志记录请求
-func (l *Logger) logRecord(level Level, msg string, sprintf bool, args ...any) {
-	// 使用 logger 的 context 而不是空 context
-	ctx := l.ctx
+func (l *Logger) logRecord(level Level, ctx context.Context, msg string, sprintf bool, args ...any) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -356,14 +354,29 @@ func (l *Logger) Info(msg string, args ...any) {
 	l.logWithLevel(LevelInfo, msg, args...)
 }
 
+// InfoContext 记录信息级别日志，附带上下文传播。
+func (l *Logger) InfoContext(ctx context.Context, msg string, args ...any) {
+	l.logRecord(LevelInfo, ctx, msg, false, args...)
+}
+
 // Warn 记录警告级别的日志
 func (l *Logger) Warn(msg string, args ...any) {
 	l.logWithLevel(LevelWarn, msg, args...)
 }
 
+// WarnContext 记录警告级别日志，附带上下文传播。
+func (l *Logger) WarnContext(ctx context.Context, msg string, args ...any) {
+	l.logRecord(LevelWarn, ctx, msg, false, args...)
+}
+
 // Error 记录错误级别的日志
 func (l *Logger) Error(msg string, args ...any) {
 	l.logWithLevel(LevelError, msg, args...)
+}
+
+// ErrorContext 记录错误级别日志，附带上下文传播。
+func (l *Logger) ErrorContext(ctx context.Context, msg string, args ...any) {
+	l.logRecord(LevelError, ctx, msg, false, args...)
 }
 
 // Fatal 记录致命错误并终止程序
@@ -372,9 +385,20 @@ func (l *Logger) Fatal(msg string, args ...any) {
 	os.Exit(1)
 }
 
+// FatalContext 记录致命日志并退出，附带上下文传播。
+func (l *Logger) FatalContext(ctx context.Context, msg string, args ...any) {
+	l.logRecord(LevelFatal, ctx, msg, false, args...)
+	os.Exit(1)
+}
+
 // Trace 记录跟踪级别的日志
 func (l *Logger) Trace(msg string, args ...any) {
 	l.logWithLevel(LevelTrace, msg, args...)
+}
+
+// TraceContext 记录跟踪日志，附带上下文传播。
+func (l *Logger) TraceContext(ctx context.Context, msg string, args ...any) {
+	l.logRecord(LevelTrace, ctx, msg, false, args...)
 }
 
 // Debugf 记录格式化的调试级别日志
@@ -382,9 +406,19 @@ func (l *Logger) Debugf(format string, args ...any) {
 	l.logfWithLevel(LevelDebug, format, args...)
 }
 
+// DebugfContext 记录格式化调试日志，附带上下文传播。
+func (l *Logger) DebugfContext(ctx context.Context, format string, args ...any) {
+	l.logRecord(LevelDebug, ctx, fmt.Sprintf(format, args...), true, args...)
+}
+
 // Infof 记录格式化的信息级别日志
 func (l *Logger) Infof(format string, args ...any) {
 	l.logfWithLevel(LevelInfo, format, args...)
+}
+
+// InfofContext 记录格式化的信息日志，附带上下文传播。
+func (l *Logger) InfofContext(ctx context.Context, format string, args ...any) {
+	l.logRecord(LevelInfo, ctx, fmt.Sprintf(format, args...), true, args...)
 }
 
 // Warnf 记录格式化的警告级别日志
@@ -392,9 +426,19 @@ func (l *Logger) Warnf(format string, args ...any) {
 	l.logfWithLevel(LevelWarn, format, args...)
 }
 
+// WarnfContext 记录格式化的警告日志，附带上下文传播。
+func (l *Logger) WarnfContext(ctx context.Context, format string, args ...any) {
+	l.logRecord(LevelWarn, ctx, fmt.Sprintf(format, args...), true, args...)
+}
+
 // Errorf 记录格式化的错误级别日志
 func (l *Logger) Errorf(format string, args ...any) {
 	l.logfWithLevel(LevelError, format, args...)
+}
+
+// ErrorfContext 记录格式化的错误日志，附带上下文传播。
+func (l *Logger) ErrorfContext(ctx context.Context, format string, args ...any) {
+	l.logRecord(LevelError, ctx, fmt.Sprintf(format, args...), true, args...)
 }
 
 // Fatalf 记录格式化的致命错误并终止程序
@@ -403,9 +447,20 @@ func (l *Logger) Fatalf(format string, args ...any) {
 	os.Exit(1)
 }
 
+// FatalfContext 记录格式化致命日志并退出，附带上下文传播。
+func (l *Logger) FatalfContext(ctx context.Context, format string, args ...any) {
+	l.logRecord(LevelFatal, ctx, fmt.Sprintf(format, args...), true, args...)
+	os.Exit(1)
+}
+
 // Tracef 记录格式化的跟踪级别日志
 func (l *Logger) Tracef(format string, args ...any) {
 	l.logfWithLevel(LevelTrace, format, args...)
+}
+
+// TracefContext 记录格式化的 Trace 日志，附带上下文传播。
+func (l *Logger) TracefContext(ctx context.Context, format string, args ...any) {
+	l.logRecord(LevelTrace, ctx, fmt.Sprintf(format, args...), true, args...)
 }
 
 // Printf 兼容标准库的格式化日志方法
@@ -1308,6 +1363,13 @@ func (l *Logger) ProgressBarWithValueAndOptionsTo(msg string, progress float64, 
 func NewLoggerWithConfig(w io.Writer, config *Config) *Logger {
 	if config == nil {
 		config = DefaultConfig()
+	}
+
+	// 不修改全局配置，仅将配置应用到本实例
+	// 全局配置通过其他函数管理
+	timeFormat := config.TimeFormat
+	if timeFormat == "" {
+		timeFormat = TimeFormat
 	}
 
 	options := NewOptions(nil)

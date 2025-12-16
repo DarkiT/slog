@@ -121,6 +121,54 @@ func TestDesensitizerManager_Processing(t *testing.T) {
 	}
 }
 
+func TestDesensitizerManager_UpsertAndVersion(t *testing.T) {
+	manager := NewSecurityEnhancedManager()
+
+	versionBefore := manager.CurrentVersion()
+
+	phone := NewEnhancedPhoneDesensitizer()
+	v1, err := manager.UpsertDesensitizer(phone)
+	if err != nil {
+		t.Fatalf("UpsertDesensitizer error: %v", err)
+	}
+	if v1 <= versionBefore {
+		t.Fatalf("version should increase, got %d, before %d", v1, versionBefore)
+	}
+
+	replacer := &dummyDesensitizer{name: "phone"}
+	v2, err := manager.UpsertDesensitizer(replacer)
+	if err != nil {
+		t.Fatalf("UpsertDesensitizer replace error: %v", err)
+	}
+	if v2 <= v1 {
+		t.Fatalf("version should increase after replace, got %d, prev %d", v2, v1)
+	}
+
+	got, ok := manager.GetDesensitizer("phone")
+	if !ok {
+		t.Fatal("expected phone desensitizer after replace")
+	}
+	if got == phone {
+		t.Fatal("expected replacement to take effect")
+	}
+	stats := manager.GetStats()
+	if stats.Version != v2 {
+		t.Fatalf("stats version mismatch, want %d, got %d", v2, stats.Version)
+	}
+}
+
+type dummyDesensitizer struct {
+	name string
+}
+
+func (d *dummyDesensitizer) Name() string                            { return d.name }
+func (d *dummyDesensitizer) Supports(_ string) bool                  { return true }
+func (d *dummyDesensitizer) Desensitize(data string) (string, error) { return data, nil }
+func (d *dummyDesensitizer) Configure(map[string]interface{}) error  { return nil }
+func (d *dummyDesensitizer) Enabled() bool                           { return true }
+func (d *dummyDesensitizer) Enable()                                 {}
+func (d *dummyDesensitizer) Disable()                                {}
+
 func TestDesensitizerManager_Stats(t *testing.T) {
 	manager := NewSecurityEnhancedManager()
 

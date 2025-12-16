@@ -9,7 +9,7 @@ import (
 	"time"
 
 	svr "github.com/darkit/slog"
-	"github.com/darkit/slog/common"
+	"github.com/darkit/slog/internal/common"
 )
 
 type Option struct {

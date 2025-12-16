@@ -7,6 +7,8 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+
+	"github.com/darkit/slog/internal/dlp/cachekey"
 )
 
 // BaseDesensitizer 基础脱敏器实现
@@ -138,7 +140,7 @@ func (bd *BaseDesensitizer) desensitizeWithCache(data string, processor func(str
 	}
 
 	// 使用优化的缓存键
-	cacheKey := OptimizeKey(bd.name, data)
+	cacheKey := cachekey.Key(bd.name, data)
 
 	// 检查缓存
 	if cached, ok := bd.cache.Load(cacheKey); ok {

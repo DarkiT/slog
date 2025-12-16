@@ -7,6 +7,7 @@
 slog 是一个高性能、功能丰富的 Go 语言日志库，基于 Go 1.23+ 的官方 `log/slog` 包进行扩展。它提供了更灵活的日志级别控制、彩色输出、结构化日志记录、日志脱敏等高级特性。
 
 ## 目录
+
 - [特性](#特性)
 - [安装](#安装)
 - [快速开始](#快速开始)
@@ -29,38 +30,45 @@ slog 是一个高性能、功能丰富的 Go 语言日志库，基于 Go 1.23+ �
 ## 特性
 
 ### 🚀 核心功能
+
 - 支持多种日志级别（Trace、Debug、Info、Warn、Error、Fatal）
 - 支持同时输出文本和 JSON 格式
 - 支持彩色日志输出
 - 支持动态调整日志级别
 - 支持日志分组和模块化
 - 支持结构化字段记录
+- 追加 logfmt/GELF 输出，便于直连 Loki/Graylog/Vector
+- 内置运行时开关面板和 CLI 开关，随时调整级别/输出/DLP
 - 线程安全设计
 
 ### 🔒 数据脱敏 (DLP)
+
 - **插拔式脱敏器架构**: 支持动态加载和配置脱敏器
 - **智能类型检测**: 自动识别手机号、邮箱、身份证、银行卡等敏感信息
-- **高性能缓存**: 使用 xxhash 算法优化缓存键，性能提升74%
+- **高性能缓存**: xxhash64 纯 Go 实现生成缓存键，低碰撞且无外部依赖
 - **结构体脱敏**: 支持通过标签自动脱敏结构体字段
 - **自定义脱敏规则**: 支持正则表达式和自定义脱敏函数
 - **精确脱敏处理**: 优化脱敏算法，正确隐藏身份证生日信息，避免误判普通文本
 
 ### ⚡ 性能优化
-- **分级对象池**: 小中大三级Buffer池提升内存效率
-- **LRU缓存策略**: 替换全清除策略，减少内存压力
-- **xxhash缓存键**: 减少哈希碰撞，缓存性能提升74%
+
+- **分级对象池**: 小中大三级 Buffer 池提升内存效率
+- **LRU 缓存策略**: 替换全清除策略，减少内存压力
+- **xxhash 缓存键**: xxhash64 生成缓存键，低碰撞且保持高吞吐
 - **高性能缓冲设计**: 优化内存分配和回收
 
 ### 🎨 用户界面
+
 - **内置丰富的可视化进度条功能**: 支持多种样式和动画效果
-- **建造者模式API**: 简化复杂配置，提供优雅的链式调用
+- **建造者模式 API**: 简化复杂配置，提供优雅的链式调用
 - **动态输出和实时更新**: 支持实时进度显示和状态更新
 
 ### 🔧 架构设计
+
 - **模块化插件系统**: 从工厂模式简化为插件管理器
 - **接口隔离原则**: 按单一职责原则拆分接口
 - **结构化错误处理**: 统一错误类型，提升调试体验
-- **全局状态管理**: LoggerManager解决全局状态混乱问题
+- **全局状态管理**: LoggerManager 解决全局状态混乱问题
 
 ## 安装
 
@@ -124,6 +132,17 @@ logger.Info("configurable logger")
 - `DefaultConfig` 返回可复用的配置对象；`SetEnableText/SetEnableJSON` 会显式锁定实例的输出格式。
 - 调用 `InheritTextOutput/InheritJSONOutput` 时，实例将重新遵循 `EnableTextLogger`、`DisableTextLogger`、`EnableJSONLogger` 等全局函数。
 - `NewLogger` 返回遵循全局配置的默认实例，`NewLoggerWithConfig` 允许在同一进程中创建互不影响的独立 logger。
+- 也可以使用链式构建器快速生成 Logger：
+
+```go
+logger := slog.NewLoggerBuilder().
+    WithModule("order").
+    WithGroup("api").
+    WithAttrs(slog.String("req_id", "r-1")).
+    EnableJSON(false).
+    Build()
+logger.InfoContext(ctx, "created", slog.String("user", "alice"))
+```
 
 ⚠️ 注意：`EnableJSONLogger`、`EnableTextLogger`、`EnableDLPLogger` 等全局开关会立即影响所有选择“继承”模式的记录器。在多租户或多模块进程中，优先为每个 `Logger` 设置显式的 `SetEnableText/SetEnableJSON` 等配置，避免因为其他协程切换全局状态而导致输出格式突变。需要临时调整全局配置时，请结合明确的作用域（例如只在调试阶段打开，并确保退出前恢复），并避免跨 goroutine 共享并写入同一个配置实例。
 
@@ -309,27 +328,28 @@ err := dlpEngine.DesensitizeStructAdvanced(complexUser)
 ```go
 type FlexibleUser struct {
     // 基础脱敏类型
-    Name  string `dlp:"chinese_name"`  
-    Phone string `dlp:"mobile_phone"`  
-    
+    Name  string `dlp:"chinese_name"`
+    Phone string `dlp:"mobile_phone"`
+
     // 递归处理嵌套数据
     Profile  UserProfile `dlp:",recursive"`
     Friends  []User      `dlp:",recursive"`
     Settings map[string]string `dlp:",recursive"`
-    
+
     // 自定义脱敏策略
     Token    string `dlp:"custom:my_strategy"`
-    
+
     // 跳过字段
     InternalID string `dlp:"-"`
     Age        int    `dlp:"-"`
-    
+
     // 组合配置
     Data     string `dlp:"email,recursive"`
 }
 ```
 
 支持的标签选项：
+
 - `type_name`: 指定脱敏类型（如 `chinese_name`, `mobile_phone` 等）
 - `recursive`: 递归处理嵌套数据结构
 - `custom:strategy_name`: 使用自定义脱敏策略
@@ -362,21 +382,21 @@ err := dlpEngine.DesensitizeStructAdvanced(user)
 
 #### 5.6 支持的脱敏类型
 
-| 类型 | 标签名 | 描述 | 示例 |
-|------|--------|------|------|
-| 中文姓名 | `chinese_name` | 保留姓氏，脱敏名字 | 张三 → 张* |
-| 身份证号 | `id_card` | 保留前6位和后4位，隐藏生日信息 | 110101199001010001 → 110101********0001 |
-| 手机号码 | `mobile_phone` | 保留前3位和后4位 | 13812345678 → 138****5678 |
-| 固定电话 | `landline` | 脱敏中间部分 | 010-12345678 → 010-****5678 |
-| 电子邮箱 | `email` | 脱敏用户名部分 | user@example.com → u**r@example.com |
-| 银行卡号 | `bank_card` | 保留前6位和后4位 | 6222020000000000000 → 622202*****0000 |
-| 地址信息 | `address` | 脱敏详细地址 | 北京市朝阳区某某街道123号 → 北京市朝阳区某某街道*** |
-| 密码 | `password` | 全部替换为星号 | password123 → *********** |
-| 车牌号 | `plate` | 脱敏中间部分 | 京A12345 → 京A***45 |
-| IPv4地址 | `ipv4` | 脱敏中间段 | 192.168.1.100 → 192.***.1.100 |
-| IPv6地址 | `ipv6` | 脱敏中间段 | 2001:db8::1 → 2001:***::1 |
-| JWT令牌 | `jwt` | 脱敏payload部分 | eyJ...abc → eyJ****.abc |
-| URL地址 | `url` | 脱敏敏感参数 | http://example.com?token=abc → http://example.com?token=*** |
+| 类型      | 标签名         | 描述                               | 示例                                                        |
+| --------- | -------------- | ---------------------------------- | ----------------------------------------------------------- |
+| 中文姓名  | `chinese_name` | 保留姓氏，脱敏名字                 | 张三 → 张\*                                                 |
+| 身份证号  | `id_card`      | 保留前 6 位和后 4 位，隐藏生日信息 | 110101199001010001 → 110101**\*\*\*\***0001                 |
+| 手机号码  | `mobile_phone` | 保留前 3 位和后 4 位               | 13812345678 → 138\*\*\*\*5678                               |
+| 固定电话  | `landline`     | 脱敏中间部分                       | 010-12345678 → 010-\*\*\*\*5678                             |
+| 电子邮箱  | `email`        | 脱敏用户名部分                     | user@example.com → u\*\*r@example.com                       |
+| 银行卡号  | `bank_card`    | 保留前 6 位和后 4 位               | 6222020000000000000 → 622202**\***0000                      |
+| 地址信息  | `address`      | 脱敏详细地址                       | 北京市朝阳区某某街道 123 号 → 北京市朝阳区某某街道\*\*\*    |
+| 密码      | `password`     | 全部替换为星号                     | password123 → \***\*\*\*\*\*\***                            |
+| 车牌号    | `plate`        | 脱敏中间部分                       | 京 A12345 → 京 A\*\*\*45                                    |
+| IPv4 地址 | `ipv4`         | 脱敏中间段                         | 192.168.1.100 → 192.\*\*\*.1.100                            |
+| IPv6 地址 | `ipv6`         | 脱敏中间段                         | 2001:db8::1 → 2001:\*\*\*::1                                |
+| JWT 令牌  | `jwt`          | 脱敏 payload 部分                  | eyJ...abc → eyJ\*\*\*\*.abc                                 |
+| URL 地址  | `url`          | 脱敏敏感参数                       | http://example.com?token=abc → http://example.com?token=*** |
 
 #### 5.7 批量处理和性能优化
 
@@ -400,11 +420,11 @@ if err != nil {
 
 #### 5.8 安全特性
 
-- **递归深度限制**: 防止无限递归，最大深度为10层
+- **递归深度限制**: 防止无限递归，最大深度为 10 层
 - **错误隔离**: 单个字段脱敏失败不影响其他字段
 - **空值处理**: 正确处理 nil 指针和空值
 - **并发安全**: 所有操作都是线程安全的
-- **向后兼容**: 保持与原有API的完全兼容性
+- **向后兼容**: 保持与原有 API 的完全兼容性
 
 ### 进度条功能
 
@@ -441,28 +461,29 @@ logger.ProgressBarWithValueAndOptionsTo("处理状态", 65.5, 40, opts, os.Stdou
 ```
 
 进度条特性:
+
 - **多种样式**: 支持默认(=)、方块(█)、简单(#-)等多种风格
 - **百分比显示**: 可选择是否显示百分比
 - **自定义颜色**: 继承日志级别颜色
 - **可自定义宽度**: 适应不同终端大小
 - **实时更新**: 根据时间自动更新或手动设置进度值
-- **自定义输出**: 可以输出到任意writer
+- **自定义输出**: 可以输出到任意 writer
 - **线程安全**: 所有操作都是并发安全的
 
 ⚠️ 提示：进度条与动态动画会在标准输出上产生多行或回退字符，适合 TTY 或纯文本日志。当同时启用 JSON、Webhook、Syslog 等结构化输出时，请将这类效果定向到单独的 `io.Writer`，或在该 logger 上禁用 JSON 输出，避免破坏上游解析。
 
 进度条选项说明:
 
-| 选项 | 类型 | 默认值 | 描述 |
-|------|------|--------|------|
-| `BarStyle` | string | "default" | 进度条样式 ("default", "block", "simple") |
-| `ShowPercentage` | bool | true | 是否显示百分比 |
-| `TimeFormat` | string | TimeFormat | 时间格式 |
-| `LeftBracket` | string | "[" | 左边框字符 |
-| `RightBracket` | string | "]" | 右边框字符 |
-| `Fill` | string | "=" | 已完成部分填充字符 |
-| `Head` | string | ">" | 进度条头部字符 |
-| `Empty` | string | " " | 未完成部分填充字符 |
+| 选项             | 类型   | 默认值     | 描述                                      |
+| ---------------- | ------ | ---------- | ----------------------------------------- |
+| `BarStyle`       | string | "default"  | 进度条样式 ("default", "block", "simple") |
+| `ShowPercentage` | bool   | true       | 是否显示百分比                            |
+| `TimeFormat`     | string | TimeFormat | 时间格式                                  |
+| `LeftBracket`    | string | "["        | 左边框字符                                |
+| `RightBracket`   | string | "]"        | 右边框字符                                |
+| `Fill`           | string | "="        | 已完成部分填充字符                        |
+| `Head`           | string | ">"        | 进度条头部字符                            |
+| `Empty`          | string | " "        | 未完成部分填充字符                        |
 
 ### 模块注册系统
 
@@ -472,12 +493,12 @@ slog 提供了强大的模块注册系统，支持插件化的日志处理组件
 
 系统支持四种模块类型：
 
-| 模块类型 | 说明 | 优先级 | 示例 |
-|----------|------|--------|------|
-| Formatter | 格式化器 - 对日志内容进行格式化处理 | 最高 | 时间格式化、脱敏处理 |
-| Middleware | 中间件 - 日志处理中间层 | 高 | 过滤器、增强器 |
-| Handler | 处理器 - 自定义日志处理逻辑 | 中 | 自定义输出逻辑 |
-| Sink | 接收器 - 日志输出目标 | 低 | Webhook、Syslog |
+| 模块类型   | 说明                                | 优先级 | 示例                 |
+| ---------- | ----------------------------------- | ------ | -------------------- |
+| Formatter  | 格式化器 - 对日志内容进行格式化处理 | 最高   | 时间格式化、脱敏处理 |
+| Middleware | 中间件 - 日志处理中间层             | 高     | 过滤器、增强器       |
+| Handler    | 处理器 - 自定义日志处理逻辑         | 中     | 自定义输出逻辑       |
+| Sink       | 接收器 - 日志输出目标               | 低     | Webhook、Syslog      |
 
 #### 7.2 快速使用内置模块
 
@@ -519,7 +540,7 @@ configs := []modules.ModuleConfig{
     },
     {
         Type:     "webhook",
-        Name:     "alert-webhook", 
+        Name:     "alert-webhook",
         Enabled:  true,
         Priority: 100,
         Config: modules.Config{
@@ -553,11 +574,13 @@ if err := config.Bind(&opts); err != nil {
 #### 7.4 内置模块详解
 
 ##### Formatter 模块
+
 - **功能概览**: 通过 `Format`、`FormatByType`、`FormatByKind` 等组合函数为 `slog` 属性链提供二次格式化，兼容嵌套 `slog.Group`。
 - **关键实现**: 时间格式化器会在传入的 `location` 为空时自动降级为 `time.UTC`；`UnixTimestampFormatter` 仅接受纳秒、微秒、毫秒与秒四档精度，超出范围会直接 panic，部署前务必由配置层校验。
 - **边界处理**: `PIIFormatter` 会递归遍历所有子属性并保留 `id`、`*_id`、`-id` 字段原值，长度不超过 5 的字符串会完全遮挡；`HTTPRequestFormatter` / `HTTPResponseFormatter` 在 `ignoreHeaders` 为 `true` 时统一返回 `[hidden]`，避免意外泄露头部信息。
 - **配置提示**: 当前适配器使用 `replacement` 字段承载目标字段名，等价于调用 `PIIFormatter("user")`；如需自定义掩码字符，可直接将 formatter 函数组合后通过 `EnableFormatters` 注入。
 - **快速示例**:
+
 ```go
 // 通过模块工厂启用时间与 PII 脱敏
 logger := slog.
@@ -571,11 +594,13 @@ logger.Info("profile update", "user", map[string]any{
 ```
 
 ##### Multi 模块
+
 - **功能概览**: 提供 `Fanout`、`Failover`、`Router`、`RecoverHandlerError` 等模式，将多个 `slog.Handler` 组合为一条链路。
 - **关键实现**: `Fanout` 在分发前调用 `record.Clone()`，避免下游修改互相干扰；`Failover` 顺序尝试 handler，首个成功后立即终止并返回 `nil`，全部失败时回传最后一个错误。
 - **边界处理**: 内部的 `try` 方法会捕获 panic 并转换成错误，因此不会打断主链路；`RoutableHandler` 复制分组信息并在 `WithAttrs` 时重新打平属性，防止跨组丢字段；`WithGroup` 遵循 slog 规范，对空字符串直接返回当前实例，避免无意义层级。
 - **扩展建议**: 需要更多策略时，可复用 `MultiAdapter.AddHandler` 追加自定义 handler，再结合 `RecoverHandlerError` 注册统一的告警回调。
 - **快速示例**:
+
 ```go
 multiAdapter := multi.NewMultiAdapter()
 multiAdapter.AddHandler(slog.NewJSONHandler(os.Stdout, nil))
@@ -586,11 +611,13 @@ logger.Info("同步输出到多个目标", "trace_id", "abc123")
 ```
 
 ##### Webhook 模块
+
 - **功能概览**: 将日志异步转换为 JSON 并通过 HTTP POST 发送到外部服务。
 - **关键实现**: `Option.Timeout` 默认 10 秒，`send` 会通过 `context.WithTimeout` 控制请求生命周期；`DefaultConverter` 会展开 `error`、`*http.Request` 与 `user` 字段，并将剩余属性放入 `extra`。
 - **边界处理**: `Handle` 在 goroutine 中调用 `send`，错误会被静默丢弃，必须通过外部监控或自定义 `Converter` 注入补偿逻辑；适配器仅在成功拨号 `Endpoint` 时才创建 handler，因此需在部署前验证网络连通性。
 - **使用提示**: 若需要复用已有 `http.Client` 或启用连接池，可参考 `send` 实现自定义版本，并通过 `Option.Marshaler` 与 `Option.Converter` 托管。
 - **快速示例**:
+
 ```go
 logger := slog.
     UseFactory("webhook", modules.Config{
@@ -603,11 +630,13 @@ logger.Warn("订单异常", "order_id", 12345)
 ```
 
 ##### Syslog 模块
+
 - **功能概览**: 生成符合 `@cee` JSON 格式的 payload 并写入远端 syslog。
 - **关键实现**: `NewSyslogHandler` 在 `Option.Level` 为空时自动降级到 `slog.LevelDebug`，并在处理时将上下文属性与记录属性统一转为 map；写入操作在 goroutine 中执行，避免阻塞主线程。
 - **边界处理**: 异步写入意味着 Writer 的错误会被忽略；使用适配器时若 `network` 或 `addr` 配置为空则不会创建 handler，需要在配置阶段提前检查。
 - **使用提示**: 推荐在退出阶段手动关闭 `SyslogAdapter` 持有的 `net.Conn`，或替换为具备自动重连能力的 Writer，实现更稳定的持久连接。
 - **快速示例**:
+
 ```go
 conn, err := net.Dial("udp", "127.0.0.1:514")
 if err != nil {
@@ -624,6 +653,7 @@ logger.Info("service started", "pid", os.Getpid())
 ```
 
 ##### Formatter/Handler 组合实践
+
 - **时间戳与时区**: 同时启用 `TimeFormatter` 与 `TimezoneConverter` 时需保证调用顺序，先转换时区再输出字符串。
 - **隐私合规**: 将 `PIIFormatter` 与 DLP 模块串联时，可先在 formatter 阶段做结构化裁剪，再交由 DLP 模式识别，降低误杀概率。
 
@@ -686,6 +716,19 @@ for _, d := range diags {
 
 结合上述 API，即可在生产环境实现“低干扰”的热调整：模块可在不重启的前提下更新配置、临时上/下线 formatter，必要时启用限流或定位 DLP、Webhook 的具体行为。
 
+### 运行时开关面板 / CLI
+
+- `slog.GetRuntimeSnapshot()`：查看当前级别、Text/JSON/DLP 状态与 DLP 版本号
+- `slog.ApplyRuntimeOption("level", "warn")` / `ApplyRuntimeOption("json", "on")`：代码内快速切换
+- `slog.StartRuntimePanel(":9090")`：启动 HTTP 面板（GET/POST `/slog/runtime`，支持 level/text/json/dlp 字段）
+
+示例：
+
+```go
+slog.StartRuntimePanel(":9090")             // 生产环境建议加鉴权/网关
+curl -XPOST "http://localhost:9090/slog/runtime" -d "level=info&text=on&json=off&dlp=on"
+```
+
 ### 日志订阅机制
 
 ```go
@@ -730,6 +773,7 @@ go func() {
 ```
 
 订阅特性：
+
 - 支持多个订阅者
 - 独立的缓冲区大小控制
 - 自动资源清理
@@ -737,6 +781,7 @@ go func() {
 - 支持选择性处理
 
 ⚠️ 注意：`Subscribe` 返回的 channel 仍然是固定容量的缓冲队列；如果消费端处理速度跟不上，缓冲写满后主日志路径会被阻塞。高吞吐场景下建议：
+
 - 根据业务峰值调大缓冲区容量；
 - 为订阅者准备独立的消费 goroutine，并妥善处理错误；
 - 在需要完全异步的场景中，自行实现带丢弃策略的桥接或使用队列系统。
@@ -780,13 +825,13 @@ SetCompress(true)     // 压缩旧日志文件
 
 ### 配置选项
 
-| 方法 | 默认值 | 描述 |
-|------|--------|------|
-| `SetMaxSize(size int)` | 100 | 单个日志文件的最大大小（MB） |
-| `SetMaxAge(days int)` | 30 | 日志文件保留的最大天数 |
-| `SetMaxBackups(count int)` | 30 | 保留的最大备份文件数 |
-| `SetLocalTime(local bool)` | true | 是否使用本地时间 |
-| `SetCompress(compress bool)` | true | 是否压缩旧日志文件 |
+| 方法                         | 默认值 | 描述                         |
+| ---------------------------- | ------ | ---------------------------- |
+| `SetMaxSize(size int)`       | 100    | 单个日志文件的最大大小（MB） |
+| `SetMaxAge(days int)`        | 30     | 日志文件保留的最大天数       |
+| `SetMaxBackups(count int)`   | 30     | 保留的最大备份文件数         |
+| `SetLocalTime(local bool)`   | true   | 是否使用本地时间             |
+| `SetCompress(compress bool)` | true   | 是否压缩旧日志文件           |
 
 ### 文件命名规则
 
@@ -807,49 +852,49 @@ logs/
 
 ### 全局方法
 
-| 方法 | 描述 |
-|------|------|
-| `NewLogger(w io.Writer, noColor, addSource bool) Logger` | 创建新的日志记录器 |
-| `Default(modules ...string) *Logger` | 获取带模块名的默认日志记录器 |
-| `SetLevel{Level}()` | 设置全局日志级别（Level可以是Trace/Debug/Info/Warn/Error/Fatal） |
-| `EnableTextLogger()` | 启用文本日志输出 |
-| `DisableTextLogger()` | 禁用文本日志输出 |
-| `EnableJSONLogger()` | 启用JSON日志输出 |
-| `DisableJSONLogger()` | 禁用JSON日志输出 |
-| `EnableFormatters(formatters ...formatter.Formatter)` | 启用日志格式化器 |
-| `EnableDLPLogger()` | 启用日志脱敏功能 |
-| `DisableDLPLogger()` | 禁用日志脱敏功能 |
-| `Subscribe(size uint16) (<-chan slog.Record, func())` | 订阅日志记录，返回只读channel和取消函数 |
-| `ProgressBar(msg string, durationMs int, barWidth int, level ...Level) *Logger` | 显示带有可视化进度条的日志 |
-| `ProgressBarWithValue(msg string, progress float64, barWidth int, level ...Level)` | 显示指定进度值的进度条 |
-| `ProgressBarWithValueTo(msg string, progress float64, barWidth int, writer io.Writer, level ...Level)` | 显示指定进度值的进度条并输出到指定writer |
-| `ProgressBarWithOptions(msg string, durationMs int, barWidth int, opts progressBarOptions, level ...Level) *Logger` | 显示可高度定制的进度条 |
-| `ProgressBarWithOptionsTo(msg string, durationMs int, barWidth int, opts progressBarOptions, writer io.Writer, level ...Level) *Logger` | 显示可高度定制的进度条并输出到指定writer |
-| `ProgressBarWithValueAndOptions(msg string, progress float64, barWidth int, opts progressBarOptions, level ...Level)` | 显示指定进度值的定制进度条 |
-| `ProgressBarWithValueAndOptionsTo(msg string, progress float64, barWidth int, opts progressBarOptions, writer io.Writer, level ...Level)` | 显示指定进度值的定制进度条并输出到指定writer |
+| 方法                                                                                                                                      | 描述                                                               |
+| ----------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| `NewLogger(w io.Writer, noColor, addSource bool) Logger`                                                                                  | 创建新的日志记录器                                                 |
+| `Default(modules ...string) *Logger`                                                                                                      | 获取带模块名的默认日志记录器                                       |
+| `SetLevel{Level}()`                                                                                                                       | 设置全局日志级别（Level 可以是 Trace/Debug/Info/Warn/Error/Fatal） |
+| `EnableTextLogger()`                                                                                                                      | 启用文本日志输出                                                   |
+| `DisableTextLogger()`                                                                                                                     | 禁用文本日志输出                                                   |
+| `EnableJSONLogger()`                                                                                                                      | 启用 JSON 日志输出                                                 |
+| `DisableJSONLogger()`                                                                                                                     | 禁用 JSON 日志输出                                                 |
+| `EnableFormatters(formatters ...formatter.Formatter)`                                                                                     | 启用日志格式化器                                                   |
+| `EnableDLPLogger()`                                                                                                                       | 启用日志脱敏功能                                                   |
+| `DisableDLPLogger()`                                                                                                                      | 禁用日志脱敏功能                                                   |
+| `Subscribe(size uint16) (<-chan slog.Record, func())`                                                                                     | 订阅日志记录，返回只读 channel 和取消函数                          |
+| `ProgressBar(msg string, durationMs int, barWidth int, level ...Level) *Logger`                                                           | 显示带有可视化进度条的日志                                         |
+| `ProgressBarWithValue(msg string, progress float64, barWidth int, level ...Level)`                                                        | 显示指定进度值的进度条                                             |
+| `ProgressBarWithValueTo(msg string, progress float64, barWidth int, writer io.Writer, level ...Level)`                                    | 显示指定进度值的进度条并输出到指定 writer                          |
+| `ProgressBarWithOptions(msg string, durationMs int, barWidth int, opts progressBarOptions, level ...Level) *Logger`                       | 显示可高度定制的进度条                                             |
+| `ProgressBarWithOptionsTo(msg string, durationMs int, barWidth int, opts progressBarOptions, writer io.Writer, level ...Level) *Logger`   | 显示可高度定制的进度条并输出到指定 writer                          |
+| `ProgressBarWithValueAndOptions(msg string, progress float64, barWidth int, opts progressBarOptions, level ...Level)`                     | 显示指定进度值的定制进度条                                         |
+| `ProgressBarWithValueAndOptionsTo(msg string, progress float64, barWidth int, opts progressBarOptions, writer io.Writer, level ...Level)` | 显示指定进度值的定制进度条并输出到指定 writer                      |
 
-### Logger方法
+### Logger 方法
 
-| 方法 | 描述 |
-|------|------|
-| `Debug/Info/Warn/Error/Fatal/Trace(msg string, args ...any)` | 记录不同级别的日志 |
-| `Debugf/Infof/Warnf/Errorf/Fatalf/Tracef(format string, args ...any)` | 记录格式化的日志 |
-| `With(args ...any) *Logger` | 创建带有额外字段的日志记录器 |
-| `WithGroup(name string) *Logger` | 创建带有分组的日志记录器 |
-| `GetLevel() Level` | 获取当前日志级别 |
-| `SetLevel(level Level) *Logger` | 设置当前记录器的日志级别 |
-| `GetSlogLogger() *slog.Logger` | 获取原始的slog.Logger |
-| `ProgressBar(msg string, durationMs int, barWidth int, level ...Level) *Logger` | 显示带有可视化进度条的日志 |
-| `ProgressBarWithValue(msg string, progress float64, barWidth int, level ...Level)` | 显示指定进度值的进度条 |
-| `ProgressBarWithValueTo(msg string, progress float64, barWidth int, writer io.Writer, level ...Level)` | 显示指定进度值的进度条并输出到指定writer |
-| `ProgressBarWithOptions(msg string, durationMs int, barWidth int, opts progressBarOptions, level ...Level) *Logger` | 显示可高度定制的进度条 |
-| `ProgressBarWithOptionsTo(msg string, durationMs int, barWidth int, opts progressBarOptions, writer io.Writer, level ...Level) *Logger` | 显示可高度定制的进度条并输出到指定writer |
-| `ProgressBarWithValueAndOptions(msg string, progress float64, barWidth int, opts progressBarOptions, level ...Level)` | 显示指定进度值的定制进度条 |
-| `ProgressBarWithValueAndOptionsTo(msg string, progress float64, barWidth int, opts progressBarOptions, writer io.Writer, level ...Level)` | 显示指定进度值的定制进度条并输出到指定writer |
-| `Dynamic(msg string, frames int, interval int, writer ...io.Writer)` | 动态输出带点号动画效果 |
-| `Progress(msg string, durationMs int, writer ...io.Writer)` | 显示进度百分比 |
-| `Countdown(msg string, seconds int, writer ...io.Writer)` | 显示倒计时 |
-| `Loading(msg string, seconds int, writer ...io.Writer)` | 显示加载动画 |
+| 方法                                                                                                                                      | 描述                                          |
+| ----------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------- |
+| `Debug/Info/Warn/Error/Fatal/Trace(msg string, args ...any)`                                                                              | 记录不同级别的日志                            |
+| `Debugf/Infof/Warnf/Errorf/Fatalf/Tracef(format string, args ...any)`                                                                     | 记录格式化的日志                              |
+| `With(args ...any) *Logger`                                                                                                               | 创建带有额外字段的日志记录器                  |
+| `WithGroup(name string) *Logger`                                                                                                          | 创建带有分组的日志记录器                      |
+| `GetLevel() Level`                                                                                                                        | 获取当前日志级别                              |
+| `SetLevel(level Level) *Logger`                                                                                                           | 设置当前记录器的日志级别                      |
+| `GetSlogLogger() *slog.Logger`                                                                                                            | 获取原始的 slog.Logger                        |
+| `ProgressBar(msg string, durationMs int, barWidth int, level ...Level) *Logger`                                                           | 显示带有可视化进度条的日志                    |
+| `ProgressBarWithValue(msg string, progress float64, barWidth int, level ...Level)`                                                        | 显示指定进度值的进度条                        |
+| `ProgressBarWithValueTo(msg string, progress float64, barWidth int, writer io.Writer, level ...Level)`                                    | 显示指定进度值的进度条并输出到指定 writer     |
+| `ProgressBarWithOptions(msg string, durationMs int, barWidth int, opts progressBarOptions, level ...Level) *Logger`                       | 显示可高度定制的进度条                        |
+| `ProgressBarWithOptionsTo(msg string, durationMs int, barWidth int, opts progressBarOptions, writer io.Writer, level ...Level) *Logger`   | 显示可高度定制的进度条并输出到指定 writer     |
+| `ProgressBarWithValueAndOptions(msg string, progress float64, barWidth int, opts progressBarOptions, level ...Level)`                     | 显示指定进度值的定制进度条                    |
+| `ProgressBarWithValueAndOptionsTo(msg string, progress float64, barWidth int, opts progressBarOptions, writer io.Writer, level ...Level)` | 显示指定进度值的定制进度条并输出到指定 writer |
+| `Dynamic(msg string, frames int, interval int, writer ...io.Writer)`                                                                      | 动态输出带点号动画效果                        |
+| `Progress(msg string, durationMs int, writer ...io.Writer)`                                                                               | 显示进度百分比                                |
+| `Countdown(msg string, seconds int, writer ...io.Writer)`                                                                                 | 显示倒计时                                    |
+| `Loading(msg string, seconds int, writer ...io.Writer)`                                                                                   | 显示加载动画                                  |
 
 ## 数据脱敏 (DLP) 功能
 
@@ -860,15 +905,17 @@ logs/
 该库在设计时特别注意了性能优化：
 
 ### 🚀 核心性能特性
-- **分级对象池**: 小中大三级Buffer池，提升95%+内存复用率
-- **xxhash缓存**: 缓存键生成性能提升74%，零哈希碰撞
-- **LRU缓存策略**: 智能内存管理，替换全清除策略
+
+- **分级对象池**: 小中大三级 Buffer 池，提升 95%+内存复用率
+- **xxhash 缓存**: xxhash64 缓存键，低碰撞且避免外部依赖
+- **LRU 缓存策略**: 智能内存管理，替换全清除策略
 - **原子操作**: 保证线程安全的同时最小化锁竞争
 
 ### 📊 性能基准
-- **进度条渲染**: 从30.4ms/op优化到<1ms/op (3000%+提升)
-- **DLP缓存**: 从573.3ns/op优化到149.2ns/op (74%提升)  
-- **内存分配**: 分级池系统减少90%+内存分配
+
+- **进度条渲染**: 从 30.4ms/op 优化到<1ms/op (3000%+提升)
+- **DLP 缓存路径**: `BenchmarkDesensitizer_WithCache` ~46.6ns/op；无缓存路径 ~2.79µs/op（AMD EPYC 9K65，Go 1.23，`go test -bench=.`）
+- **缓存键生成**: `BenchmarkCacheKeyOptimizer_LongData` ~314ns/op（xxhash64 ）
 - **并发性能**: 支持高并发场景下的线性性能扩展
 
 ## 贡献

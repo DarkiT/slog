@@ -3,6 +3,7 @@ package slog
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -11,6 +12,9 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	gelfmod "github.com/darkit/slog/modules/output/gelf"
+	logfmtmod "github.com/darkit/slog/modules/output/logfmt"
 )
 
 var (
@@ -153,6 +157,56 @@ func NewLogger(w io.Writer, noColor, addSource bool) *Logger {
 	}
 
 	return newLogger
+}
+
+// NewLogfmtLogger 使用 logfmt handler 创建 Logger，便于直接接入 Loki/Vector。
+func NewLogfmtLogger(w io.Writer, opts *slog.HandlerOptions) *Logger {
+	if w == nil {
+		w = NewWriter()
+	}
+	if opts == nil {
+		opts = NewOptions(nil)
+	}
+	logger := globalManager.GetDefault().clone()
+	handler := logfmtmod.New(logfmtmod.Option{
+		Writer:      w,
+		Level:       opts.Level,
+		AddSource:   opts.AddSource,
+		TimeFormat:  TimeFormat,
+		ReplaceAttr: opts.ReplaceAttr,
+	})
+	logger.text = slog.New(newAddonsHandler(handler, ext))
+	logger.json = nil
+	logger.w = w
+	return logger
+}
+
+// NewGELFLogger 使用 GELF handler 创建 Logger，面向 Graylog/Logstash。
+func NewGELFLogger(w io.Writer, opts *slog.HandlerOptions, gopts *gelfmod.Options) *Logger {
+	if w == nil {
+		w = NewWriter()
+	}
+	if opts == nil {
+		opts = NewOptions(nil)
+	}
+	logger := globalManager.GetDefault().clone()
+	opt := gelfmod.Options{
+		Writer:      nil,
+		Level:       opts.Level,
+		AddSource:   opts.AddSource,
+		ReplaceAttr: opts.ReplaceAttr,
+	}
+	if gopts != nil {
+		opt = *gopts
+	}
+	if opt.Writer == nil {
+		opt.Writer = w
+	}
+	handler := gelfmod.New(opt)
+	logger.json = slog.New(newAddonsHandler(handler, ext))
+	logger.text = nil
+	logger.w = w
+	return logger
 }
 
 /*
@@ -456,6 +510,56 @@ func Errorf(format string, args ...any) {
 // Tracef 记录格式化的全局Trace级别的日志。
 func Tracef(format string, args ...any) {
 	globalManager.GetDefault().logfWithLevel(LevelTrace, format, args...)
+}
+
+// InfoContext 记录全局 Info 日志并传播上下文。
+func InfoContext(ctx context.Context, msg string, args ...any) {
+	globalManager.GetDefault().logRecord(LevelInfo, ctx, msg, false, args...)
+}
+
+// ErrorContext 记录全局 Error 日志并传播上下文。
+func ErrorContext(ctx context.Context, msg string, args ...any) {
+	globalManager.GetDefault().logRecord(LevelError, ctx, msg, false, args...)
+}
+
+// WarnContext 记录全局 Warn 日志并传播上下文。
+func WarnContext(ctx context.Context, msg string, args ...any) {
+	globalManager.GetDefault().logRecord(LevelWarn, ctx, msg, false, args...)
+}
+
+// DebugContext 记录全局 Debug 日志并传播上下文。
+func DebugContext(ctx context.Context, msg string, args ...any) {
+	globalManager.GetDefault().logRecord(LevelDebug, ctx, msg, false, args...)
+}
+
+// TraceContext 记录全局 Trace 日志并传播上下文。
+func TraceContext(ctx context.Context, msg string, args ...any) {
+	globalManager.GetDefault().logRecord(LevelTrace, ctx, msg, false, args...)
+}
+
+// InfofContext 记录格式化 Info 日志并传播上下文。
+func InfofContext(ctx context.Context, format string, args ...any) {
+	globalManager.GetDefault().logRecord(LevelInfo, ctx, fmt.Sprintf(format, args...), true, args...)
+}
+
+// ErrorfContext 记录格式化 Error 日志并传播上下文。
+func ErrorfContext(ctx context.Context, format string, args ...any) {
+	globalManager.GetDefault().logRecord(LevelError, ctx, fmt.Sprintf(format, args...), true, args...)
+}
+
+// WarnfContext 记录格式化 Warn 日志并传播上下文。
+func WarnfContext(ctx context.Context, format string, args ...any) {
+	globalManager.GetDefault().logRecord(LevelWarn, ctx, fmt.Sprintf(format, args...), true, args...)
+}
+
+// DebugfContext 记录格式化 Debug 日志并传播上下文。
+func DebugfContext(ctx context.Context, format string, args ...any) {
+	globalManager.GetDefault().logRecord(LevelDebug, ctx, fmt.Sprintf(format, args...), true, args...)
+}
+
+// TracefContext 记录格式化 Trace 日志并传播上下文。
+func TracefContext(ctx context.Context, format string, args ...any) {
+	globalManager.GetDefault().logRecord(LevelTrace, ctx, fmt.Sprintf(format, args...), true, args...)
 }
 
 // Fatalf 记录格式化的全局Fatal级别的日志，并退出程序。

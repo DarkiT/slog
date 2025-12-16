@@ -268,7 +268,7 @@ func TestDlpEngine_BackwardCompatibility(t *testing.T) {
 
 	// 测试检测功能
 	detectionResult := engine.DetectSensitiveInfo("包含手机号13812345678和邮箱test@example.com的文本")
-	if detectionResult == nil || len(detectionResult) == 0 {
+	if len(detectionResult) == 0 {
 		t.Error("Should detect sensitive information")
 	}
 }

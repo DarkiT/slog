@@ -6,7 +6,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/darkit/slog/common"
+	"github.com/darkit/slog/internal/common"
 )
 
 // BenchmarkPoolComparison 对比分级池与传统sync.Pool的性能

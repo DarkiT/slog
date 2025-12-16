@@ -10,24 +10,14 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/darkit/slog/common"
+	"github.com/darkit/slog/internal/common"
+	"github.com/darkit/slog/internal/dlp/cachekey"
 )
 
 var (
 	ErrInvalidMatcher = errors.New("invalid matcher configuration")
 	ErrNotStruct      = errors.New("input must be a struct")
 )
-
-var textBuilderPool = sync.Pool{
-	New: func() interface{} {
-		return &strings.Builder{}
-	},
-}
-
-// getTieredStringBuilder 从分级池获取字符串构建器
-func getTieredStringBuilder(expectedCapacity int) *strings.Builder {
-	return common.GlobalTieredPools.GetStringBuilder(expectedCapacity)
-}
 
 // putTieredStringBuilder 将字符串构建器放回分级池
 func putTieredStringBuilder(builder *strings.Builder, expectedCapacity int) {
@@ -129,6 +119,14 @@ func (e *DlpEngine) DisablePluginArchitecture() {
 	e.manager.Disable()
 }
 
+// Version 返回当前规则版本（热更新计数）。
+func (e *DlpEngine) Version() int64 {
+	if e == nil || e.manager == nil {
+		return 0
+	}
+	return e.manager.CurrentVersion()
+}
+
 // IsPluginArchitectureEnabled 检查是否启用插件架构
 func (e *DlpEngine) IsPluginArchitectureEnabled() bool {
 	return e.usePluginArchitecture.Load()
@@ -176,12 +174,12 @@ func (e *DlpEngine) DesensitizeText(text string) string {
 		return e.desensitizeTextWithoutCache(text)
 	}
 
-	// 使用xxhash优化的缓存键生成逻辑
+	// 使用 xxhash 的缓存键生成逻辑
 	var cacheKey string
 	if e.IsPluginArchitectureEnabled() {
-		cacheKey = OptimizeKey("plugin", text)
+		cacheKey = cachekey.Key("plugin", text)
 	} else {
-		cacheKey = OptimizeFastKey(text)
+		cacheKey = cachekey.FastKey(text)
 	}
 
 	// 检查缓存
@@ -244,9 +242,9 @@ func (e *DlpEngine) DesensitizeSpecificType(text string, sensitiveType string) s
 	// 检查缓存（使用优化的缓存键）
 	var cacheKey string
 	if e.IsPluginArchitectureEnabled() {
-		cacheKey = OptimizeKeyWithContext("plugin", sensitiveType, text)
+		cacheKey = cachekey.KeyWithContext("plugin", sensitiveType, text)
 	} else {
-		cacheKey = OptimizeKeyWithContext("legacy", sensitiveType, text)
+		cacheKey = cachekey.KeyWithContext("legacy", sensitiveType, text)
 	}
 
 	if cached, found := e.cache.Get(cacheKey); found {

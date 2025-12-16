@@ -5,8 +5,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/darkit/slog/common"
 	"github.com/darkit/slog/dlp"
+	"github.com/darkit/slog/internal/common"
 )
 
 // TestLRUCacheVsSyncMapPerformance 对比LRU缓存和sync.Map的性能

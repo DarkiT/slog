@@ -262,6 +262,13 @@ func RegisterFactory(name string, factory ModuleFactory) error {
 	return globalRegistry.RegisterFactory(name, factory)
 }
 
+// NewHandlerModule 便捷创建处理器模块，默认优先级 100。
+func NewHandlerModule(name string, handler slog.Handler) Module {
+	m := NewBaseModule(name, TypeHandler, 100)
+	m.SetHandler(handler)
+	return m
+}
+
 // GetModule 全局获取模块
 func GetModule(name string) (Module, bool) {
 	return globalRegistry.Get(name)

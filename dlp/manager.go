@@ -13,6 +13,7 @@ type DefaultDesensitizerManager struct {
 	desensitizers map[string]Desensitizer
 	typeMapping   map[string][]string // 类型到脱敏器名称的映射
 	enabled       atomic.Bool
+	version       atomic.Int64
 	stats         ManagerStats
 	logger        Logger
 }
@@ -57,7 +58,31 @@ func (dm *DefaultDesensitizerManager) RegisterDesensitizer(desensitizer Desensit
 		dm.logger.Debug("脱敏器已注册", "name", name)
 	}
 
+	dm.version.Add(1)
+
 	return nil
+}
+
+// UpsertDesensitizer 注册或热替换脱敏器，返回新的版本号。
+func (dm *DefaultDesensitizerManager) UpsertDesensitizer(desensitizer Desensitizer) (int64, error) {
+	if desensitizer == nil {
+		return dm.version.Load(), fmt.Errorf("desensitizer cannot be nil")
+	}
+
+	name := desensitizer.Name()
+	if name == "" {
+		return dm.version.Load(), fmt.Errorf("desensitizer name cannot be empty")
+	}
+
+	dm.mu.Lock()
+	defer dm.mu.Unlock()
+
+	// 覆盖或新增
+	dm.desensitizers[name] = desensitizer
+	dm.rebuildLocked()
+
+	newVersion := dm.version.Add(1)
+	return newVersion, nil
 }
 
 // updateTypeMapping 更新类型映射
@@ -115,6 +140,8 @@ func (dm *DefaultDesensitizerManager) UnregisterDesensitizer(name string) error 
 	if dm.logger != nil {
 		dm.logger.Debug("脱敏器已注销", "name", name)
 	}
+
+	dm.version.Add(1)
 
 	return nil
 }
@@ -253,6 +280,7 @@ func (dm *DefaultDesensitizerManager) GetStats() ManagerStats {
 		EnabledDesensitizers: dm.stats.EnabledDesensitizers,
 		TypeCoverage:         make(map[string]int),
 		PerformanceMetrics:   make(map[string]PerformanceMetrics),
+		Version:              dm.version.Load(),
 	}
 
 	// 复制类型覆盖
@@ -266,6 +294,22 @@ func (dm *DefaultDesensitizerManager) GetStats() ManagerStats {
 	}
 
 	return stats
+}
+
+// CurrentVersion 返回管理器当前版本号
+func (dm *DefaultDesensitizerManager) CurrentVersion() int64 {
+	return dm.version.Load()
+}
+
+// rebuildLocked 重新构建类型映射和统计信息（调用方需持有写锁）
+func (dm *DefaultDesensitizerManager) rebuildLocked() {
+	dm.initializeStats()
+	dm.typeMapping = make(map[string][]string)
+
+	for name, desensitizer := range dm.desensitizers {
+		dm.updateTypeMapping(name, desensitizer)
+		dm.updateStatsAfterRegistration(name, desensitizer)
+	}
 }
 
 // ProcessWithDesensitizer 使用指定脱敏器处理数据
