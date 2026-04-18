@@ -2,6 +2,7 @@ package dlp
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -44,7 +45,7 @@ func TestBasicStructDesensitization(t *testing.T) {
 		Address:  "北京市朝阳区某某街道123号",
 	}
 
-	// 使用原有的方法（向后兼容）
+	// 使用基础结构体脱敏方法
 	err := engine.DesensitizeStruct(user)
 	if err != nil {
 		t.Fatalf("Failed to desensitize struct: %v", err)
@@ -73,7 +74,6 @@ func TestBasicStructDesensitization(t *testing.T) {
 func TestAdvancedStructDesensitization(t *testing.T) {
 	engine := NewDlpEngine()
 	engine.Enable()
-	engine.EnablePluginArchitecture()
 
 	nestedUser := &NestedUser{
 		BaseInfo: User{
@@ -178,7 +178,6 @@ func TestBatchDesensitization(t *testing.T) {
 func TestCustomStrategy(t *testing.T) {
 	engine := NewDlpEngine()
 	engine.Enable()
-	engine.EnablePluginArchitecture()
 
 	// 注册自定义策略
 	engine.config.RegisterStrategy("upper_mask", func(s string) string {
@@ -283,7 +282,6 @@ func TestTagParsing(t *testing.T) {
 func TestComplexNestedStructure(t *testing.T) {
 	engine := NewDlpEngine()
 	engine.Enable()
-	engine.EnablePluginArchitecture()
 
 	complex := &ComplexStruct{
 		Users: []User{
@@ -361,7 +359,6 @@ func TestStructBatchPerformance(t *testing.T) {
 func TestStructEdgeCases(t *testing.T) {
 	engine := NewDlpEngine()
 	engine.Enable()
-	engine.EnablePluginArchitecture()
 
 	// 测试空结构体
 	type EmptyStruct struct{}
@@ -396,5 +393,55 @@ func TestStructEdgeCases(t *testing.T) {
 	// 应该处理但不会无限递归
 	if err != nil {
 		t.Logf("Deep nesting handled with error (expected): %v", err)
+	}
+}
+
+func TestStructDesensitizeMapKeyAndInterfaceStringValue(t *testing.T) {
+	engine := NewDlpEngine()
+	engine.Enable()
+
+	type payload struct {
+		Metadata map[string]interface{} `dlp:",recursive"`
+	}
+
+	input := &payload{
+		Metadata: map[string]interface{}{
+			"api_key=abcdef123456": "contact me at test@example.com",
+			"phone":                "13812345678",
+			"nested": map[string]interface{}{
+				"email": "nested@example.com",
+			},
+		},
+	}
+
+	if err := engine.DesensitizeStructAdvanced(input); err != nil {
+		t.Fatalf("DesensitizeStructAdvanced failed: %v", err)
+	}
+
+	if v, ok := input.Metadata["phone"]; ok {
+		if s, ok := v.(string); ok && s == "13812345678" {
+			t.Fatalf("expected phone value to be desensitized, got %q", s)
+		}
+	}
+
+	foundMaskedKey := false
+	for k := range input.Metadata {
+		if strings.Contains(k, "****") {
+			foundMaskedKey = true
+			break
+		}
+	}
+	if !foundMaskedKey {
+		t.Fatalf("expected at least one metadata key to be desensitized, got keys=%v", reflect.ValueOf(input.Metadata).MapKeys())
+	}
+
+	if v, ok := input.Metadata["nested"]; ok {
+		nested, ok := v.(map[string]interface{})
+		if !ok {
+			t.Fatalf("expected nested map, got %T", v)
+		}
+		if email, ok := nested["email"].(string); ok && email == "nested@example.com" {
+			t.Fatalf("expected nested email to be desensitized, got %q", email)
+		}
 	}
 }

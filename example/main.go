@@ -151,11 +151,11 @@ func demoBasicLogging() {
 	slog.Warnf("用户 %s 连续登录失败 %d 次", username, 3)
 	slog.Errorf("用户 %s 权限验证失败: %v", username, "无效令牌")
 
-	fmt.Println("\n✨ 动态效果:")
-	slog.Dynamic("系统初始化", 8, 200)
-	slog.Progress("加载配置", 1500)
-	slog.Countdown("服务启动", 3)
-	slog.Loading("连接数据库", 2)
+	fmt.Println("\n✨ 运行状态日志:")
+	slog.Info("系统初始化完成")
+	slog.Info("加载配置完成")
+	slog.Info("服务启动就绪")
+	slog.Info("数据库连接成功")
 }
 
 // 结构化日志演示
@@ -251,11 +251,11 @@ func demoDLPMasking() {
 		{"手机号", "用户手机号：13812345678"},
 		{"邮箱地址", "邮箱：zhangsan@company.com"},
 		{"身份证号", "身份证：110101199001011237"},
-		{"银行卡号", "工商银行卡：6222021234567890123"},
+		{"银行卡号", "银行卡：6222000000000000000"},
 		{"IP地址", "客户端IP：192.168.1.100"},
 		{"网址链接", "访问地址：https://www.example.com/api?token=123456789"},
 		{"中文姓名", "客户姓名：张三丰"},
-		{"综合信息", "张三(13812345678)使用银行卡6222021234567890123支付"},
+		{"综合信息", "张三(13812345678)使用银行卡6222000000000000000支付"},
 	}
 
 	fmt.Println("\n脱敏前后对比:")
@@ -283,7 +283,7 @@ func demoDLPMasking() {
 		Name:     "李四",
 		Phone:    "13987654321",
 		Email:    "lisi@example.com",
-		BankCard: "6217001234567890123",
+		BankCard: "6222000000000000000",
 		IDCard:   "440301199001011234",
 	}
 
@@ -310,48 +310,54 @@ func demoModuleSystem() {
 
 	fmt.Println("\n🚀 模块使用方式:")
 
-	// 方式1: 快速启用单个模块
-	fmt.Println("   1. 快速启用:")
-	logger1 := slog.UseFactory("formatter", modules.Config{
+	// 方式1: 直接创建并启用模块
+	fmt.Println("   1. 直接启用:")
+	if formatterModule, err := modules.CreateModule("formatter", modules.Config{
 		"type": "time",
-	}).Build()
-	if logger1 != nil {
+	}); err == nil {
+		logger1 := slog.UseModule(formatterModule)
 		logger1.Info("使用时间格式化模块",
 			"timestamp", time.Now().Format("2006-01-02 15:04:05"))
 	}
 
-	// 方式2: 配置驱动方式
+	// 方式2: 配置驱动方式（手动创建模块后启用）
 	fmt.Println("\n   2. 配置驱动:")
 	configs := []modules.ModuleConfig{
 		{
-			Type:     "formatter",
-			Name:     "time-fmt",
-			Enabled:  true,
-			Priority: 10,
+			Type:    "formatter",
+			Name:    "time-fmt",
+			Enabled: true,
 			Config: modules.Config{
 				"type": "time",
 			},
 		},
 		{
-			Type:     "multi",
-			Name:     "multi-output",
-			Enabled:  true,
-			Priority: 20,
+			Type:    "multi",
+			Name:    "multi-output",
+			Enabled: true,
 			Config: modules.Config{
 				"outputs": []string{"stdout", "file"},
 			},
 		},
 	}
 
-	logger2 := slog.UseConfig(configs).Build()
-	if logger2 != nil {
-		logger2.Info("配置驱动创建的Logger")
-		logger2.Warn("支持多种模块组合")
+	logger2 := slog.GetGlobalLogger()
+	for _, cfg := range configs {
+		if !cfg.Enabled {
+			continue
+		}
+		module, err := modules.CreateModule(cfg.Type, cfg.Config)
+		if err != nil {
+			continue
+		}
+		logger2 = logger2.Use(module)
 	}
+	logger2.Info("配置驱动创建的Logger")
+	logger2.Warn("支持多种模块组合")
 
-	fmt.Println("\n   3. 链式调用语法示例:")
-	fmt.Println("      slog.EnableFormatter(\"time\").EnableMulti(config).Build()")
-	fmt.Println("      (为避免副作用，此处仅展示语法)")
+	fmt.Println("\n   3. 简化语法示例:")
+	fmt.Println("      module, _ := modules.CreateModule(\"formatter\", cfg)")
+	fmt.Println("      slog.UseModule(module)")
 }
 
 // 异步日志处理演示
@@ -369,12 +375,11 @@ func demoAsyncLogging() {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		for record := range records {
+		for event := range records {
 			processedCount++
 			// 模拟处理日志记录
 			if processedCount <= 5 { // 只打印前5条
-				fmt.Printf("   处理日志: [%s] %s\n",
-					record.Level, record.Message)
+				fmt.Printf("   处理日志: %s\n", event.Rendered)
 			}
 		}
 	}()

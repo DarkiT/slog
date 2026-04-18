@@ -75,13 +75,13 @@ func (l *Logger) WithContext(ctx context.Context) *Logger {
 	newLogger := l.clone()
 	newLogger.ctx = ctx
 
-	// 监听context取消
-	go func() {
-		<-ctx.Done()
+	// 使用 context.AfterFunc 替代手动 goroutine，避免 goroutine 泄漏
+	// 当 context 被取消时自动释放 Fields 资源
+	context.AfterFunc(ctx, func() {
 		if fields := getFields(ctx); fields != nil {
 			fields.release()
 		}
-	}()
+	})
 
 	// 更新 handlers 的 context，避免重复包装
 	if newLogger.text != nil {
@@ -122,12 +122,12 @@ func (l *Logger) WithValue(key string, val interface{}) *Logger {
 	ctx, cancel := context.WithCancel(newLogger.ctx)
 	newLogger.ctx = context.WithValue(ctx, fieldsKey, newFields)
 
-	// 监听context取消
-	go func() {
-		<-ctx.Done()
+	// 使用 context.AfterFunc 替代手动 goroutine，避免 goroutine 泄漏
+	// 当 context 被取消时自动释放 Fields 资源
+	context.AfterFunc(ctx, func() {
 		newFields.release()
 		cancel()
-	}()
+	})
 
 	return newLogger
 }

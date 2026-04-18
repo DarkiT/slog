@@ -104,7 +104,7 @@ func (lm *LoggerManager) GetNamed(name string) *Logger {
 }
 
 // Configure 配置全局设置
-// 注意：此操作会影响后续创建的logger，但不会影响已存在的实例
+// 会同步运行时全局开关，并就地更新已存在实例，避免状态分叉。
 func (lm *LoggerManager) Configure(config *GlobalConfig) error {
 	if config == nil {
 		return NewInvalidInputError("config", "non-nil GlobalConfig", "nil")
@@ -114,6 +114,21 @@ func (lm *LoggerManager) Configure(config *GlobalConfig) error {
 	defer lm.mu.Unlock()
 
 	lm.config = config
+	// 与运行时全局开关保持一致，避免 manager 与全局状态分叉。
+	setGlobalTextEnabled(config.EnableText)
+	setGlobalJSONEnabled(config.EnableJSON)
+	levelVar.Set(config.DefaultLevel)
+
+	// 就地更新已存在实例，确保外部持有的指针也能看到新配置。
+	if lm.defaultLogger != nil {
+		lm.applyConfigToLogger(lm.defaultLogger, config)
+	}
+	for _, logger := range lm.instances {
+		if logger == nil {
+			continue
+		}
+		lm.applyConfigToLogger(logger, config)
+	}
 	return nil
 }
 
@@ -160,11 +175,12 @@ func (lm *LoggerManager) createLoggerWithConfig(name string, config *GlobalConfi
 	}
 
 	logger := &Logger{
-		w:       writer,
-		noColor: config.DefaultNoColor,
-		level:   config.DefaultLevel,
-		ctx:     context.Background(),
-		config:  DefaultConfig(), // 使用实例级别的默认配置
+		w:            writer,
+		noColor:      config.DefaultNoColor,
+		level:        config.DefaultLevel,
+		ctx:          context.Background(),
+		config:       DefaultConfig(), // 使用实例级别的默认配置
+		renderConfig: newOutputRenderConfig(options),
 	}
 
 	// 根据全局配置决定启用哪些handler
@@ -176,6 +192,29 @@ func (lm *LoggerManager) createLoggerWithConfig(name string, config *GlobalConfi
 	}
 
 	return logger
+}
+
+// applyConfigToLogger 将全局配置同步到已存在 Logger 实例。
+// 采用“就地替换字段”的方式，保证外部持有的指针仍然有效。
+func (lm *LoggerManager) applyConfigToLogger(target *Logger, config *GlobalConfig) {
+	if target == nil {
+		return
+	}
+	updated := lm.createLoggerWithConfig("", config)
+	target.w = updated.w
+	target.text = updated.text
+	target.json = updated.json
+	target.noColor = updated.noColor
+	target.level = updated.level
+	target.ctx = updated.ctx
+	target.renderConfig = updated.renderConfig
+	if target.config == nil {
+		target.config = DefaultConfig()
+	}
+	target.config.NoColor = config.DefaultNoColor
+	target.config.AddSource = config.DefaultSource
+	target.config.SetEnableText(config.EnableText)
+	target.config.SetEnableJSON(config.EnableJSON)
 }
 
 // Shutdown 关闭管理器
@@ -212,16 +251,4 @@ func (lm *LoggerManager) GetStats() ManagerStats {
 	}
 
 	return stats
-}
-
-// 向后兼容的全局函数
-
-// Named 获取命名logger实例（向后兼容）
-func Named(name string) *Logger {
-	return globalManager.GetNamed(name)
-}
-
-// ConfigureGlobal 配置全局设置（向后兼容）
-func ConfigureGlobal(config *GlobalConfig) error {
-	return globalManager.Configure(config)
 }

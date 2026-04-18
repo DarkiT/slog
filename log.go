@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -22,12 +23,16 @@ var (
 	ext = &extensions{
 		prefixKeys: []string{"$module"},
 	}
-	dlpEnabled               atomic.Bool
-	subscribers              sync.Map // 存储所有订阅者 - 实际类型为 map[int64]*subscriber
-	textEnabled, jsonEnabled = true, false
-	levelVar                 = slog.LevelVar{}
-	attrFormatterOrder       atomic.Value
-	globalRateLimiter        = newRateLimiter(0, 0)
+	dlpEnabled         atomic.Bool
+	subscribers        sync.Map // 存储所有订阅者 - 实际类型为 map[int64]*subscriber
+	subscriberCount    atomic.Int64
+	subscriberSeq      atomic.Int64
+	subscriberEvicted  atomic.Uint64
+	textEnabled        atomic.Bool
+	jsonEnabled        atomic.Bool
+	levelVar           = slog.LevelVar{}
+	attrFormatterOrder atomic.Value
+	globalRateLimiter  = newRateLimiter(0, 0)
 )
 
 // subscriberState 订阅者状态
@@ -39,12 +44,118 @@ const (
 	stateClosed
 )
 
+// SubscriptionBackpressurePolicy 定义订阅通道在高压场景下的背压策略。
+type SubscriptionBackpressurePolicy string
+
+const (
+	// SubscriptionDropOldest 丢弃最旧消息，优先保留最新数据（默认）。
+	SubscriptionDropOldest SubscriptionBackpressurePolicy = "drop_oldest"
+	// SubscriptionDropNewest 丢弃最新消息，优先保留已入队数据。
+	SubscriptionDropNewest SubscriptionBackpressurePolicy = "drop_newest"
+	// SubscriptionBlockWithTimeout 在超时时间内阻塞等待可写，超时后丢弃。
+	SubscriptionBlockWithTimeout SubscriptionBackpressurePolicy = "block_with_timeout"
+)
+
+const defaultSubscriberBlockTimeout = 5 * time.Millisecond
+
+// SubscribeOptions 订阅选项。
+type SubscribeOptions struct {
+	// BufferSize 订阅缓冲区大小。
+	BufferSize uint16
+	// Backpressure 背压策略；空值时默认 drop_oldest。
+	Backpressure SubscriptionBackpressurePolicy
+	// BlockTimeout 仅在 block_with_timeout 模式下生效。
+	BlockTimeout time.Duration
+}
+
+// SubscriptionEvent 描述一次统一发布后的订阅事件。
+// 其中 Record 保留结构化视图，Rendered 则严格跟随当前激活的主输出格式。
+type SubscriptionEvent struct {
+	// Record 是已应用前缀、formatter、DLP 与 context 字段后的结构化日志。
+	Record slog.Record
+	// Rendered 是与当前激活主输出一致的最终语义化内容；若未启用任何输出则为空。
+	Rendered string
+	// Format 表示 Rendered 采用的格式，取值为 text、json 或空字符串。
+	Format string
+}
+
+func (o SubscribeOptions) normalized() SubscribeOptions {
+	if o.Backpressure == "" {
+		o.Backpressure = SubscriptionDropOldest
+	}
+	if o.Backpressure != SubscriptionBlockWithTimeout {
+		o.BlockTimeout = 0
+		return o
+	}
+	if o.BlockTimeout <= 0 {
+		o.BlockTimeout = defaultSubscriberBlockTimeout
+	}
+	return o
+}
+
+type sendResult int
+
+const (
+	sendResultDelivered sendResult = iota
+	sendResultDropped
+	sendResultInactive
+	sendResultClosed
+)
+
+type subscriberMetrics struct {
+	published     atomic.Uint64
+	delivered     atomic.Uint64
+	dropped       atomic.Uint64
+	droppedOldest atomic.Uint64
+	droppedNewest atomic.Uint64
+	droppedTimed  atomic.Uint64
+	highWatermark atomic.Uint64
+}
+
+// SubscriberStats 描述单个订阅者运行状态与背压统计。
+type SubscriberStats struct {
+	ID            int64                          `json:"id"`
+	State         string                         `json:"state"`
+	BufferSize    int                            `json:"buffer_size"`
+	QueueLen      int                            `json:"queue_len"`
+	Backpressure  SubscriptionBackpressurePolicy `json:"backpressure"`
+	BlockTimeout  time.Duration                  `json:"block_timeout"`
+	CreatedAt     time.Time                      `json:"created_at"`
+	Published     uint64                         `json:"published"`
+	Delivered     uint64                         `json:"delivered"`
+	Dropped       uint64                         `json:"dropped"`
+	DroppedOldest uint64                         `json:"dropped_oldest"`
+	DroppedNewest uint64                         `json:"dropped_newest"`
+	DroppedTimed  uint64                         `json:"dropped_timed_out"`
+	HighWatermark uint64                         `json:"high_watermark"`
+}
+
+// SubscriptionStats 汇总所有订阅者统计。
+type SubscriptionStats struct {
+	Subscribers        int    `json:"subscribers"`
+	ActiveSubscribers  int    `json:"active_subscribers"`
+	ClosingSubscribers int    `json:"closing_subscribers"`
+	ClosedSubscribers  int    `json:"closed_subscribers"`
+	Published          uint64 `json:"published"`
+	Delivered          uint64 `json:"delivered"`
+	Dropped            uint64 `json:"dropped"`
+	DroppedOldest      uint64 `json:"dropped_oldest"`
+	DroppedNewest      uint64 `json:"dropped_newest"`
+	DroppedTimed       uint64 `json:"dropped_timed_out"`
+	Evicted            uint64 `json:"evicted"`
+}
+
 // subscriber 订阅者结构（升级为原子状态管理）
 type subscriber struct {
-	ch     chan slog.Record
+	id     int64
+	ch     chan SubscriptionEvent
 	cancel context.CancelFunc
+	done   <-chan struct{}
+	opts   SubscribeOptions
 	state  atomic.Int32 // 原子状态管理
 	once   sync.Once    // 确保只关闭一次
+	stats  subscriberMetrics
+	bornAt time.Time
 }
 
 // isActive 检查订阅者是否活跃
@@ -54,44 +165,135 @@ func (s *subscriber) isActive() bool {
 
 // close 安全地关闭订阅者
 func (s *subscriber) close() {
-	// 原子地设置状态为正在关闭
-	if s.state.CompareAndSwap(int32(stateActive), int32(stateClosing)) {
-		s.once.Do(func() {
-			s.cancel()
-			close(s.ch)
-			s.state.Store(int32(stateClosed))
-		})
+	s.once.Do(func() {
+		s.state.Store(int32(stateClosing))
+		s.cancel()
+		close(s.ch)
+		s.state.Store(int32(stateClosed))
+	})
+}
+
+// trySend 尝试发送订阅事件，如果失败则返回false
+func (s *subscriber) trySend(event SubscriptionEvent) (result sendResult) {
+	if !s.isActive() {
+		return sendResultInactive
+	}
+	s.stats.published.Add(1)
+
+	defer func() {
+		if recover() != nil {
+			result = sendResultClosed
+		}
+	}()
+	s.updateHighWatermark()
+
+	switch s.opts.Backpressure {
+	case SubscriptionDropNewest:
+		select {
+		case s.ch <- event:
+			s.stats.delivered.Add(1)
+			s.updateHighWatermark()
+			return sendResultDelivered
+		default:
+			s.stats.dropped.Add(1)
+			s.stats.droppedNewest.Add(1)
+			return sendResultDropped
+		}
+	case SubscriptionBlockWithTimeout:
+		timeout := s.opts.BlockTimeout
+		if timeout <= 0 {
+			timeout = defaultSubscriberBlockTimeout
+		}
+		timer := time.NewTimer(timeout)
+		defer timer.Stop()
+		select {
+		case s.ch <- event:
+			s.stats.delivered.Add(1)
+			s.updateHighWatermark()
+			return sendResultDelivered
+		case <-timer.C:
+			s.stats.dropped.Add(1)
+			s.stats.droppedTimed.Add(1)
+			return sendResultDropped
+		case <-s.done:
+			return sendResultClosed
+		}
+	default:
+		// drop_oldest（默认）：优先保留最新数据。
+		select {
+		case s.ch <- event:
+			s.stats.delivered.Add(1)
+			s.updateHighWatermark()
+			return sendResultDelivered
+		default:
+			// 队列满，丢弃最旧消息再重试。
+			select {
+			case <-s.ch:
+				s.stats.dropped.Add(1)
+				s.stats.droppedOldest.Add(1)
+			default:
+			}
+			select {
+			case s.ch <- event:
+				s.stats.delivered.Add(1)
+				s.updateHighWatermark()
+				return sendResultDelivered
+			default:
+				// 极端竞争场景，保守降级为丢弃最新。
+				s.stats.dropped.Add(1)
+				s.stats.droppedNewest.Add(1)
+				return sendResultDropped
+			}
+		}
 	}
 }
 
-// trySend 尝试发送日志记录，如果失败则返回false
-func (s *subscriber) trySend(record slog.Record) bool {
-	// 双重检查：先检查状态，再尝试发送
-	if !s.isActive() {
-		return false
-	}
-
-	select {
-	case s.ch <- record:
-		return true
-	default:
-		// Channel满了，使用滑动窗口策略
-		select {
-		case <-s.ch: // 移除最旧的消息
-			select {
-			case s.ch <- record:
-				return true
-			default:
-				return false
-			}
-		default:
-			return false
+func (s *subscriber) updateHighWatermark() {
+	current := uint64(len(s.ch))
+	for {
+		prev := s.stats.highWatermark.Load()
+		if current <= prev || s.stats.highWatermark.CompareAndSwap(prev, current) {
+			return
 		}
+	}
+}
+
+func (s *subscriber) snapshot() SubscriberStats {
+	return SubscriberStats{
+		ID:            s.id,
+		State:         subscriberStateString(subscriberState(s.state.Load())),
+		BufferSize:    cap(s.ch),
+		QueueLen:      len(s.ch),
+		Backpressure:  s.opts.Backpressure,
+		BlockTimeout:  s.opts.BlockTimeout,
+		CreatedAt:     s.bornAt,
+		Published:     s.stats.published.Load(),
+		Delivered:     s.stats.delivered.Load(),
+		Dropped:       s.stats.dropped.Load(),
+		DroppedOldest: s.stats.droppedOldest.Load(),
+		DroppedNewest: s.stats.droppedNewest.Load(),
+		DroppedTimed:  s.stats.droppedTimed.Load(),
+		HighWatermark: s.stats.highWatermark.Load(),
+	}
+}
+
+func subscriberStateString(state subscriberState) string {
+	switch state {
+	case stateActive:
+		return "active"
+	case stateClosing:
+		return "closing"
+	case stateClosed:
+		return "closed"
+	default:
+		return "unknown"
 	}
 }
 
 func init() {
 	levelVar.Set(slog.LevelInfo)
+	setGlobalTextEnabled(true)
+	setGlobalJSONEnabled(false)
 	// 使用LoggerManager而不是直接创建全局logger
 	// 这确保了更好的状态管理和实例隔离
 	config := &GlobalConfig{
@@ -104,6 +306,22 @@ func init() {
 	}
 	globalManager.Configure(config)
 	attrFormatterOrder.Store(defaultAttrFormatterOrder)
+}
+
+func isGlobalTextEnabled() bool {
+	return textEnabled.Load()
+}
+
+func isGlobalJSONEnabled() bool {
+	return jsonEnabled.Load()
+}
+
+func setGlobalTextEnabled(enabled bool) {
+	textEnabled.Store(enabled)
+}
+
+func setGlobalJSONEnabled(enabled bool) {
+	jsonEnabled.Store(enabled)
 }
 
 // ConfigureRecordLimiter 设置全局日志速率限制（ratePerSecond<=0 关闭限制）。
@@ -141,19 +359,14 @@ func NewLogger(w io.Writer, noColor, addSource bool) *Logger {
 	}
 
 	newLogger := &Logger{
-		w:       w,
-		noColor: noColor,
-		level:   levelVar.Level(),
-		ctx:     context.Background(),
-		config:  DefaultConfig(), // 使用实例级别的配置
-		text:    slog.New(newAddonsHandler(NewConsoleHandler(w, noColor, options), ext)),
-		json:    slog.New(newAddonsHandler(NewJSONHandler(w, options), ext)),
-	}
-
-	// 保持向后兼容性：如果全局logger未设置，则设置为此实例
-	// 但现在优先使用LoggerManager管理的实例
-	if logger == nil {
-		logger = newLogger
+		w:            w,
+		noColor:      noColor,
+		level:        levelVar.Level(),
+		ctx:          context.Background(),
+		config:       DefaultConfig(), // 使用实例级别的配置
+		renderConfig: newOutputRenderConfig(options),
+		text:         slog.New(newAddonsHandler(NewConsoleHandler(w, noColor, options), ext)),
+		json:         slog.New(newAddonsHandler(NewJSONHandler(w, options), ext)),
 	}
 
 	return newLogger
@@ -178,6 +391,7 @@ func NewLogfmtLogger(w io.Writer, opts *slog.HandlerOptions) *Logger {
 	logger.text = slog.New(newAddonsHandler(handler, ext))
 	logger.json = nil
 	logger.w = w
+	logger.renderConfig = newOutputRenderConfig(opts)
 	return logger
 }
 
@@ -206,6 +420,7 @@ func NewGELFLogger(w io.Writer, opts *slog.HandlerOptions, gopts *gelfmod.Option
 	logger.json = slog.New(newAddonsHandler(handler, ext))
 	logger.text = nil
 	logger.w = w
+	logger.renderConfig = newOutputRenderConfig(opts)
 	return logger
 }
 
@@ -301,6 +516,10 @@ func getAttrFormatterOrder() []AttrFormatterRule {
 }
 
 func (f attrFormatter) replace(groups []string, a slog.Attr) slog.Attr {
+	if a.Key != TimeKey && a.Key != LevelKey && a.Key != SourceKey &&
+		a.Value.Kind() != slog.KindGroup && a.Value.Kind() != slog.KindLogValuer {
+		return a
+	}
 	return f.walk(groups, a)
 }
 
@@ -580,15 +799,6 @@ func Printf(format string, args ...any) {
 
 // 辅助便捷方法
 
-// Dynamic 动态输出带点号动画效果
-//
-//   - msg: 要显示的消息内容
-//   - frames: 动画更新的总帧数
-//   - interval: 每次更新的时间间隔(毫秒)
-func Dynamic(msg string, frames int, interval int) {
-	globalManager.GetDefault().Dynamic(msg, frames, interval)
-}
-
 // Progress 全局进度显示
 //
 //   - msg: 要显示的消息内容
@@ -611,94 +821,6 @@ func Countdown(msg string, seconds int) {
 //   - seconds: 动画持续的秒数
 func Loading(msg string, seconds int) {
 	globalManager.GetDefault().Loading(msg, seconds)
-}
-
-// ProgressBar 全局方法：显示带有可视化进度条的日志
-//
-//   - msg: 要显示的消息内容
-//   - durationMs: 从0%到100%的总持续时间(毫秒)
-//   - barWidth: 进度条的总宽度（字符数）
-//   - level: 可选的日志级别，默认使用全局默认级别
-func ProgressBar(msg string, durationMs int, barWidth int, level ...Level) *Logger {
-	return Default().ProgressBar(msg, durationMs, barWidth, level...)
-}
-
-// ProgressBarWithValue 全局方法：显示指定进度值的进度条
-//
-//   - msg: 要显示的消息内容
-//   - progress: 进度值(0-100之间)
-//   - barWidth: 进度条的总宽度（字符数）
-//   - level: 可选的日志级别，默认使用全局默认级别
-func ProgressBarWithValue(msg string, progress float64, barWidth int, level ...Level) {
-	Default().ProgressBarWithValue(msg, progress, barWidth, level...)
-}
-
-// ProgressBarWithValueTo 全局方法：显示指定进度值的进度条并输出到指定writer
-//
-//   - msg: 要显示的消息内容
-//   - progress: 进度值(0-100之间)
-//   - barWidth: 进度条的总宽度（字符数）
-//   - writer: 指定的输出writer
-//   - level: 可选的日志级别，默认使用全局默认级别
-func ProgressBarWithValueTo(msg string, progress float64, barWidth int, writer io.Writer, level ...Level) {
-	Default().ProgressBarWithValueTo(msg, progress, barWidth, writer, level...)
-}
-
-// ProgressBarWithOptions 全局方法：显示可高度定制的进度条
-//
-//   - msg: 要显示的消息内容
-//   - durationMs: 从0%到100%的总持续时间(毫秒)
-//   - barWidth: 进度条的总宽度（字符数）
-//   - opts: 进度条选项，控制显示样式
-//   - level: 可选的日志级别，默认使用全局默认级别
-func ProgressBarWithOptions(msg string, durationMs int, barWidth int, opts progressBarOptions, level ...Level) *Logger {
-	return Default().ProgressBarWithOptions(msg, durationMs, barWidth, opts, level...)
-}
-
-// ProgressBarWithOptionsTo 全局方法：显示可高度定制的进度条并输出到指定writer
-//
-//   - msg: 要显示的消息内容
-//   - durationMs: 从0%到100%的总持续时间(毫秒)
-//   - barWidth: 进度条的总宽度（字符数）
-//   - opts: 进度条选项，控制显示样式
-//   - writer: 指定的输出writer
-//   - level: 可选的日志级别，默认使用全局默认级别
-func ProgressBarWithOptionsTo(msg string, durationMs int, barWidth int, opts progressBarOptions, writer io.Writer, level ...Level) *Logger {
-	return Default().ProgressBarWithOptionsTo(msg, durationMs, barWidth, opts, writer, level...)
-}
-
-// ProgressBarWithValueAndOptions 全局方法：显示指定进度值的定制进度条
-//
-//   - msg: 要显示的消息内容
-//   - progress: 进度值(0-100之间)
-//   - barWidth: 进度条的总宽度（字符数）
-//   - opts: 进度条选项，控制显示样式
-//   - level: 可选的日志级别，默认使用全局默认级别
-func ProgressBarWithValueAndOptions(msg string, progress float64, barWidth int, opts progressBarOptions, level ...Level) {
-	Default().ProgressBarWithValueAndOptions(msg, progress, barWidth, opts, level...)
-}
-
-// ProgressBarWithValueAndOptionsTo 全局方法：显示指定进度值的定制进度条并输出到指定writer
-//
-//   - msg: 要显示的消息内容
-//   - progress: 进度值(0-100之间)
-//   - barWidth: 进度条的总宽度（字符数）
-//   - opts: 进度条选项，控制显示样式
-//   - writer: 指定的输出writer
-//   - level: 可选的日志级别，默认使用全局默认级别
-func ProgressBarWithValueAndOptionsTo(msg string, progress float64, barWidth int, opts progressBarOptions, writer io.Writer, level ...Level) {
-	Default().ProgressBarWithValueAndOptionsTo(msg, progress, barWidth, opts, writer, level...)
-}
-
-// ProgressBarTo 全局方法：显示带有可视化进度条的日志，并输出到指定writer
-//
-//   - msg: 要显示的消息内容
-//   - durationMs: 从0%到100%的总持续时间(毫秒)
-//   - barWidth: 进度条的总宽度（字符数）
-//   - writer: 指定的输出writer
-//   - level: 可选的日志级别，默认使用全局默认级别
-func ProgressBarTo(msg string, durationMs int, barWidth int, writer io.Writer, level ...Level) *Logger {
-	return Default().ProgressBarTo(msg, durationMs, barWidth, writer, level...)
 }
 
 // With 创建一个新的日志记录器，带有指定的属性。
@@ -793,31 +915,26 @@ func SetTimeFormat(format string) {
 // ResetGlobalLogger 重置全局logger实例
 // 这在某些情况下很有用，比如需要更改全局logger的输出目标
 func ResetGlobalLogger(w io.Writer, noColor, addSource bool) *Logger {
-	// 使用LoggerManager重置全局状态
+	if w == nil {
+		w = os.Stdout
+	}
 	config := &GlobalConfig{
 		DefaultWriter:  w,
-		DefaultLevel:   LevelInfo,
+		DefaultLevel:   levelVar.Level(),
 		DefaultNoColor: noColor,
 		DefaultSource:  addSource,
-		EnableText:     true,
-		EnableJSON:     false,
+		EnableText:     isGlobalTextEnabled(),
+		EnableJSON:     isGlobalJSONEnabled(),
 	}
-	globalManager.Configure(config)
+	_ = globalManager.Configure(config)
 	globalManager.Reset()
-
-	// 同时保持向后兼容性，清空旧的全局变量
-	logger = nil
 
 	return globalManager.GetDefault()
 }
 
-// GetGlobalLogger 返回全局logger实例
-// 如果全局logger未初始化，则创建一个默认的
+// GetGlobalLogger 返回全局 logger 实例。
 func GetGlobalLogger() *Logger {
-	if logger == nil {
-		NewLogger(os.Stdout, false, false)
-	}
-	return logger
+	return globalManager.GetDefault()
 }
 
 // Subscribe 订阅日志记录
@@ -827,26 +944,43 @@ func GetGlobalLogger() *Logger {
 //   - size: 通道缓冲区大小，决定可以在不阻塞的情况下缓存多少日志记录
 //
 // 返回值:
-//   - <-chan slog.Record: 只读的日志记录通道，用于接收日志
+//   - <-chan SubscriptionEvent: 只读的订阅事件通道，包含结构化视图和当前激活输出对应的最终渲染结果
 //   - context.CancelFunc: 取消订阅的函数，调用后会停止接收日志并清理资源
-func Subscribe(size uint16) (<-chan slog.Record, context.CancelFunc) {
-	ch := make(chan slog.Record, size)
+func Subscribe(size uint16) (<-chan SubscriptionEvent, context.CancelFunc) {
+	return SubscribeWithOptions(SubscribeOptions{BufferSize: size})
+}
+
+// SubscribeWithOptions 使用可配置背压策略订阅日志记录。
+// 订阅者拿到的是统一发布视图，而不是原始未处理的内部 record。
+func SubscribeWithOptions(options SubscribeOptions) (<-chan SubscriptionEvent, context.CancelFunc) {
+	options = options.normalized()
+	ch := make(chan SubscriptionEvent, options.BufferSize)
 	ctx, cancel := context.WithCancel(context.Background())
 
+	subID := subscriberSeq.Add(1)
 	sub := &subscriber{
+		id:     subID,
 		ch:     ch,
 		cancel: cancel,
+		done:   ctx.Done(),
+		opts:   options,
+		bornAt: time.Now(),
 	}
 	sub.state.Store(int32(stateActive)) // 设置为活跃状态
 
-	// 生成唯一的订阅者ID
-	subID := time.Now().UnixNano()
 	subscribers.Store(subID, sub)
+	subscriberCount.Add(1)
 
 	// 创建安全的取消函数
 	safeCancel := func() {
+		if value, ok := subscribers.LoadAndDelete(subID); ok {
+			if existing, ok := value.(*subscriber); ok {
+				existing.close()
+				subscriberCount.Add(-1)
+				return
+			}
+		}
 		sub.close()
-		subscribers.Delete(subID)
 	}
 
 	// 监听context取消
@@ -858,24 +992,75 @@ func Subscribe(size uint16) (<-chan slog.Record, context.CancelFunc) {
 	return ch, safeCancel
 }
 
+// GetSubscriptionStats 返回订阅系统汇总统计。
+func GetSubscriptionStats() SubscriptionStats {
+	var stats SubscriptionStats
+	stats.Evicted = subscriberEvicted.Load()
+
+	subscribers.Range(func(_, value interface{}) bool {
+		sub := value.(*subscriber)
+		s := sub.snapshot()
+		stats.Subscribers++
+		switch s.State {
+		case "active":
+			stats.ActiveSubscribers++
+		case "closing":
+			stats.ClosingSubscribers++
+		case "closed":
+			stats.ClosedSubscribers++
+		}
+		stats.Published += s.Published
+		stats.Delivered += s.Delivered
+		stats.Dropped += s.Dropped
+		stats.DroppedOldest += s.DroppedOldest
+		stats.DroppedNewest += s.DroppedNewest
+		stats.DroppedTimed += s.DroppedTimed
+		return true
+	})
+
+	return stats
+}
+
+// ListSubscriberStats 返回所有订阅者统计快照（按订阅ID升序）。
+func ListSubscriberStats() []SubscriberStats {
+	all := make([]SubscriberStats, 0, 8)
+	subscribers.Range(func(_, value interface{}) bool {
+		sub := value.(*subscriber)
+		all = append(all, sub.snapshot())
+		return true
+	})
+	sort.Slice(all, func(i, j int) bool {
+		return all[i].ID < all[j].ID
+	})
+	return all
+}
+
+// GetSubscriberStats 根据订阅ID返回统计快照。
+func GetSubscriberStats(id int64) (SubscriberStats, bool) {
+	if value, ok := subscribers.Load(id); ok {
+		return value.(*subscriber).snapshot(), true
+	}
+	return SubscriberStats{}, false
+}
+
 // EnableTextLogger 启用文本日志记录器。
 func EnableTextLogger() {
-	textEnabled = true
+	setGlobalTextEnabled(true)
 }
 
 // EnableJSONLogger 启用 JSON 日志记录器。
 func EnableJSONLogger() {
-	jsonEnabled = true
+	setGlobalJSONEnabled(true)
 }
 
 // DisableTextLogger 禁用文本日志记录器。
 func DisableTextLogger() {
-	textEnabled = false
+	setGlobalTextEnabled(false)
 }
 
 // DisableJSONLogger 禁用 JSON 日志记录器。
 func DisableJSONLogger() {
-	jsonEnabled = false
+	setGlobalJSONEnabled(false)
 }
 
 // EnableDLPLogger 启用日志脱敏功能

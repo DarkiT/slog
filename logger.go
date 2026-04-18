@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/darkit/slog/internal/common"
@@ -24,8 +25,11 @@ const (
 )
 
 var (
-	logger     *Logger                     // 全局日志记录器实例
 	TimeFormat = "2006/01/02 15:04.05.000" // 默认时间格式
+
+	callerSkipPrefixesMu    sync.RWMutex
+	callerSkipPrefixes      []string
+	callerSkipPrefixesValue atomic.Value
 
 	// 字符串构建器池，用于优化字符串拼接性能
 	stringBuilderPool = sync.Pool{
@@ -80,7 +84,157 @@ func init() {
 
 	// 初始化LRU格式缓存
 	formatCache = common.NewLRUStringCache(int(maxFormatCacheSize))
+	RegisterDefaultCallerSkipPrefixes()
 }
+
+// DefaultCallerSkipPrefixes 返回默认建议跳过的调用栈前缀，供上层按需复用。
+// 仅包含 slog 自己稳定暴露的 wrapper 入口，避免对具体仓库结构或源码路径产生耦合。
+func DefaultCallerSkipPrefixes() []string {
+	return []string{
+		"github.com/darkit/slog.(*Logger)",
+		"github.com/darkit/slog.Debug",
+		"github.com/darkit/slog.Info",
+		"github.com/darkit/slog.Warn",
+		"github.com/darkit/slog.Error",
+		"github.com/darkit/slog.Trace",
+		"github.com/darkit/slog.Fatal",
+		"github.com/darkit/slog.Debugf",
+		"github.com/darkit/slog.Infof",
+		"github.com/darkit/slog.Warnf",
+		"github.com/darkit/slog.Errorf",
+		"github.com/darkit/slog.Tracef",
+		"github.com/darkit/slog.Fatalf",
+		"github.com/darkit/slog.Printf",
+		"github.com/darkit/slog.Println",
+		"github.com/darkit/slog.DebugContext",
+		"github.com/darkit/slog.InfoContext",
+		"github.com/darkit/slog.WarnContext",
+		"github.com/darkit/slog.ErrorContext",
+		"github.com/darkit/slog.TraceContext",
+		"github.com/darkit/slog.DebugfContext",
+		"github.com/darkit/slog.InfofContext",
+		"github.com/darkit/slog.WarnfContext",
+		"github.com/darkit/slog.ErrorfContext",
+		"github.com/darkit/slog.TracefContext",
+	}
+}
+
+// RegisterDefaultCallerSkipPrefixes 注册 slog 默认 wrapper 前缀。
+func RegisterDefaultCallerSkipPrefixes() {
+	for _, prefix := range DefaultCallerSkipPrefixes() {
+		RegisterCallerSkipPrefix(prefix)
+	}
+}
+
+// ResetCallerSkipPrefixes 重置调用栈跳过前缀，便于测试或上层完全自定义。
+func ResetCallerSkipPrefixes(prefixes ...string) {
+	callerSkipPrefixesMu.Lock()
+	defer callerSkipPrefixesMu.Unlock()
+	callerSkipPrefixes = append([]string(nil), prefixes...)
+	storeCallerSkipPrefixesLocked()
+}
+
+// RegisterCallerSkipPrefix 注册需要跳过的调用栈前缀，供外部 wrapper 透传真实业务 source。
+func RegisterCallerSkipPrefix(prefix string) {
+	if prefix == "" {
+		return
+	}
+	callerSkipPrefixesMu.Lock()
+	defer callerSkipPrefixesMu.Unlock()
+	for _, existing := range callerSkipPrefixes {
+		if existing == prefix {
+			return
+		}
+	}
+	callerSkipPrefixes = append(callerSkipPrefixes, prefix)
+	storeCallerSkipPrefixesLocked()
+}
+
+func storeCallerSkipPrefixesLocked() {
+	callerSkipPrefixesValue.Store(append([]string(nil), callerSkipPrefixes...))
+}
+
+func currentCallerSkipPrefixes() []string {
+	if v := callerSkipPrefixesValue.Load(); v != nil {
+		return v.([]string)
+	}
+	return nil
+}
+
+func shouldSkipByRegisteredPrefix(function string) bool {
+	for _, prefix := range currentCallerSkipPrefixes() {
+		if functionMatchesSkipPrefix(function, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func functionMatchesSkipPrefix(function string, prefix string) bool {
+	if !strings.HasPrefix(function, prefix) {
+		return false
+	}
+	if len(function) == len(prefix) {
+		return true
+	}
+	next := function[len(prefix)]
+	return next == '.' || next == '(' || next == '/'
+}
+
+func isTestingFrame(frame runtime.Frame) bool {
+	return strings.HasPrefix(frame.Function, "testing.") || strings.Contains(frame.File, "/testing/")
+}
+
+func isStdSlogFrame(frame runtime.Frame) bool {
+	return strings.Contains(frame.File, "/log/slog/") ||
+		strings.HasPrefix(frame.Function, "log/slog.")
+}
+
+func isRuntimeFrame(frame runtime.Frame) bool {
+	return strings.HasPrefix(frame.Function, "runtime.") ||
+		strings.Contains(frame.File, "/runtime/")
+}
+
+func shouldSkipCallerFrame(frame runtime.Frame) bool {
+	if frame.PC == 0 {
+		return true
+	}
+	if isRuntimeFrame(frame) || isTestingFrame(frame) || isStdSlogFrame(frame) {
+		return true
+	}
+	return shouldSkipByRegisteredPrefix(frame.Function)
+}
+
+func frameForPC(pc uintptr) (runtime.Frame, bool) {
+	if pc == 0 {
+		return runtime.Frame{}, false
+	}
+	pcs := [1]uintptr{pc}
+	frames := runtime.CallersFrames(pcs[:])
+	frame, _ := frames.Next()
+	if frame.PC == 0 {
+		return runtime.Frame{}, false
+	}
+	return frame, true
+}
+
+func fallbackCallerPC(pcs []uintptr) uintptr {
+	for _, pc := range pcs {
+		frame, ok := frameForPC(pc)
+		if !ok {
+			continue
+		}
+		if !shouldSkipCallerFrame(frame) {
+			return pc
+		}
+	}
+	if len(pcs) == 0 {
+		return 0
+	}
+	return pcs[0]
+}
+
+// Config 日志配置结构体
 
 // Config 日志配置结构体
 type Config struct {
@@ -105,7 +259,7 @@ type Config struct {
 
 // DefaultConfig 返回默认配置
 func DefaultConfig() *Config {
-	c := &Config{
+	return &Config{
 		MaxFormatCacheSize:    1000,
 		StringBuilderPoolSize: 10,
 		LogInternalErrors:     true,
@@ -113,8 +267,6 @@ func DefaultConfig() *Config {
 		AddSource:             false,
 		TimeFormat:            "2006/01/02 15:04.05.000",
 	}
-	c.SetEnableText(true)
-	return c
 }
 
 func boolPtr(v bool) *bool {
@@ -153,16 +305,22 @@ func (c *Config) InheritJSONOutput() {
 	c.EnableJSON = nil
 }
 
+type outputRenderConfig struct {
+	addSource   bool
+	replaceAttr func(groups []string, a slog.Attr) slog.Attr
+}
+
 // Logger 结构体定义，实现日志记录功能
 type Logger struct {
-	w       io.Writer
-	text    *slog.Logger    // 文本格式日志记录器
-	json    *slog.Logger    // JSON格式日志记录器
-	ctx     context.Context // 上下文信息
-	noColor bool            // 是否禁用颜色输出
-	level   Level           // 日志级别
-	mu      sync.Mutex      // 添加互斥锁，用于处理并发
-	config  *Config         // 配置信息
+	w            io.Writer
+	text         *slog.Logger       // 文本格式日志记录器
+	json         *slog.Logger       // JSON格式日志记录器
+	ctx          context.Context    // 上下文信息
+	noColor      bool               // 是否禁用颜色输出
+	level        Level              // 日志级别
+	mu           sync.Mutex         // 添加互斥锁，用于处理并发
+	config       *Config            // 配置信息
+	renderConfig outputRenderConfig // 渲染订阅语义化内容所需的配置快照
 }
 
 // GetLevel 获取当前日志级别
@@ -181,23 +339,35 @@ func (l *Logger) SetLevel(level any) *Logger {
 	return l
 }
 
+func (l *Logger) outputEnabled() (textOn, jsonOn bool) {
+	textOn = isGlobalTextEnabled()
+	jsonOn = isGlobalJSONEnabled()
+	if l == nil || l.config == nil {
+		return textOn, jsonOn
+	}
+	if l.config.EnableText != nil {
+		textOn = *l.config.EnableText
+	}
+	if l.config.EnableJSON != nil {
+		jsonOn = *l.config.EnableJSON
+	}
+	return textOn, jsonOn
+}
+
 // GetSlogLogger 方法
 func (l *Logger) GetSlogLogger() *slog.Logger {
-	textEnabledForInstance := textEnabled
-	jsonEnabledForInstance := jsonEnabled
-	if l.config != nil {
-		if l.config.EnableText != nil {
-			textEnabledForInstance = textEnabled && *l.config.EnableText
-		}
-		if l.config.EnableJSON != nil {
-			jsonEnabledForInstance = *l.config.EnableJSON
-		}
-	}
+	textEnabledForInstance, jsonEnabledForInstance := l.outputEnabled()
 
-	if jsonEnabledForInstance && !textEnabledForInstance {
+	if jsonEnabledForInstance && !textEnabledForInstance && l.json != nil {
 		return l.json
 	}
-	return l.text
+	if l.text != nil {
+		return l.text
+	}
+	if l.json != nil {
+		return l.json
+	}
+	return nil
 }
 
 // Diagnostics 返回模块健康与指标快照。
@@ -230,27 +400,20 @@ func (l *Logger) logRecord(level Level, ctx context.Context, msg string, sprintf
 		return
 	}
 
-	var r slog.Record
-	if !sprintf && formatLog(msg, args...) {
-		r = newRecord(level, msg, args...)
-	} else if !sprintf {
-		r = newRecord(level, msg)
-		r.Add(args...)
-	} else {
-		r = newRecord(level, msg)
+	textEnabledForInstance, jsonEnabledForInstance := l.outputEnabled()
+	recordPC := uintptr(0)
+	if l.needsCallerPC(textEnabledForInstance, jsonEnabledForInstance) {
+		recordPC = resolveCallerPC()
 	}
 
-	// 处理现有的日志输出
-	// 检查是否启用文本输出（优先使用实例配置，否则使用全局配置）
-	textEnabledForInstance := textEnabled
-	jsonEnabledForInstance := jsonEnabled
-	if l.config != nil {
-		if l.config.EnableText != nil {
-			textEnabledForInstance = textEnabled && *l.config.EnableText
-		}
-		if l.config.EnableJSON != nil {
-			jsonEnabledForInstance = *l.config.EnableJSON
-		}
+	var r slog.Record
+	if sprintf {
+		r = newRecordWithPC(level, recordPC, msg)
+	} else if formatLog(msg, args...) {
+		r = newRecordWithPC(level, recordPC, msg, args...)
+	} else {
+		r = newRecordWithPC(level, recordPC, msg)
+		r.Add(args...)
 	}
 
 	if textEnabledForInstance && l.text != nil && l.text.Enabled(ctx, level) {
@@ -271,28 +434,45 @@ func (l *Logger) logRecord(level Level, ctx context.Context, msg string, sprintf
 	}
 
 	// 向所有订阅者发送日志记录（使用原子状态管理）
+	if subscriberCount.Load() == 0 {
+		return
+	}
+
+	event := l.subscriptionEvent(ctx, r)
 	var toDelete []interface{}
 
 	subscribers.Range(func(key, value interface{}) bool {
 		sub := value.(*subscriber)
 
-		// 使用原子状态管理，优雅地处理发送
-		if !sub.trySend(r) {
-			// 发送失败，标记为待删除
+		// 发布到订阅者：高压下按策略丢弃，不阻塞主链路。
+		result := sub.trySend(event)
+		if result == sendResultInactive || result == sendResultClosed {
 			toDelete = append(toDelete, key)
 		}
 
 		return true
 	})
 
-	// 清理无效的订阅者
+	// 清理失活订阅者
 	for _, key := range toDelete {
 		if value, ok := subscribers.LoadAndDelete(key); ok {
 			if sub, ok := value.(*subscriber); ok {
 				sub.close()
+				subscriberCount.Add(-1)
+				subscriberEvicted.Add(1)
 			}
 		}
 	}
+}
+
+func (l *Logger) needsCallerPC(textOn, jsonOn bool) bool {
+	if l == nil || !l.renderConfig.addSource {
+		return false
+	}
+	if subscriberCount.Load() > 0 {
+		return true
+	}
+	return (textOn && l.text != nil) || (jsonOn && l.json != nil)
 }
 
 // With 创建一个带有额外字段的新日志记录器
@@ -302,15 +482,16 @@ func (l *Logger) With(args ...any) *Logger {
 	}
 
 	newLogger := l.clone()
+	attrs := argsToAttrs(args)
 
 	// 更新text logger
 	if l.text != nil {
-		newLogger.text = l.text.With(args...)
+		newLogger.text = slog.New(l.text.Handler().WithAttrs(attrs))
 	}
 
 	// 更新json logger
 	if l.json != nil {
-		newLogger.json = l.json.With(args...)
+		newLogger.json = slog.New(l.json.Handler().WithAttrs(attrs))
 	}
 
 	return newLogger
@@ -333,15 +514,42 @@ func (l *Logger) WithGroup(name string) *Logger {
 
 	// 处理text logger
 	if l.text != nil {
-		newLogger.text = l.text.WithGroup(name)
+		newLogger.text = slog.New(l.text.Handler().WithGroup(name))
 	}
 
 	// 处理json logger
 	if l.json != nil {
-		newLogger.json = l.json.WithGroup(name)
+		newLogger.json = slog.New(l.json.Handler().WithGroup(name))
 	}
 
 	return newLogger
+}
+
+const badWithKey = "!BADKEY"
+
+func argsToAttrs(args []any) []slog.Attr {
+	attrs := make([]slog.Attr, 0, (len(args)+1)/2)
+	for len(args) > 0 {
+		var attr slog.Attr
+		switch x := args[0].(type) {
+		case string:
+			if len(args) == 1 {
+				attr = slog.String(badWithKey, x)
+				args = nil
+			} else {
+				attr = slog.Any(x, args[1])
+				args = args[2:]
+			}
+		case slog.Attr:
+			attr = x
+			args = args[1:]
+		default:
+			attr = slog.Any(badWithKey, x)
+			args = args[1:]
+		}
+		attrs = append(attrs, attr)
+	}
+	return attrs
 }
 
 // Debug 记录Debug级别的日志。
@@ -473,694 +681,19 @@ func (l *Logger) Println(msg string, args ...any) {
 	l.logWithLevel(LevelInfo, msg, args...)
 }
 
-// formatOptions 定义日志格式化选项
-type formatOptions struct {
-	TextEnabled bool   // 是否启用文本格式
-	NoColor     bool   // 是否禁用颜色
-	TimeFormat  string // 时间格式
-}
-
-// formatDynamicLogLine 格式化动态日志行
-// 将日志格式化逻辑统一提取，确保与项目中其他日志格式一致
-func formatDynamicLogLine(t time.Time, level Level, content string, opts formatOptions) string {
-	if opts.TextEnabled {
-		// 文本格式输出 - 应与项目中其他日志格式保持一致
-		levelStr := formatLevelString(level, opts.NoColor)
-		return fmt.Sprintf("%s %s %s",
-			t.Format(opts.TimeFormat),
-			levelStr,
-			content)
-	} else {
-		// JSON格式输出 - 应与项目中其他JSON日志格式保持一致
-		return fmt.Sprintf("{\"time\":\"%s\",\"level\":\"%s\",\"msg\":\"%s\"}",
-			t.Format(opts.TimeFormat),
-			levelJSONNames[level],
-			content)
-	}
-}
-
-// formatLevelString 格式化日志级别字符串
-// 提取级别格式化逻辑，确保一致性
-func formatLevelString(level Level, noColor bool) string {
-	if !textEnabled {
-		return fmt.Sprintf("[%s]", levelJSONNames[level])
-	}
-
-	// 获取对应的颜色代码
-	color, ok := levelColorMap[level]
-	if !ok {
-		color = ansiBrightRed
-	}
-
-	// 如果没有禁用颜色，则添加颜色代码
-	if !noColor {
-		return fmt.Sprintf("%s[%s]%s", color, levelTextNames[level], ansiReset)
-	}
-
-	return fmt.Sprintf("[%s]", levelTextNames[level])
-}
-
-// ProgressBar 显示带有可视化进度条的日志
-//
-//   - msg: 要显示的消息内容
-//   - durationMs: 从0%到100%的总持续时间(毫秒)
-//   - barWidth: 进度条的总宽度（字符数）
-//   - level: 可选的日志级别，默认使用logger的默认级别
-func (l *Logger) ProgressBar(msg string, durationMs int, barWidth int, level ...Level) *Logger {
-	steps := 100
-	interval := durationMs / steps // 计算每步的时间间隔
-	startTime := time.Now()
-
-	// 确定使用的日志级别
-	logLevel := l.level
-	if len(level) > 0 {
-		logLevel = level[0]
-	}
-
-	// 使用默认进度条选项
-	opts := progressBarOptions{
-		BarStyle:       "default",
-		ShowPercentage: true,
-	}
-
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	// 使用默认的l.w
-	w := l.w
-
-	// 动态输出内容
-	for i := 0; ; i++ {
-		if i > steps {
-			break
-		}
-
-		// 根据实际经过的时间计算进度
-		elapsed := time.Since(startTime)
-		progress := float64(elapsed) / float64(time.Duration(durationMs)*time.Millisecond) * 100
-		if progress > 100 {
-			progress = 100
-		}
-
-		// 获取当前时间
-		now := time.Now()
-
-		// 格式化进度条内容
-		content := formatProgressBar(msg, progress, barWidth, opts)
-
-		// 使用统一的格式化逻辑
-		logLine := formatDynamicLogLine(now, logLevel, content, formatOptions{
-			TextEnabled: textEnabled,
-			NoColor:     l.noColor,
-			TimeFormat:  TimeFormat,
-		})
-
-		// 输出到writer，保留回车符以便覆盖上一行
-		fmt.Fprint(w, "\r"+logLine)
-
-		// 如果已经达到100%，退出循环
-		if progress >= 100 {
-			break
-		}
-
-		time.Sleep(time.Duration(interval) * time.Millisecond)
-	}
-	// 输出完成后换行
-	fmt.Fprintln(w)
-
-	return l
-}
-
-// ProgressBarTo 显示带有可视化进度条的日志，并可指定输出目标
-//
-//   - msg: 要显示的消息内容
-//   - durationMs: 从0%到100%的总持续时间(毫秒)
-//   - barWidth: 进度条的总宽度（字符数）
-//   - writer: 指定的输出writer
-//   - level: 可选的日志级别，默认使用logger的默认级别
-func (l *Logger) ProgressBarTo(msg string, durationMs int, barWidth int, writer io.Writer, level ...Level) *Logger {
-	steps := 100
-	interval := durationMs / steps // 计算每步的时间间隔
-	startTime := time.Now()
-
-	// 确定使用的日志级别
-	logLevel := l.level
-	if len(level) > 0 {
-		logLevel = level[0]
-	}
-
-	// 使用默认进度条选项
-	opts := progressBarOptions{
-		BarStyle:       "default",
-		ShowPercentage: true,
-	}
-
-	// 修改logWithDynamic实现，使用指定的writer
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	// 动态输出内容
-	for i := 0; ; i++ {
-		if i > steps {
-			break
-		}
-
-		// 根据实际经过的时间计算进度
-		elapsed := time.Since(startTime)
-		progress := float64(elapsed) / float64(time.Duration(durationMs)*time.Millisecond) * 100
-		if progress > 100 {
-			progress = 100
-		}
-
-		// 获取当前时间
-		now := time.Now()
-
-		// 格式化进度条内容
-		content := formatProgressBar(msg, progress, barWidth, opts)
-
-		// 使用统一的格式化逻辑
-		logLine := formatDynamicLogLine(now, logLevel, content, formatOptions{
-			TextEnabled: textEnabled,
-			NoColor:     l.noColor,
-			TimeFormat:  TimeFormat,
-		})
-
-		// 输出到writer，保留回车符以便覆盖上一行
-		fmt.Fprint(writer, "\r"+logLine)
-
-		// 如果已经达到100%，退出循环
-		if progress >= 100 {
-			break
-		}
-
-		time.Sleep(time.Duration(interval) * time.Millisecond)
-	}
-	// 输出完成后换行
-	fmt.Fprintln(writer)
-
-	return l
-}
-
-// ProgressBarWithValue 显示指定进度值的进度条
-//
-//   - msg: 要显示的消息内容
-//   - progress: 进度值(0-100之间)
-//   - barWidth: 进度条的总宽度（字符数）
-//   - level: 可选的日志级别，默认使用logger的默认级别
-func (l *Logger) ProgressBarWithValue(msg string, progress float64, barWidth int, level ...Level) {
-	// 确保进度值在0-100之间
-	if progress < 0 {
-		progress = 0
-	} else if progress > 100 {
-		progress = 100
-	}
-
-	// 确定使用的日志级别
-	logLevel := l.level
-	if len(level) > 0 {
-		logLevel = level[0]
-	}
-
-	// 使用默认选项
-	opts := progressBarOptions{
-		BarStyle:       "default",
-		ShowPercentage: true,
-	}
-
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	// 使用默认的writer
-	w := l.w
-
-	// 获取当前时间
-	now := time.Now()
-
-	// 格式化进度条内容
-	content := formatProgressBar(msg, progress, barWidth, opts)
-
-	// 使用统一的格式化逻辑
-	logLine := formatDynamicLogLine(now, logLevel, content, formatOptions{
-		TextEnabled: textEnabled,
-		NoColor:     l.noColor,
-		TimeFormat:  TimeFormat,
-	})
-
-	// 输出到writer，添加换行符
-	fmt.Fprintln(w, logLine)
-}
-
-// ProgressBarWithOptions 显示可高度定制的进度条
-//
-//   - msg: 要显示的消息内容
-//   - durationMs: 从0%到100%的总持续时间(毫秒)
-//   - barWidth: 进度条的总宽度（字符数）
-//   - opts: 进度条选项，控制显示样式
-//   - level: 可选的日志级别，默认使用logger的默认级别
-func (l *Logger) ProgressBarWithOptions(msg string, durationMs int, barWidth int, opts progressBarOptions, level ...Level) *Logger {
-	steps := 100
-	interval := durationMs / steps // 计算每步的时间间隔
-	startTime := time.Now()
-
-	// 确定使用的日志级别
-	logLevel := l.level
-	if len(level) > 0 {
-		logLevel = level[0]
-	}
-
-	// 使用自定义时间格式（如果指定）
-	timeFormat := TimeFormat
-	if opts.TimeFormat != "" {
-		timeFormat = opts.TimeFormat
-	}
-
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	// 使用默认的l.w
-	w := l.w
-
-	// 动态输出内容
-	for i := 0; ; i++ {
-		if i > steps {
-			break
-		}
-
-		// 根据实际经过的时间计算进度
-		elapsed := time.Since(startTime)
-		progress := float64(elapsed) / float64(time.Duration(durationMs)*time.Millisecond) * 100
-		if progress > 100 {
-			progress = 100
-		}
-
-		// 获取当前时间
-		now := time.Now()
-
-		// 格式化进度条内容
-		content := formatProgressBar(msg, progress, barWidth, opts)
-
-		// 使用统一的格式化逻辑，但尊重自定义时间格式
-		logLine := formatDynamicLogLine(now, logLevel, content, formatOptions{
-			TextEnabled: textEnabled,
-			NoColor:     l.noColor,
-			TimeFormat:  timeFormat,
-		})
-
-		// 输出到writer，保留回车符以便覆盖上一行
-		fmt.Fprint(w, "\r"+logLine)
-
-		// 如果已经达到100%，退出循环
-		if progress >= 100 {
-			break
-		}
-
-		time.Sleep(time.Duration(interval) * time.Millisecond)
-	}
-	// 输出完成后换行
-	fmt.Fprintln(w)
-
-	return l
-}
-
-// ProgressBarWithOptionsTo 显示可高度定制的进度条并输出到指定writer
-//
-//   - msg: 要显示的消息内容
-//   - durationMs: 从0%到100%的总持续时间(毫秒)
-//   - barWidth: 进度条的总宽度（字符数）
-//   - opts: 进度条选项，控制显示样式
-//   - writer: 指定的输出writer
-//   - level: 可选的日志级别，默认使用logger的默认级别
-func (l *Logger) ProgressBarWithOptionsTo(msg string, durationMs int, barWidth int, opts progressBarOptions, writer io.Writer, level ...Level) *Logger {
-	steps := 100
-	interval := durationMs / steps // 计算每步的时间间隔
-	startTime := time.Now()
-
-	// 确定使用的日志级别
-	logLevel := l.level
-	if len(level) > 0 {
-		logLevel = level[0]
-	}
-
-	// 使用自定义时间格式（如果指定）
-	timeFormat := TimeFormat
-	if opts.TimeFormat != "" {
-		timeFormat = opts.TimeFormat
-	}
-
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	// 动态输出内容
-	for i := 0; ; i++ {
-		if i > steps {
-			break
-		}
-
-		// 根据实际经过的时间计算进度
-		elapsed := time.Since(startTime)
-		progress := float64(elapsed) / float64(time.Duration(durationMs)*time.Millisecond) * 100
-		if progress > 100 {
-			progress = 100
-		}
-
-		// 获取当前时间
-		now := time.Now()
-
-		// 格式化进度条内容
-		content := formatProgressBar(msg, progress, barWidth, opts)
-
-		// 使用统一的格式化逻辑，但尊重自定义时间格式
-		logLine := formatDynamicLogLine(now, logLevel, content, formatOptions{
-			TextEnabled: textEnabled,
-			NoColor:     l.noColor,
-			TimeFormat:  timeFormat,
-		})
-
-		// 输出到writer，保留回车符以便覆盖上一行
-		fmt.Fprint(writer, "\r"+logLine)
-
-		// 如果已经达到100%，退出循环
-		if progress >= 100 {
-			break
-		}
-
-		time.Sleep(time.Duration(interval) * time.Millisecond)
-	}
-	// 输出完成后换行
-	fmt.Fprintln(writer)
-
-	return l
-}
-
-// ProgressBarWithValueAndOptions 显示指定进度值的定制进度条
-//
-//   - msg: 要显示的消息内容
-//   - progress: 进度值(0-100之间)
-//   - barWidth: 进度条的总宽度（字符数）
-//   - opts: 进度条选项，控制显示样式
-//   - level: 可选的日志级别，默认使用logger的默认级别
-func (l *Logger) ProgressBarWithValueAndOptions(msg string, progress float64, barWidth int, opts progressBarOptions, level ...Level) {
-	// 确保进度值在0-100之间
-	if progress < 0 {
-		progress = 0
-	} else if progress > 100 {
-		progress = 100
-	}
-
-	// 确定使用的日志级别
-	logLevel := l.level
-	if len(level) > 0 {
-		logLevel = level[0]
-	}
-
-	// 使用自定义时间格式
-	timeFormat := TimeFormat
-	if opts.TimeFormat != "" {
-		timeFormat = opts.TimeFormat
-	}
-
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	// 使用指定的writer
-	w := l.w
-
-	// 获取当前时间
-	now := time.Now()
-
-	// 格式化进度条内容
-	content := formatProgressBar(msg, progress, barWidth, opts)
-
-	// 使用统一的格式化逻辑，但尊重自定义时间格式
-	logLine := formatDynamicLogLine(now, logLevel, content, formatOptions{
-		TextEnabled: textEnabled,
-		NoColor:     l.noColor,
-		TimeFormat:  timeFormat,
-	})
-
-	// 输出到writer，添加换行符
-	fmt.Fprintln(w, logLine)
-}
-
-// progressBarOptions 定义进度条的样式选项
-type progressBarOptions struct {
-	LeftBracket    string // 左括号，默认为 "["
-	RightBracket   string // 右括号，默认为 "]"
-	Fill           string // 填充字符，默认为 "="
-	Head           string // 进度条头部字符，默认为 ">"
-	Empty          string // 空白部分字符，默认为 " "
-	ShowPercentage bool   // 是否显示百分比，默认为 true
-	TimeFormat     string // 时间格式，默认为 TimeFormat
-	BarStyle       string // 进度条样式，默认为 "default"
-}
-
-// DefaultProgressBarOptions 返回默认的进度条选项
-func DefaultProgressBarOptions() progressBarOptions {
-	return progressBarOptions{
-		LeftBracket:    "[",
-		RightBracket:   "]",
-		Fill:           "=",
-		Head:           ">",
-		Empty:          " ",
-		ShowPercentage: true,
-		TimeFormat:     TimeFormat,
-		BarStyle:       "default",
-	}
-}
-
-// formatProgressBar 格式化进度条的显示内容
-//
-//   - msg: 要显示的消息
-//   - progress: 当前进度（0-100）
-//   - barWidth: 进度条的总宽度（字符数）
-//   - opts: 进度条选项，控制显示样式
-//
-// 返回格式化后的进度条字符串
-func formatProgressBar(msg string, progress float64, barWidth int, opts progressBarOptions) string {
-	// 确保进度在0-100范围内
-	if progress < 0 {
-		progress = 0
-	}
-	if progress > 100 {
-		progress = 100
-	}
-
-	// 计算已完成的宽度和未完成的宽度
-	completedWidth := int(float64(barWidth) * progress / 100)
-	remainingWidth := barWidth - completedWidth
-
-	// 选择进度条样式
-	completed := "="
-	remaining := " "
-	indicator := ">"
-	switch opts.BarStyle {
-	case "block":
-		completed = "█"
-		remaining = "░"
-		indicator = ""
-	case "simple":
-		completed = "#"
-		remaining = "-"
-		indicator = ">"
-	}
-
-	// 构建进度条
-	var progressBar strings.Builder
-	progressBar.WriteString("[")
-
-	// 绘制已完成部分
-	for i := 0; i < completedWidth; i++ {
-		progressBar.WriteString(completed)
-	}
-
-	// 添加指示器（除非已经100%完成）
-	if completedWidth < barWidth && indicator != "" {
-		progressBar.WriteString(indicator)
-		remainingWidth--
-	}
-
-	// 绘制未完成部分
-	for i := 0; i < remainingWidth; i++ {
-		progressBar.WriteString(remaining)
-	}
-
-	progressBar.WriteString("]")
-
-	// 格式化最终输出
-	var result string
-	if opts.ShowPercentage {
-		result = fmt.Sprintf("%s %s %.1f%%", msg, progressBar.String(), progress)
-	} else {
-		result = fmt.Sprintf("%s %s", msg, progressBar.String())
-	}
-
-	return result
-}
-
-// Progress 显示进度百分比
-//
-//   - msg: 要显示的消息内容
-//   - durationMs: 从0%到100%的总持续时间(毫秒)
-//   - writer: 可选的输出writer，如果为nil则使用默认的l.w
-func (l *Logger) Progress(msg string, durationMs int, writer ...io.Writer) {
-	steps := 100
-	interval := durationMs / steps // 计算每步的时间间隔
-	startTime := time.Now()
-
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	// 确定使用的writer
-	w := l.w
-	if len(writer) > 0 && writer[0] != nil {
-		w = writer[0]
-	}
-
-	// 动态输出内容
-	for i := 0; ; i++ {
-		if i > steps {
-			break
-		}
-
-		// 根据实际经过的时间计算进度
-		elapsed := time.Since(startTime)
-		progress := float64(elapsed) / float64(time.Duration(durationMs)*time.Millisecond) * 100
-		if progress > 100 {
-			progress = 100
-		}
-
-		// 获取当前时间
-		now := time.Now()
-
-		// 格式化内容
-		content := fmt.Sprintf("%s %.1f%%", msg, progress)
-
-		// 使用统一的格式化逻辑
-		logLine := formatDynamicLogLine(now, l.level, content, formatOptions{
-			TextEnabled: textEnabled,
-			NoColor:     l.noColor,
-			TimeFormat:  TimeFormat,
-		})
-
-		// 输出到writer，保留回车符以便覆盖上一行
-		fmt.Fprint(w, "\r"+logLine)
-
-		// 如果已经达到100%，退出循环
-		if progress >= 100 {
-			break
-		}
-
-		time.Sleep(time.Duration(interval) * time.Millisecond)
-	}
-	// 输出完成后换行
-	fmt.Fprintln(w)
-}
-
-// Countdown 显示倒计时
-//
-//   - msg: 要显示的消息内容
-//   - seconds: 倒计时的秒数
-//   - writer: 可选的输出writer，如果为nil则使用默认的l.w
-func (l *Logger) Countdown(msg string, seconds int, writer ...io.Writer) {
-	interval := 1000 // 1秒更新一次
-
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	// 确定使用的writer
-	w := l.w
-	if len(writer) > 0 && writer[0] != nil {
-		w = writer[0]
-	}
-
-	// 动态输出内容
-	for i := 0; i <= seconds; i++ {
-		remaining := seconds - i
-		if remaining < 0 {
-			break
-		}
-
-		// 获取当前时间
-		now := time.Now()
-
-		// 格式化内容
-		content := fmt.Sprintf("%s %ds", msg, remaining)
-
-		// 使用统一的格式化逻辑
-		logLine := formatDynamicLogLine(now, l.level, content, formatOptions{
-			TextEnabled: textEnabled,
-			NoColor:     l.noColor,
-			TimeFormat:  TimeFormat,
-		})
-
-		// 输出到writer，保留回车符以便覆盖上一行
-		fmt.Fprint(w, "\r"+logLine)
-
-		if remaining == 0 {
-			break
-		}
-
-		time.Sleep(time.Duration(interval) * time.Millisecond)
-	}
-	// 输出完成后换行
-	fmt.Fprintln(w)
-}
-
-// Loading 显示加载动画
-//
-//   - msg: 要显示的消息内容
-//   - seconds: 持续时间(秒)
-//   - writer: 可选的输出writer，如果为nil则使用默认的l.w
-func (l *Logger) Loading(msg string, seconds int, writer ...io.Writer) {
-	spinner := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
-	steps := seconds * 10 // 每秒10帧
-	interval := 100       // 固定100ms间隔，即10帧/秒
-
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	// 确定使用的writer
-	w := l.w
-	if len(writer) > 0 && writer[0] != nil {
-		w = writer[0]
-	}
-
-	// 动态输出内容
-	for i := 0; i < steps; i++ {
-		// 获取当前时间
-		now := time.Now()
-
-		// 格式化内容
-		content := fmt.Sprintf("%s %s", spinner[i%len(spinner)], msg)
-
-		// 使用统一的格式化逻辑
-		logLine := formatDynamicLogLine(now, l.level, content, formatOptions{
-			TextEnabled: textEnabled,
-			NoColor:     l.noColor,
-			TimeFormat:  TimeFormat,
-		})
-
-		// 输出到writer，保留回车符以便覆盖上一行
-		fmt.Fprint(w, "\r"+logLine)
-
-		time.Sleep(time.Duration(interval) * time.Millisecond)
-	}
-	// 输出完成后换行
-	fmt.Fprintln(w)
-}
-
 // clone 创建Logger的深度复制
 func (l *Logger) clone() *Logger {
 	// 创建新的Logger实例，但需要考虑writer的并发安全
 	newLogger := &Logger{
-		w:       l.w, // 注意：共享writer需要在使用时进行同步
-		text:    l.text,
-		json:    l.json,
-		ctx:     l.ctx,
-		noColor: l.noColor,
-		level:   l.level,
-		mu:      sync.Mutex{}, // 每个logger实例都有独立的互斥锁
-		config:  l.config,
+		w:            l.w, // 注意：共享writer需要在使用时进行同步
+		text:         l.text,
+		json:         l.json,
+		ctx:          l.ctx,
+		noColor:      l.noColor,
+		level:        l.level,
+		mu:           sync.Mutex{}, // 每个logger实例都有独立的互斥锁
+		config:       l.config,
+		renderConfig: l.renderConfig,
 	}
 
 	return newLogger
@@ -1168,16 +701,32 @@ func (l *Logger) clone() *Logger {
 
 // newRecord 创建新的日志记录
 // 设置时间戳、级别、消息和调用栈信息
-func newRecord(level Level, format string, args ...any) slog.Record {
+func newRecordWithPC(level Level, pc uintptr, format string, args ...any) slog.Record {
 	t := time.Now()
-	var pcs [1]uintptr
-	// 跳过runtime.Callers和当前函数调用
-	runtime.Callers(5, pcs[:])
-
 	if args == nil {
-		return slog.NewRecord(t, level, format, pcs[0])
+		return slog.NewRecord(t, level, format, pc)
 	}
-	return slog.NewRecord(t, level, fmt.Sprintf(format, args...), pcs[0])
+	return slog.NewRecord(t, level, fmt.Sprintf(format, args...), pc)
+}
+
+func resolveCallerPC() uintptr {
+	const maxDepth = 32
+	var pcs [maxDepth]uintptr
+	n := runtime.Callers(3, pcs[:])
+	if n == 0 {
+		return 0
+	}
+
+	for _, pc := range pcs[:n] {
+		frame, ok := frameForPC(pc)
+		if !ok {
+			continue
+		}
+		if !shouldSkipCallerFrame(frame) {
+			return pc
+		}
+	}
+	return fallbackCallerPC(pcs[:n])
 }
 
 // formatLog 检查格式字符串并决定是否使用格式化输出
@@ -1264,112 +813,10 @@ func scanFormatSpecifiers(msg string) bool {
 	return false
 }
 
-// ProgressBarWithValueTo 显示指定进度值的进度条并输出到指定writer
-//
-//   - msg: 要显示的消息内容
-//   - progress: 进度值(0-100之间)
-//   - barWidth: 进度条的总宽度（字符数）
-//   - writer: 指定的输出writer
-//   - level: 可选的日志级别，默认使用logger的默认级别
-func (l *Logger) ProgressBarWithValueTo(msg string, progress float64, barWidth int, writer io.Writer, level ...Level) {
-	// 确保进度值在0-100之间
-	if progress < 0 {
-		progress = 0
-	} else if progress > 100 {
-		progress = 100
-	}
-
-	// 确定使用的日志级别
-	logLevel := l.level
-	if len(level) > 0 {
-		logLevel = level[0]
-	}
-
-	// 使用默认进度条选项
-	opts := progressBarOptions{
-		BarStyle:       "default",
-		ShowPercentage: true,
-	}
-
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	// 获取当前时间
-	now := time.Now()
-
-	// 格式化进度条内容
-	content := formatProgressBar(msg, progress, barWidth, opts)
-
-	// 使用统一的格式化逻辑
-	logLine := formatDynamicLogLine(now, logLevel, content, formatOptions{
-		TextEnabled: textEnabled,
-		NoColor:     l.noColor,
-		TimeFormat:  TimeFormat,
-	})
-
-	// 输出到writer，添加换行符
-	fmt.Fprintln(writer, logLine)
-}
-
-// ProgressBarWithValueAndOptionsTo 显示指定进度值的定制进度条并输出到指定writer
-//
-//   - msg: 要显示的消息内容
-//   - progress: 进度值(0-100之间)
-//   - barWidth: 进度条的总宽度（字符数）
-//   - opts: 进度条选项，控制显示样式
-//   - writer: 指定的输出writer
-//   - level: 可选的日志级别，默认使用logger的默认级别
-func (l *Logger) ProgressBarWithValueAndOptionsTo(msg string, progress float64, barWidth int, opts progressBarOptions, writer io.Writer, level ...Level) {
-	// 确保进度值在0-100之间
-	if progress < 0 {
-		progress = 0
-	} else if progress > 100 {
-		progress = 100
-	}
-
-	// 确定使用的日志级别
-	logLevel := l.level
-	if len(level) > 0 {
-		logLevel = level[0]
-	}
-
-	// 使用自定义时间格式
-	timeFormat := TimeFormat
-	if opts.TimeFormat != "" {
-		timeFormat = opts.TimeFormat
-	}
-
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	// 获取当前时间
-	now := time.Now()
-
-	// 格式化进度条内容
-	content := formatProgressBar(msg, progress, barWidth, opts)
-
-	// 使用统一的格式化逻辑，但尊重自定义时间格式
-	logLine := formatDynamicLogLine(now, logLevel, content, formatOptions{
-		TextEnabled: textEnabled,
-		NoColor:     l.noColor,
-		TimeFormat:  timeFormat,
-	})
-
-	// 输出到writer，添加换行符
-	fmt.Fprintln(writer, logLine)
-}
-
 // NewLoggerWithConfig 使用配置创建新的日志记录器
 func NewLoggerWithConfig(w io.Writer, config *Config) *Logger {
 	if config == nil {
 		config = DefaultConfig()
-	}
-
-	// 不修改全局配置，仅将配置应用到本实例
-	// 全局配置通过其他函数管理
-	timeFormat := config.TimeFormat
-	if timeFormat == "" {
-		timeFormat = TimeFormat
 	}
 
 	options := NewOptions(nil)
@@ -1385,14 +832,25 @@ func NewLoggerWithConfig(w io.Writer, config *Config) *Logger {
 	}
 
 	newLogger := &Logger{
-		w:       w,
-		noColor: config.NoColor,
-		level:   levelVar.Level(),
-		ctx:     context.Background(),
-		config:  config,
-		text:    slog.New(newAddonsHandler(NewConsoleHandler(w, config.NoColor, options), ext)),
-		json:    slog.New(newAddonsHandler(NewJSONHandler(w, options), ext)),
+		w:            w,
+		noColor:      config.NoColor,
+		level:        levelVar.Level(),
+		ctx:          context.Background(),
+		config:       config,
+		renderConfig: newOutputRenderConfig(options),
+		text:         slog.New(newAddonsHandler(NewConsoleHandler(w, config.NoColor, options), ext)),
+		json:         slog.New(newAddonsHandler(NewJSONHandler(w, options), ext)),
 	}
 
 	return newLogger
+}
+
+func newOutputRenderConfig(options *slog.HandlerOptions) outputRenderConfig {
+	if options == nil {
+		return outputRenderConfig{}
+	}
+	return outputRenderConfig{
+		addSource:   options.AddSource,
+		replaceAttr: options.ReplaceAttr,
+	}
 }

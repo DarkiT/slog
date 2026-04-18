@@ -31,9 +31,27 @@ func AppendAttrsToGroup(groups []string, actualAttrs []slog.Attr, newAttrs ...sl
 	)
 }
 
-// @TODO: should be recursive
 func UniqAttrs(attrs []slog.Attr) []slog.Attr {
-	return uniqByLast(attrs, func(item slog.Attr) string {
+	return uniqAttrsWithDepth(attrs, 0)
+}
+
+func uniqAttrsWithDepth(attrs []slog.Attr, depth int) []slog.Attr {
+	if depth > maxRecursionDepth {
+		return uniqByLast(attrs, func(item slog.Attr) string {
+			return item.Key
+		})
+	}
+
+	collapsed := make([]slog.Attr, 0, len(attrs))
+	for _, attr := range attrs {
+		if attr.Value.Kind() == slog.KindGroup {
+			values := uniqAttrsWithDepth(attr.Value.Group(), depth+1)
+			attr.Value = slog.GroupValue(values...)
+		}
+		collapsed = append(collapsed, attr)
+	}
+
+	return uniqByLast(collapsed, func(item slog.Attr) string {
 		return item.Key
 	})
 }

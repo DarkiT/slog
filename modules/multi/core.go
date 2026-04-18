@@ -3,6 +3,7 @@ package multi
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"slices"
 
@@ -38,9 +39,18 @@ func (h *FanoutHandler) Handle(ctx context.Context, r slog.Record) error {
 	var errs []error
 	for i := range h.handlers {
 		if h.handlers[i].Enabled(ctx, r.Level) {
-			err := try(func() error {
+			err := func() (err error) {
+				defer func() {
+					if rec := recover(); rec != nil {
+						if panicErr, ok := rec.(error); ok {
+							err = panicErr
+						} else {
+							err = fmt.Errorf("unexpected error: %+v", rec)
+						}
+					}
+				}()
 				return h.handlers[i].Handle(ctx, r.Clone())
-			})
+			}()
 			if err != nil {
 				errs = append(errs, err)
 			}

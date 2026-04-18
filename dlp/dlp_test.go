@@ -468,6 +468,57 @@ func BenchmarkEngine_DesensitizeTextLarge(b *testing.B) {
 	}
 }
 
+func TestEngine_DesensitizeText_FallbackToRegexOnNoManagerChange(t *testing.T) {
+	engine := NewDlpEngine()
+	engine.Enable()
+
+	cases := []struct {
+		name  string
+		input string
+	}{
+		{name: "ipv4", input: "客户端IP：192.168.1.100"},
+		{name: "url", input: "访问地址：https://www.example.com/api?token=123456789"},
+		{name: "name", input: "客户姓名：张三丰"},
+		{name: "bank", input: "银行卡：6222000000000000000"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out := engine.DesensitizeText(tc.input)
+			if out == tc.input {
+				t.Fatalf("expected desensitized output, got unchanged text: %s", out)
+			}
+		})
+	}
+}
+
+func TestEngine_DesensitizeSpecificType_FallbackToRegexOnNoManagerChange(t *testing.T) {
+	engine := NewDlpEngine()
+	engine.Enable()
+
+	input := "6222000000000000000"
+	out := engine.DesensitizeSpecificType(input, "bank_card")
+	if out == input {
+		t.Fatalf("expected desensitized output for bank_card, got unchanged text: %s", out)
+	}
+}
+
+func TestReplaceAllTypes_DoesNotSkipWhenPartiallyMasked(t *testing.T) {
+	searcher := NewRegexSearcher()
+	input := "手机号138****5678，邮箱test@example.com，IP:192.168.1.100"
+	out := searcher.ReplaceAllTypes(input)
+
+	if out == input {
+		t.Fatalf("expected additional masking after partial mask input, got unchanged text: %s", out)
+	}
+	if strings.Contains(out, "test@example.com") {
+		t.Fatalf("email should be masked, got: %s", out)
+	}
+	if strings.Contains(out, "192.168.1.100") {
+		t.Fatalf("ip should be masked, got: %s", out)
+	}
+}
+
 func BenchmarkReplaceAllTypes(b *testing.B) {
 	searcher := NewRegexSearcher()
 	testText := "张三的手机号是13812345678，身份证号是110101199001011237，邮箱是zhangsan@example.com，IP地址是192.168.1.1"

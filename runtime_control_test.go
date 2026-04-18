@@ -4,7 +4,7 @@ import "testing"
 
 func TestApplyRuntimeOption(t *testing.T) {
 	originalLevel := GetLevel()
-	originalText, originalJSON := textEnabled, jsonEnabled
+	originalText, originalJSON := isGlobalTextEnabled(), isGlobalJSONEnabled()
 	defer func() {
 		if originalText {
 			EnableTextLogger()

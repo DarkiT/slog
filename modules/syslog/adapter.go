@@ -2,16 +2,17 @@ package syslog
 
 import (
 	"log/slog"
-	"net"
+	"time"
 
 	"github.com/darkit/slog/modules"
+	outputnet "github.com/darkit/slog/modules/output/net"
 )
 
 // SyslogAdapter Syslog模块适配器
 type SyslogAdapter struct {
 	*modules.BaseModule
 	option *Option
-	conn   net.Conn
+	sender *outputnet.Sender
 }
 
 // NewSyslogAdapter 创建Syslog适配器
@@ -32,6 +33,7 @@ func (s *SyslogAdapter) Configure(config modules.Config) error {
 		Network string `json:"network"`
 		Addr    string `json:"addr"`
 		Level   string `json:"level"`
+		Codec   string `json:"codec"`
 	}
 
 	if err := config.Bind(&cfg); err != nil {
@@ -40,10 +42,14 @@ func (s *SyslogAdapter) Configure(config modules.Config) error {
 
 	// 配置syslog选项
 	if cfg.Network != "" && cfg.Addr != "" {
-		if conn, err := net.Dial(cfg.Network, cfg.Addr); err == nil {
-			s.conn = conn
-			s.option.Writer = conn
-		}
+		s.sender = outputnet.NewSender(outputnet.SenderOption{
+			Network:      cfg.Network,
+			Addr:         cfg.Addr,
+			Delimiter:    []byte("\n"),
+			DialTimeout:  3 * time.Second,
+			WriteTimeout: 3 * time.Second,
+		})
+		s.option.Writer = s.sender
 	}
 
 	switch cfg.Level {
@@ -59,6 +65,11 @@ func (s *SyslogAdapter) Configure(config modules.Config) error {
 		s.option.Level = slog.LevelDebug
 	default:
 		s.option.Level = slog.LevelDebug
+	}
+	if codec, ok := GetCodec(cfg.Codec); ok {
+		s.option.Codec = codec
+	} else if cfg.Codec != "" {
+		return errInvalidCodec
 	}
 
 	// 创建处理器

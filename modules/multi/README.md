@@ -325,8 +325,8 @@ type Middleware func(slog.Handler) slog.Handler
 ```
 
 上面的示例使用了:
-- 自定义中间件，[参见这里](./examples/pipe/gdpr.go)
-- 内联中间件，[参见这里](./examples/pipe/errors.go)
+- 自定义中间件，可参考当前仓库中的 `modules/async_error.go`
+- 内联中间件，可参考当前仓库中的 `errors.go`
 
 注意: 自定义中间件的 `WithAttrs` 和 `WithGroup` 方法必须返回新实例，而不是 `this`。
 
@@ -452,4 +452,4 @@ make watch-test
 
 版权所有 © 2023 [Samuel Berthe](https://github.com/samber)。
 
-本项目采用 [MIT](./LICENSE) 许可证。 
+本项目采用 [MIT](../../LICENSE) 许可证。 

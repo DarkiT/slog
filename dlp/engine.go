@@ -3,7 +3,6 @@ package dlp
 import (
 	"errors"
 	"fmt"
-	"hash/fnv"
 	"reflect"
 	"regexp"
 	"strings"
@@ -32,27 +31,19 @@ type cacheEntry struct {
 
 // DlpEngine 定义脱敏引擎结构体
 type DlpEngine struct {
-	config                *DlpConfig
-	searcher              *RegexSearcher           // 保留向后兼容
-	structProcessor       *StructDesensitizer      // 新增：结构体脱敏器
-	manager               *SecurityEnhancedManager // 新增：安全增强脱敏器管理器
-	enabled               atomic.Bool
-	cache                 *common.LRUCache // 结果缓存
-	typesCache            []string         // 缓存支持的类型列表
-	typesCacheMu          sync.RWMutex
-	typesCacheKey         int64       // 缓存版本号
-	usePluginArchitecture atomic.Bool // 是否使用插件架构
-	cacheStats            struct {
+	config          *DlpConfig
+	searcher        *RegexSearcher
+	structProcessor *StructDesensitizer // 新增：结构体脱敏器
+	manager         *DefaultDesensitizerManager
+	enabled         atomic.Bool
+	cache           *common.LRUCache // 结果缓存
+	typesCache      []string         // 缓存支持的类型列表
+	typesCacheMu    sync.RWMutex
+	typesCacheKey   int64 // 缓存版本号
+	cacheStats      struct {
 		hits   int64
 		misses int64
 	}
-}
-
-// 计算文本哈希（用于短文本缓存键）
-func hashText(text string) uint64 {
-	h := fnv.New64a()
-	h.Write([]byte(text))
-	return h.Sum64()
 }
 
 // NewDlpEngine 创建新的DLP引擎实例
@@ -63,9 +54,8 @@ func NewDlpEngine() *DlpEngine {
 		cache:    common.NewLRUCache(1000), // 初始化LRU缓存，容量1000
 	}
 	engine.structProcessor = NewStructDesensitizer(engine) // 初始化结构体脱敏器
-	engine.manager = NewSecurityEnhancedManager()          // 初始化安全增强脱敏器管理器
+	engine.manager = NewDefaultDesensitizerManager()
 	engine.enabled.Store(false)
-	engine.usePluginArchitecture.Store(false) // 默认不使用插件架构，保持向后兼容
 
 	// 初始化默认脱敏器
 	engine.initializeDefaultDesensitizers()
@@ -75,12 +65,12 @@ func NewDlpEngine() *DlpEngine {
 
 // initializeDefaultDesensitizers 初始化默认脱敏器
 func (e *DlpEngine) initializeDefaultDesensitizers() {
-	// 注册所有增强版脱敏器（安全版本）
 	// 注意：不默认注册中文姓名脱敏器，因为它容易误判普通文本
 	desensitizers := []Desensitizer{
 		NewEnhancedPhoneDesensitizer(),
 		NewEnhancedEmailDesensitizer(),
 		NewEnhancedBankCardDesensitizer(),
+		NewEnhancedIDCardDesensitizer(),
 		// NewChineseNameDesensitizer(), // 中文姓名脱敏器容易误判，需要用户显式注册
 	}
 
@@ -107,16 +97,23 @@ func (e *DlpEngine) IsEnabled() bool {
 	return e.enabled.Load()
 }
 
-// EnablePluginArchitecture 启用插件架构
-func (e *DlpEngine) EnablePluginArchitecture() {
-	e.usePluginArchitecture.Store(true)
-	e.manager.Enable()
+// IsPluginArchitectureEnabled 兼容接口，固定返回 false。
+func (e *DlpEngine) IsPluginArchitectureEnabled() bool {
+	return false
 }
 
-// DisablePluginArchitecture 禁用插件架构，回退到传统模式
-func (e *DlpEngine) DisablePluginArchitecture() {
-	e.usePluginArchitecture.Store(false)
-	e.manager.Disable()
+// EnablePluginArchitecture 兼容接口，当前无操作。
+func (e *DlpEngine) EnablePluginArchitecture() {}
+
+// DisablePluginArchitecture 兼容接口，当前无操作。
+func (e *DlpEngine) DisablePluginArchitecture() {}
+
+// GetSupportedTypesWithPlugin 兼容接口，返回当前类型映射。
+func (e *DlpEngine) GetSupportedTypesWithPlugin() map[string][]string {
+	if e == nil || e.manager == nil {
+		return nil
+	}
+	return e.manager.GetTypeMapping()
 }
 
 // Version 返回当前规则版本（热更新计数）。
@@ -127,13 +124,8 @@ func (e *DlpEngine) Version() int64 {
 	return e.manager.CurrentVersion()
 }
 
-// IsPluginArchitectureEnabled 检查是否启用插件架构
-func (e *DlpEngine) IsPluginArchitectureEnabled() bool {
-	return e.usePluginArchitecture.Load()
-}
-
 // GetDesensitizerManager 获取脱敏器管理器
-func (e *DlpEngine) GetDesensitizerManager() *SecurityEnhancedManager {
+func (e *DlpEngine) GetDesensitizerManager() *DefaultDesensitizerManager {
 	return e.manager
 }
 
@@ -174,13 +166,7 @@ func (e *DlpEngine) DesensitizeText(text string) string {
 		return e.desensitizeTextWithoutCache(text)
 	}
 
-	// 使用 xxhash 的缓存键生成逻辑
-	var cacheKey string
-	if e.IsPluginArchitectureEnabled() {
-		cacheKey = cachekey.Key("plugin", text)
-	} else {
-		cacheKey = cachekey.FastKey(text)
-	}
+	cacheKey := cachekey.FastKey(text)
 
 	// 检查缓存
 	if cached, found := e.cache.Get(cacheKey); found {
@@ -206,18 +192,17 @@ func (e *DlpEngine) DesensitizeText(text string) string {
 
 // desensitizeTextWithoutCache 不使用缓存的文本脱敏处理（优化版本）
 func (e *DlpEngine) desensitizeTextWithoutCache(text string) string {
-	if e.IsPluginArchitectureEnabled() {
-		// 使用插件架构进行自动检测和脱敏
-		result, err := e.manager.AutoDetectAndProcess(text)
-		if err != nil || result == nil {
-			// 降级到传统模式
-			return e.searcher.ReplaceAllTypes(text)
-		}
-		return result.Desensitized
+	// 先走管理器主路径，再用 regex 做补充覆盖，确保混合文本中的遗漏类型也能被脱敏。
+	result, err := e.manager.AutoDetectAndProcess(text)
+	if err != nil || result == nil {
+		return e.searcher.ReplaceAllTypes(text)
 	}
-
-	// 使用传统的批量替换策略，一次性处理所有类型
-	return e.searcher.ReplaceAllTypes(text)
+	managerResult := result.Desensitized
+	if managerResult == text {
+		return e.searcher.ReplaceAllTypes(text)
+	}
+	// manager 已处理部分内容时，再执行一次 regex 兜底补全。
+	return e.searcher.ReplaceAllTypes(managerResult)
 }
 
 // DesensitizeSpecificType 对指定类型的敏感信息进行脱敏
@@ -228,41 +213,31 @@ func (e *DlpEngine) DesensitizeSpecificType(text string, sensitiveType string) s
 
 	// 对于长文本，不使用缓存
 	if len(text) > 5000 {
-		if e.IsPluginArchitectureEnabled() {
-			result, err := e.manager.ProcessWithType(sensitiveType, text)
-			if err != nil || result == nil {
-				// 降级到传统模式
-				return e.searcher.ReplaceParallel(text, sensitiveType)
-			}
-			return result.Desensitized
+		result, err := e.manager.ProcessWithType(sensitiveType, text)
+		if err != nil || result == nil {
+			return e.searcher.ReplaceParallel(text, sensitiveType)
 		}
-		return e.searcher.ReplaceParallel(text, sensitiveType)
+		if result.Desensitized == text {
+			return e.searcher.ReplaceParallel(text, sensitiveType)
+		}
+		return result.Desensitized
 	}
 
-	// 检查缓存（使用优化的缓存键）
-	var cacheKey string
-	if e.IsPluginArchitectureEnabled() {
-		cacheKey = cachekey.KeyWithContext("plugin", sensitiveType, text)
-	} else {
-		cacheKey = cachekey.KeyWithContext("legacy", sensitiveType, text)
-	}
+	cacheKey := cachekey.KeyWithContext("default", sensitiveType, text)
 
 	if cached, found := e.cache.Get(cacheKey); found {
 		return cached.(*cacheEntry).result
 	}
 
-	// 处理文本
+	desensitizationResult, err := e.manager.ProcessWithType(sensitiveType, text)
 	var result string
-	if e.IsPluginArchitectureEnabled() {
-		desensitizationResult, err := e.manager.ProcessWithType(sensitiveType, text)
-		if err != nil || desensitizationResult == nil {
-			// 降级到传统模式
-			result = e.searcher.ReplaceParallel(text, sensitiveType)
-		} else {
-			result = desensitizationResult.Desensitized
-		}
-	} else {
+	if err != nil || desensitizationResult == nil {
 		result = e.searcher.ReplaceParallel(text, sensitiveType)
+	} else {
+		result = desensitizationResult.Desensitized
+		if result == text {
+			result = e.searcher.ReplaceParallel(text, sensitiveType)
+		}
 	}
 
 	// 只缓存有变化的结果
@@ -414,14 +389,6 @@ func (e *DlpEngine) DisableDesensitizer(name string) error {
 		return nil
 	}
 	return fmt.Errorf("desensitizer '%s' not found", name)
-}
-
-// GetSupportedTypesWithPlugin 获取插件架构支持的所有类型
-func (e *DlpEngine) GetSupportedTypesWithPlugin() map[string][]string {
-	if e.IsPluginArchitectureEnabled() {
-		return e.manager.GetTypeMapping()
-	}
-	return nil
 }
 
 // ClearDesensitizerCaches 清除所有脱敏器缓存

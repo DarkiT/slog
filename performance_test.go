@@ -43,15 +43,15 @@ func (sb *syncBuffer) Reset() {
 
 var _ io.Writer = (*syncBuffer)(nil)
 
-// BenchmarkDynamic 测试优化后的Dynamic函数性能
-func BenchmarkDynamic(b *testing.B) {
+// BenchmarkInfo 并行日志写入性能基准
+func BenchmarkInfo(b *testing.B) {
 	var buf syncBuffer
 	logger := NewLogger(&buf, true, false) // 禁用颜色以便测试
 
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			logger.Dynamic("测试消息", 3, 10)
+			logger.Info("测试消息", "k", "v")
 		}
 	})
 }
@@ -138,7 +138,10 @@ func TestSubscriberErrorHandling(t *testing.T) {
 
 	// 验证至少收到一条消息
 	select {
-	case <-records:
+	case event := <-records:
+		if event.Rendered == "" {
+			t.Error("订阅事件缺少渲染结果")
+		}
 		// 成功接收到消息
 	case <-time.After(time.Second):
 		t.Error("未收到任何消息")
@@ -190,7 +193,7 @@ func BenchmarkMemoryUsage(b *testing.B) {
 	runtime.GC()
 	runtime.ReadMemStats(&m2)
 
-	b.ReportMetric(float64(m2.Alloc-m1.Alloc)/float64(b.N), "bytes/op")
+	b.ReportMetric(float64(m2.TotalAlloc-m1.TotalAlloc)/float64(b.N), "bytes/op")
 }
 
 // TestConcurrentSafety 并发安全测试
@@ -209,7 +212,6 @@ func TestConcurrentSafety(t *testing.T) {
 			defer wg.Done()
 			for j := 0; j < iterations; j++ {
 				logger.Info("并发测试", "goroutine", id, "iteration", j)
-				logger.Dynamic("动态测试", 2, 5)
 			}
 		}(i)
 	}

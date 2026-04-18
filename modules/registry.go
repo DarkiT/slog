@@ -11,10 +11,9 @@ import (
 type ModuleType int
 
 const (
-	TypeFormatter  ModuleType = iota // 格式化器
-	TypeHandler                      // 处理器
-	TypeMiddleware                   // 中间件
-	TypeSink                         // 日志接收器
+	TypeFormatter ModuleType = iota // 格式化器
+	TypeHandler                     // 处理器
+	TypeSink                        // 日志接收器
 )
 
 func (mt ModuleType) String() string {
@@ -23,8 +22,6 @@ func (mt ModuleType) String() string {
 		return "formatter"
 	case TypeHandler:
 		return "handler"
-	case TypeMiddleware:
-		return "middleware"
 	case TypeSink:
 		return "sink"
 	default:
@@ -44,7 +41,7 @@ type ModuleConfig struct {
 	Config   Config `json:"config"`
 }
 
-// Module 定义模块接口
+// Module 定义模块接口。
 type Module interface {
 	// Name 返回模块名称
 	Name() string

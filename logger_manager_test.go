@@ -92,6 +92,45 @@ func TestLoggerManager_Configure(t *testing.T) {
 	}
 }
 
+func TestLoggerManager_Configure_UpdatesExistingInstances(t *testing.T) {
+	manager := &LoggerManager{
+		instances: make(map[string]*Logger),
+		config:    defaultGlobalConfig,
+	}
+
+	defaultLogger := manager.GetDefault()
+	namedLogger := manager.GetNamed("api")
+
+	newConfig := &GlobalConfig{
+		DefaultWriter:  os.Stderr,
+		DefaultLevel:   LevelDebug,
+		DefaultNoColor: true,
+		DefaultSource:  true,
+		EnableText:     false,
+		EnableJSON:     true,
+	}
+
+	if err := manager.Configure(newConfig); err != nil {
+		t.Fatalf("Configure() failed: %v", err)
+	}
+
+	// 已存在实例应保持同一指针
+	if manager.GetDefault() != defaultLogger {
+		t.Fatal("default logger pointer should remain stable")
+	}
+	if manager.GetNamed("api") != namedLogger {
+		t.Fatal("named logger pointer should remain stable")
+	}
+
+	// 并且配置应被同步到实例
+	if !defaultLogger.noColor || !namedLogger.noColor {
+		t.Fatal("existing instances should inherit noColor from global config")
+	}
+	if defaultLogger.GetLevel() != LevelDebug || namedLogger.GetLevel() != LevelDebug {
+		t.Fatal("existing instances should inherit level from global config")
+	}
+}
+
 func TestLoggerManager_Reset(t *testing.T) {
 	manager := &LoggerManager{
 		instances: make(map[string]*Logger),
@@ -246,8 +285,6 @@ func TestLoggerManager_ConcurrentAccess(t *testing.T) {
 }
 
 func TestGlobalFunctions(t *testing.T) {
-	// 测试向后兼容的全局函数
-
 	// 重置全局状态
 	globalManager.Reset()
 
@@ -262,17 +299,17 @@ func TestGlobalFunctions(t *testing.T) {
 		t.Error("Default() 应该返回同一个实例")
 	}
 
-	// 测试Named()
-	apiLogger := Named("api")
+	// 测试GetNamed()
+	apiLogger := GetManager().GetNamed("api")
 	if apiLogger == nil {
-		t.Fatal("Named() 应该返回非nil的logger")
+		t.Fatal("GetNamed() 应该返回非nil的logger")
 	}
 
 	if apiLogger == logger1 {
 		t.Error("命名logger应该与默认logger不同")
 	}
 
-	// 测试ConfigureGlobal()
+	// 测试Configure()
 	var buf bytes.Buffer
 	config := &GlobalConfig{
 		DefaultWriter:  &buf,
@@ -282,9 +319,9 @@ func TestGlobalFunctions(t *testing.T) {
 		EnableJSON:     false,
 	}
 
-	err := ConfigureGlobal(config)
+	err := GetManager().Configure(config)
 	if err != nil {
-		t.Fatalf("ConfigureGlobal() 失败: %v", err)
+		t.Fatalf("Configure() 失败: %v", err)
 	}
 }
 

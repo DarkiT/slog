@@ -106,9 +106,11 @@ records, cancel := slog.Subscribe(1000)
 defer cancel()
 
 go func() {
-    for record := range records {
-        // 处理日志记录
-        processLogRecord(record)
+    for event := range records {
+        // 处理结构化视图
+        processLogRecord(event.Record)
+        // 或直接消费当前激活输出对应的语义化内容
+        fmt.Println(event.Rendered)
     }
 }()
 ```

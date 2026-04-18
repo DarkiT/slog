@@ -2,9 +2,11 @@ package slog
 
 import (
 	"io"
+	"log/slog"
 	"os"
 
 	gelfmod "github.com/darkit/slog/modules/output/gelf"
+	outputnet "github.com/darkit/slog/modules/output/net"
 )
 
 // LoggerBuilder 通过链式方式快速构建 Logger，便于上层按需开启 Text/JSON/DLP、预置分组与字段。
@@ -16,6 +18,7 @@ type LoggerBuilder struct {
 	attrs  []any
 	mode   string // "", "logfmt", "gelf"
 	gopts  *gelfmod.Options
+	nopts  *outputnet.SenderOption
 }
 
 // NewLoggerBuilder 创建一个新的构建器，默认输出到 stdout、启用文本日志。
@@ -92,6 +95,13 @@ func (b *LoggerBuilder) UseGELF(opts *gelfmod.Options) *LoggerBuilder {
 	return b
 }
 
+// UseNetOutput 切换为通用网络输出，适用于任意 TCP/UDP 接收端。
+func (b *LoggerBuilder) UseNetOutput(opts *outputnet.SenderOption) *LoggerBuilder {
+	b.mode = "output.net"
+	b.nopts = opts
+	return b
+}
+
 // EnableDLP 控制 DLP 脱敏能力。
 func (b *LoggerBuilder) EnableDLP(on bool) *LoggerBuilder {
 	if on {
@@ -110,6 +120,23 @@ func (b *LoggerBuilder) Build() *Logger {
 		logger = NewLogfmtLogger(b.writer, nil)
 	case "gelf":
 		logger = NewGELFLogger(b.writer, nil, b.gopts)
+	case "output.net":
+		opt := &outputnet.SenderOption{}
+		if b.nopts != nil {
+			cp := *b.nopts
+			opt = &cp
+		}
+		sender := outputnet.NewSender(*opt)
+		codec, _ := outputnet.GetCodec("raw")
+		handler := outputnet.NewRawHandlerWithOption(outputnet.RawOption{
+			Level:  LevelInfo,
+			Writer: sender,
+			Codec:  codec,
+		})
+		logger = globalManager.GetDefault().clone()
+		logger.text = slog.New(newAddonsHandler(handler, ext))
+		logger.json = nil
+		logger.w = b.writer
 	default:
 		logger = NewLoggerWithConfig(b.writer, b.cfg)
 	}

@@ -28,10 +28,10 @@ func (w *WebhookAdapter) Configure(config modules.Config) error {
 	}
 
 	var cfg struct {
-		Endpoint  string        `json:"endpoint"`
-		Timeout   time.Duration `json:"timeout"`
-		Level     string        `json:"level"`
-		AddSource bool          `json:"add_source"`
+		Endpoint string        `json:"endpoint"`
+		Timeout  time.Duration `json:"timeout"`
+		Level    string        `json:"level"`
+		Codec    string        `json:"codec"`
 	}
 
 	if err := config.Bind(&cfg); err != nil {
@@ -63,8 +63,10 @@ func (w *WebhookAdapter) Configure(config modules.Config) error {
 		w.option.Level = slog.LevelDebug
 	}
 
-	if cfg.AddSource {
-		w.option.AddSource = true
+	if codec, ok := GetCodec(cfg.Codec); ok {
+		w.option.Codec = codec
+	} else if cfg.Codec != "" {
+		return errInvalidCodec
 	}
 
 	// 创建处理器

@@ -3,7 +3,6 @@ package slog
 import (
 	"io"
 	"sync"
-	"sync/atomic"
 )
 
 const (
@@ -17,7 +16,7 @@ const (
 type buffer struct {
 	buf []byte                   // 主缓冲区,存储实际数据
 	tmp [initialBufferSlice]byte // 临时缓冲区,用于优化小对象写入
-	n   int32                    // 原子操作计数器,记录写入次数
+	n   int                      // 使用次数计数器,记录写入次数
 }
 
 // bufferPool 全局buffer池实例
@@ -40,7 +39,7 @@ func newBuffer() *buffer {
 // 否则直接丢弃以防止内存泄漏
 func (b *buffer) Free() {
 	// 避免过大的buffer进入池
-	if cap(b.buf) <= maxBufferSize && atomic.LoadInt32(&b.n) < 1000 {
+	if cap(b.buf) <= maxBufferSize && b.n < 1000 {
 		b.Reset()
 		bufferPool.Put(b)
 		return
@@ -53,13 +52,13 @@ func (b *buffer) Free() {
 // 清空内容并重置计数器,但保留已分配的容量
 func (b *buffer) Reset() {
 	b.buf = b.buf[:0]
-	atomic.StoreInt32(&b.n, 0)
+	b.n = 0
 }
 
 // Write 实现了io.Writer接口的写入方法
 // 包含小对象优化和自动扩容机制
 func (b *buffer) Write(p []byte) (n int, err error) {
-	atomic.AddInt32(&b.n, 1)
+	b.n++
 	// 小对象优化:对于小于临时缓冲区的数据,先复制到临时区
 	if len(p) <= len(b.tmp) {
 		copy(b.tmp[:], p)
@@ -100,7 +99,7 @@ func (b *buffer) WriteStringIf(ok bool, str string) {
 // WriteString 写入字符串到buffer
 // 实现了io.StringWriter接口
 func (b *buffer) WriteString(s string) (n int, err error) {
-	atomic.AddInt32(&b.n, 1)
+	b.n++
 	b.buf = append(b.buf, s...)
 	return len(s), nil
 }
@@ -108,7 +107,7 @@ func (b *buffer) WriteString(s string) (n int, err error) {
 // WriteByte 写入单个字节到buffer
 // 实现了io.ByteWriter接口
 func (b *buffer) WriteByte(c byte) error {
-	atomic.AddInt32(&b.n, 1)
+	b.n++
 	b.buf = append(b.buf, c)
 	return nil
 }

@@ -738,11 +738,6 @@ func (s *RegexSearcher) ReplaceParallel(text string, matchType string) string {
 		return text
 	}
 
-	// 跳过已脱敏的内容
-	if strings.Contains(text, "****") {
-		return text
-	}
-
 	builder := s.pool.Get().(*strings.Builder)
 	defer func() {
 		builder.Reset()
@@ -1250,11 +1245,6 @@ func (s *RegexSearcher) ReplaceAllTypes(text string) string {
 
 	// 跳过规则名称
 	if isRuleName(text) {
-		return text
-	}
-
-	// 跳过已脱敏的内容
-	if strings.Contains(text, "****") {
 		return text
 	}
 

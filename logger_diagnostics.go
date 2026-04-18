@@ -27,12 +27,15 @@ func CollectModuleDiagnostics() []ModuleDiagnostics {
 			Enabled:  m.Enabled(),
 			Priority: m.Priority(),
 		}
-		if healthable, ok := m.(modules.Healthable); ok {
+		if healthable, ok := m.(interface {
+			HealthCheck() error
+			IsHealthy() bool
+		}); ok {
 			err := healthable.HealthCheck()
 			healthy := err == nil && healthable.IsHealthy()
 			diag.Healthy = &healthy
 		}
-		if measurable, ok := m.(modules.Measurable); ok {
+		if measurable, ok := m.(interface{ GetMetrics() map[string]any }); ok {
 			diag.Metrics = measurable.GetMetrics()
 		}
 		diags = append(diags, diag)

@@ -68,7 +68,9 @@ func NewWriter(filename ...string) *writer {
 // size: 文件大小上限，单位为MB
 // 当日志文件达到此大小时会触发轮转
 func (w *writer) SetMaxSize(size int) *writer {
+	w.mu.Lock()
 	w.maxSize = size
+	w.mu.Unlock()
 	return w
 }
 
@@ -76,7 +78,9 @@ func (w *writer) SetMaxSize(size int) *writer {
 // days: 文件保留天数
 // 超过指定天数的日志文件将被删除，设置为0表示不删除
 func (w *writer) SetMaxAge(days int) *writer {
+	w.mu.Lock()
 	w.maxAge = days
+	w.mu.Unlock()
 	return w
 }
 
@@ -84,7 +88,9 @@ func (w *writer) SetMaxAge(days int) *writer {
 // count: 要保留的文件数量
 // 超过数量限制的旧文件将被删除，设置为0表示不限制数量
 func (w *writer) SetMaxBackups(count int) *writer {
+	w.mu.Lock()
 	w.maxBackups = count
+	w.mu.Unlock()
 	return w
 }
 
@@ -92,7 +98,9 @@ func (w *writer) SetMaxBackups(count int) *writer {
 // local: true表示使用本地时间，false表示使用UTC时间
 // 影响日志文件的备份名称中的时间戳
 func (w *writer) SetLocalTime(local bool) *writer {
+	w.mu.Lock()
 	w.localTime = local
+	w.mu.Unlock()
 	return w
 }
 
@@ -100,7 +108,9 @@ func (w *writer) SetLocalTime(local bool) *writer {
 // compress: true表示启用压缩，false表示不压缩
 // 启用后，旧的日志文件将被压缩为.gz格式
 func (w *writer) SetCompress(compress bool) *writer {
+	w.mu.Lock()
 	w.compress = compress
+	w.mu.Unlock()
 	return w
 }
 
@@ -451,11 +461,6 @@ func (w *writer) parseTimestamp(timestampPart string) time.Time {
 		if t, err := time.Parse("2006-01-02T15-04-05.000000000", baseTime); err == nil {
 			return t
 		}
-	}
-
-	// 尝试解析原始格式 "2006-01-02T15-04-05"（向后兼容）
-	if t, err := time.Parse(backupTimeFormat, timestampPart); err == nil {
-		return t
 	}
 
 	return time.Time{}

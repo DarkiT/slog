@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"reflect"
 	"runtime"
+	"runtime/debug"
 	"slices"
 	"strconv"
 	"strings"
@@ -242,10 +243,14 @@ func FormatErrorKey(values map[string]any, errorKeys ...string) map[string]any {
 }
 
 func FormatError(err error) map[string]any {
+	stack := ""
+	if err != nil {
+		stack = string(debug.Stack())
+	}
 	return map[string]any{
 		"kind":  reflect.TypeOf(err).String(),
 		"error": err.Error(),
-		"stack": nil, // @TODO
+		"stack": stack,
 	}
 }
 

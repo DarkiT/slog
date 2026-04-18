@@ -71,13 +71,54 @@ func (epd *EnhancedPhoneDesensitizer) preprocessText(input string) string {
 }
 
 // isInvisibleChar 检查是否为不可见字符（零宽字符等）
+// 扩展检测范围，包括更多可能用于绕过检测的特殊字符
 func isInvisibleChar(r rune) bool {
-	return r == '\u200B' || // 零宽空格
-		r == '\u200C' || // 零宽非连字符
-		r == '\u200D' || // 零宽连字符
-		r == '\uFEFF' || // 零宽非断空格
-		r == '\u2060' || // 词连接符
-		unicode.IsControl(r)
+	// 零宽字符
+	if r == '\u200B' || // 零宽空格 (ZWSP)
+		r == '\u200C' || // 零宽非连字符 (ZWNJ)
+		r == '\u200D' || // 零宽连字符 (ZWJ)
+		r == '\uFEFF' || // 零宽非断空格 (BOM)
+		r == '\u2060' || // 词连接符 (WJ)
+		r == '\u2061' || // 函数应用
+		r == '\u2062' || // 不可见乘号
+		r == '\u2063' || // 不可见分隔符
+		r == '\u2064' { // 不可见加号
+		return true
+	}
+
+	// 变体选择符 (Variation Selectors)
+	if r >= '\uFE00' && r <= '\uFE0F' {
+		return true
+	}
+
+	// 组合用标记 (Combining Marks) - 可能用于混淆
+	if r >= '\u0300' && r <= '\u036F' {
+		return true
+	}
+
+	// 软连字符
+	if r == '\u00AD' {
+		return true
+	}
+
+	// 其他不可见格式字符
+	if r == '\u180E' || // 蒙古语元音分隔符
+		r == '\u2028' || // 行分隔符
+		r == '\u2029' || // 段落分隔符
+		r == '\u202A' || // 从左到右嵌入
+		r == '\u202B' || // 从右到左嵌入
+		r == '\u202C' || // 弹出方向格式
+		r == '\u202D' || // 从左到右覆盖
+		r == '\u202E' || // 从右到左覆盖
+		r == '\u2066' || // 从左到右隔离
+		r == '\u2067' || // 从右到左隔离
+		r == '\u2068' || // 首个强字符隔离
+		r == '\u2069' { // 弹出方向隔离
+		return true
+	}
+
+	// 控制字符
+	return unicode.IsControl(r)
 }
 
 // Supports 检查是否支持指定的数据类型

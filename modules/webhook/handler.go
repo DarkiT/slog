@@ -1,58 +1,47 @@
 package webhook
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"log/slog"
-	"net/http"
+	"slices"
 	"time"
 
-	svr "github.com/darkit/slog"
 	"github.com/darkit/slog/internal/common"
+	"github.com/darkit/slog/modules"
 )
 
 type Option struct {
-	// log level (default: debug)
+	// log level (default: info)
 	Level slog.Leveler
 
 	// URL
 	Endpoint string
 	Timeout  time.Duration // default: 10s
 
-	// optional: customize webhook event builder
-	Converter Converter
-	// optional: custom marshaler
-	Marshaler func(v any) ([]byte, error)
 	// optional: fetch attributes from context
 	AttrFromContext []func(ctx context.Context) []slog.Attr
 
-	// optional: see slog.HandlerOptions
-	AddSource   bool
-	ReplaceAttr func(groups []string, a slog.Attr) slog.Attr
+	// optional: codec and transport
+	Codec     Codec
+	Transport Transport
 }
 
 func (o Option) NewWebhookHandler() slog.Handler {
 	if o.Level == nil {
-		o.Level = slog.LevelDebug
+		o.Level = slog.LevelInfo
 	}
-
-	if o.Timeout == 0 {
-		o.Timeout = 10 * time.Second
+	o.Timeout = modules.DefaultTimeout(o.Timeout, 10*time.Second)
+	o.AttrFromContext = modules.DefaultAttrFromContext(o.AttrFromContext)
+	if o.Codec == nil {
+		codec, _ := GetCodec("default")
+		o.Codec = codec
 	}
-
-	if o.Converter == nil {
-		o.Converter = DefaultConverter
+	if o.Transport == nil {
+		o.Transport = &HTTPTransport{
+			Endpoint: o.Endpoint,
+			Timeout:  o.Timeout,
+		}
 	}
-
-	if o.Marshaler == nil {
-		o.Marshaler = json.Marshal
-	}
-
-	if o.AttrFromContext == nil {
-		o.AttrFromContext = []func(ctx context.Context) []slog.Attr{}
-	}
-
 	return &WebhookHandler{
 		option: o,
 		attrs:  []slog.Attr{},
@@ -74,67 +63,34 @@ func (h *WebhookHandler) Enabled(_ context.Context, level slog.Level) bool {
 
 func (h *WebhookHandler) Handle(ctx context.Context, record slog.Record) error {
 	fromContext := common.ContextExtractor(ctx, h.option.AttrFromContext)
-	payload := h.option.Converter(h.option.AddSource, h.option.ReplaceAttr, append(h.attrs, fromContext...), h.groups, &record)
+	allAttrs := append(slices.Clone(h.attrs), fromContext...)
+	payload, err := h.option.Codec.Encode(ctx, &record, allAttrs, h.groups)
+	if err != nil {
+		return err
+	}
 
-	// non-blocking
-	go func() {
-		_ = send(h.option.Endpoint, h.option.Timeout, h.option.Marshaler, payload)
-	}()
-
+	modules.RunAsync("webhook", func() error {
+		return h.option.Transport.Send(context.Background(), payload)
+	})
 	return nil
 }
 
 func (h *WebhookHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	next := common.AppendAttrsToGroup(h.groups, h.attrs, attrs...)
 	return &WebhookHandler{
 		option: h.option,
-		attrs:  common.AppendAttrsToGroup(h.groups, h.attrs, attrs...),
-		groups: h.groups,
+		attrs:  next,
+		groups: slices.Clone(h.groups),
 	}
 }
 
 func (h *WebhookHandler) WithGroup(name string) slog.Handler {
-	// https://cs.opensource.google/go/x/exp/+/46b07846:slog/handler.go;l=247
 	if name == "" {
 		return h
 	}
-
 	return &WebhookHandler{
 		option: h.option,
-		attrs:  h.attrs,
-		groups: append(h.groups, name),
+		attrs:  slices.Clone(h.attrs),
+		groups: append(slices.Clone(h.groups), name),
 	}
-}
-
-func send(endpoint string, timeout time.Duration, marshaler func(v any) ([]byte, error), payload map[string]any) error {
-	client := http.Client{
-		Timeout: time.Duration(10) * time.Second,
-	}
-
-	json, err := marshaler(payload)
-	if err != nil {
-		return err
-	}
-
-	body := bytes.NewBuffer(json)
-
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-
-	// @TODO: maintain a pool of tcp connections
-	req, err := http.NewRequestWithContext(ctx, "POST", endpoint, body)
-	if err != nil {
-		return err
-	}
-
-	req.Header.Add("content-type", `application/json`)
-	req.Header.Add("user-agent", svr.Name)
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-
-	defer resp.Body.Close()
-
-	return nil
 }

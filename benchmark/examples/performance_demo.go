@@ -30,9 +30,9 @@ func main() {
 	fmt.Println("\n🔒 3. DLP数据脱敏演示")
 	testDLPFeature()
 
-	// 4. 可视化功能演示
-	fmt.Println("\n🎨 4. 可视化功能演示")
-	testVisualizationFeatures()
+	// 4. 运行时控制演示
+	fmt.Println("\n🎛️ 4. 运行时控制演示")
+	testRuntimeControls()
 
 	// 5. 并发性能演示
 	fmt.Println("\n⚡ 5. 并发性能测试")
@@ -181,21 +181,23 @@ func testDLPFeature() {
 	fmt.Println("\n✨ 其他日志库都不具备此功能！")
 }
 
-// testVisualizationFeatures 可视化功能演示
-func testVisualizationFeatures() {
-	fmt.Println("darkit/slog 独有的可视化功能:")
-
+// testRuntimeControls 运行时控制演示
+func testRuntimeControls() {
+	fmt.Println("darkit/slog 运行时配置演示:")
 	logger := darkit.NewLogger(os.Stdout, false, false)
+	// 切到 debug 并启用 JSON
+	_, _ = darkit.ApplyRuntimeOption("level", "debug")
+	_, _ = darkit.ApplyRuntimeOption("json", "on")
 
-	// 进度条演示
-	fmt.Println("\n1. 进度条功能:")
-	logger.ProgressBarWithValue("处理进度", 75.5, 30)
+	logger.Debug("runtime switch applied", "mode", "debug+json")
 
-	// 动态效果演示
-	fmt.Println("\n2. 动态加载效果:")
-	logger.Dynamic("处理中", 10, 100) // 10帧，每帧100ms
+	snap := darkit.GetRuntimeSnapshot()
+	fmt.Printf("当前状态: level=%v text=%v json=%v dlp=%v\n",
+		snap.Level, snap.TextEnabled, snap.JSONEnabled, snap.DLPEnabled)
 
-	fmt.Println("\n✨ 其他日志库都不具备可视化功能！")
+	// 恢复默认展示，避免影响后续输出
+	_, _ = darkit.ApplyRuntimeOption("level", "info")
+	_, _ = darkit.ApplyRuntimeOption("json", "off")
 }
 
 // testConcurrentPerformance 并发性能测试

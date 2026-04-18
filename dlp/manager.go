@@ -26,6 +26,17 @@ func (dm *DefaultDesensitizerManager) initializeStats() {
 	}
 }
 
+// NewDefaultDesensitizerManager 创建默认脱敏器管理器。
+func NewDefaultDesensitizerManager() *DefaultDesensitizerManager {
+	dm := &DefaultDesensitizerManager{
+		desensitizers: make(map[string]Desensitizer),
+		typeMapping:   make(map[string][]string),
+	}
+	dm.enabled.Store(true)
+	dm.initializeStats()
+	return dm
+}
+
 // RegisterDesensitizer 注册脱敏器
 func (dm *DefaultDesensitizerManager) RegisterDesensitizer(desensitizer Desensitizer) error {
 	if desensitizer == nil {
@@ -233,8 +244,8 @@ func (dm *DefaultDesensitizerManager) ListDesensitizers() []string {
 
 // EnableAll 启用所有脱敏器
 func (dm *DefaultDesensitizerManager) EnableAll() {
-	dm.mu.RLock()
-	defer dm.mu.RUnlock()
+	dm.mu.Lock()
+	defer dm.mu.Unlock()
 
 	for _, desensitizer := range dm.desensitizers {
 		if !desensitizer.Enabled() {
@@ -252,8 +263,8 @@ func (dm *DefaultDesensitizerManager) EnableAll() {
 
 // DisableAll 禁用所有脱敏器
 func (dm *DefaultDesensitizerManager) DisableAll() {
-	dm.mu.RLock()
-	defer dm.mu.RUnlock()
+	dm.mu.Lock()
+	defer dm.mu.Unlock()
 
 	for _, desensitizer := range dm.desensitizers {
 		if desensitizer.Enabled() {
@@ -598,14 +609,14 @@ func (dm *DefaultDesensitizerManager) GetDetailedStats() map[string]interface{} 
 
 // 全局脱敏器管理器实例
 var (
-	globalManager     *SecurityEnhancedManager
+	globalManager     *DefaultDesensitizerManager
 	globalManagerOnce sync.Once
 )
 
 // GetGlobalManager 获取全局脱敏器管理器
-func GetGlobalManager() *SecurityEnhancedManager {
+func GetGlobalManager() *DefaultDesensitizerManager {
 	globalManagerOnce.Do(func() {
-		globalManager = NewSecurityEnhancedManager() // 使用安全增强版本
+		globalManager = NewDefaultDesensitizerManager()
 	})
 	return globalManager
 }

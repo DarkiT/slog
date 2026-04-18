@@ -120,13 +120,9 @@ func (e *extensions) registerModule(module modules.Module) error {
 	// 根据模块类型进行相应的处理
 	switch module.Type() {
 	case modules.TypeFormatter:
-		// 优先使用强类型接口，避免反射带来的额外开销
 		if provider, ok := module.(modules.FormatterProvider); ok {
 			e.addFormatterFuncs(provider.FormatterFunctions())
-			break
-		}
-		// 向后兼容旧接口
-		if adapter, ok := module.(interface{ GetFormatters() interface{} }); ok {
+		} else if adapter, ok := module.(interface{ GetFormatters() interface{} }); ok {
 			if formatters := adapter.GetFormatters(); formatters != nil {
 				e.addFormattersFromModule(formatters)
 			}
@@ -134,6 +130,15 @@ func (e *extensions) registerModule(module modules.Module) error {
 	}
 
 	return nil
+}
+
+func (e *extensions) addFormatterFuncs(funcs []func([]string, slog.Attr) (slog.Value, bool)) {
+	for _, f := range funcs {
+		if f == nil {
+			continue
+		}
+		e.registerFormatterInternal("module", FormatterFunc(f))
+	}
 }
 
 func (e *extensions) addFormattersFromModule(formatters interface{}) {
@@ -146,15 +151,6 @@ func (e *extensions) addFormattersFromModule(formatters interface{}) {
 				e.addFormatterFuncs([]func([]string, slog.Attr) (slog.Value, bool){f})
 			}
 		}
-	}
-}
-
-func (e *extensions) addFormatterFuncs(funcs []func([]string, slog.Attr) (slog.Value, bool)) {
-	for _, f := range funcs {
-		if f == nil {
-			continue
-		}
-		e.registerFormatterInternal("module", FormatterFunc(f))
 	}
 }
 
@@ -201,16 +197,6 @@ func (e *extensions) snapshotModules() []modules.Module {
 	return append([]modules.Module(nil), e.registeredModules...)
 }
 
-func (e *extensions) getModule(name string) (modules.Module, bool) {
-	e.modulesMu.RLock()
-	defer e.modulesMu.RUnlock()
-	if e.moduleIndex == nil {
-		return nil, false
-	}
-	m, ok := e.moduleIndex[name]
-	return m, ok
-}
-
 func (e *extensions) applyFormatters(groups []string, attr slog.Attr) slog.Attr {
 	e.formatterMu.RLock()
 	defer e.formatterMu.RUnlock()
@@ -223,6 +209,24 @@ func (e *extensions) applyFormatters(groups []string, attr slog.Attr) slog.Attr 
 		}
 	}
 	return attr
+}
+
+// hasAttrTransformers 判断当前扩展链是否会改写属性值。
+func (e *extensions) hasAttrTransformers() bool {
+	if e == nil {
+		return false
+	}
+	if e.dlpEnabled && e.dlpEngine != nil {
+		return true
+	}
+	e.formatterMu.RLock()
+	defer e.formatterMu.RUnlock()
+	return len(e.formatters) > 0
+}
+
+// hasMessageTransformer 判断消息正文是否需要在扩展链中被改写。
+func (e *extensions) hasMessageTransformer() bool {
+	return e != nil && e.dlpEnabled && e.dlpEngine != nil
 }
 
 func (e *extensions) emitDiagnostics(stage string, groups []string, before, after slog.Attr) {
@@ -249,14 +253,35 @@ func attrChanged(before, after slog.Attr) bool {
 	return before.Value.String() != after.Value.String()
 }
 
+func (e *extensions) transformMessage(msg string) string {
+	if e == nil || !e.dlpEnabled || e.dlpEngine == nil || msg == "" {
+		return msg
+	}
+	return e.dlpEngine.DesensitizeText(msg)
+}
+
 // eHandler 是一个自定义的 slog 处理器，用于在日志消息前添加前缀，并将其传递给下一个处理器。
 // 前缀从日志记录的属性中获取，使用 prefixKeys 中指定的键。
 type eHandler struct {
-	handler  slog.Handler // 链中的下一个日志处理器。
-	opts     *extensions  // 此处理器的配置选项。
-	prefixes []slog.Value // 前缀值的缓存列表。
-	groups   []string
-	ctx      context.Context
+	handler     slog.Handler // 链中的下一个日志处理器。
+	opts        *extensions  // 此处理器的配置选项。
+	prefixes    []slog.Value // 前缀值的缓存列表。
+	groups      []string
+	observerOps []observerOperation
+	ctx         context.Context
+}
+
+type observerOpKind uint8
+
+const (
+	observerOpAttrs observerOpKind = iota
+	observerOpGroup
+)
+
+type observerOperation struct {
+	kind  observerOpKind
+	group string
+	attrs []slog.Attr
 }
 
 // newAddonsHandler 创建一个新的前缀日志处理器。
@@ -265,6 +290,16 @@ type eHandler struct {
 func newAddonsHandler(next slog.Handler, opts *extensions) *eHandler {
 	if opts == nil {
 		opts = ext
+	}
+	if existing, ok := next.(*eHandler); ok {
+		return &eHandler{
+			handler:     existing.handler,
+			opts:        opts,
+			prefixes:    slices.Clone(existing.prefixes),
+			groups:      slices.Clone(existing.groups),
+			observerOps: cloneObserverOperations(existing.observerOps),
+			ctx:         existing.ctx,
+		}
 	}
 
 	return &eHandler{
@@ -278,11 +313,12 @@ func newAddonsHandler(next slog.Handler, opts *extensions) *eHandler {
 func cloneHandlerWithContext(handler slog.Handler, ctx context.Context) slog.Handler {
 	if eh, ok := handler.(*eHandler); ok {
 		clone := &eHandler{
-			handler:  eh.handler,
-			opts:     eh.opts,
-			groups:   slices.Clone(eh.groups),
-			prefixes: slices.Clone(eh.prefixes),
-			ctx:      ctx,
+			handler:     eh.handler,
+			opts:        eh.opts,
+			groups:      slices.Clone(eh.groups),
+			prefixes:    slices.Clone(eh.prefixes),
+			observerOps: cloneObserverOperations(eh.observerOps),
+			ctx:         ctx,
 		}
 		return clone
 	}
@@ -295,70 +331,19 @@ func (h *eHandler) Enabled(ctx context.Context, level slog.Level) bool {
 
 // Handle 处理日志记录，如果需要，将前缀添加到消息，并将记录传递给下一个处理器。
 func (h *eHandler) Handle(ctx context.Context, r slog.Record) error {
-	if ctx == nil {
-		ctx = h.ctx
-	}
-
-	// 构建带前缀的消息
-	prefix := ""
-	if len(h.prefixes) > 0 && h.prefixes[0].Any() != nil {
-		prefix = "[" + h.prefixes[0].String() + "] " // 添加方括号和空格
-	}
-
-	// 创建新记录，使用带前缀的消息
-	nr := slog.NewRecord(r.Time, r.Level, prefix+r.Message, r.PC)
-
-	// 处理上下文字段
-	if v := ctx.Value(fieldsKey); v != nil {
-		if fields, ok := v.(*Fields); ok {
-			// 创建已存在属性的映射
-			seen := make(map[string]bool)
-			r.Attrs(func(attr slog.Attr) bool {
-				seen[attr.Key] = true
-				return true
-			})
-
-			// 从 Fields 中获取并添加属性
-			fields.mu.RLock()
-			for key, val := range fields.values {
-				if !seen[key] && key != "$module" { // 排除 module 属性
-					attr := slog.Any(key, val)
-					// 应用转换（包括 DLP 处理）
-					attr = h.transformAttr(h.groups, attr)
-					nr.AddAttrs(attr)
-				}
-			}
-			fields.mu.RUnlock()
-		}
-	}
-
-	if propagator := currentContextPropagator(); propagator != nil {
-		if attrs := propagator(ctx); len(attrs) > 0 {
-			for _, attr := range attrs {
-				nr.AddAttrs(h.transformAttr(h.groups, attr))
-			}
-		}
-	}
-
-	// 添加原始记录的属性（排除 module）
-	r.Attrs(func(attr slog.Attr) bool {
-		if attr.Key != "$module" {
-			nr.AddAttrs(h.transformAttr(h.groups, attr))
-		}
-		return true
-	})
-
-	return h.handler.Handle(ctx, nr)
+	return h.handler.Handle(ctx, h.prepareRecord(ctx, r))
 }
 
 // WithAttrs 方法，正确使用模块值
 func (h *eHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
-	// 复制处理器实例
+	// 延迟到 Handle 阶段再把 attrs 注入 Record，避免每次 With 都重建整棵 handler 树。
 	newHandler := &eHandler{
-		handler:  h.handler.WithAttrs(h.transformAttrs(h.groups, attrs)),
-		opts:     h.opts,
-		groups:   slices.Clone(h.groups),
-		prefixes: slices.Clone(h.prefixes), // 复制现有前缀
+		handler:     h.handler,
+		opts:        h.opts,
+		groups:      slices.Clone(h.groups),
+		prefixes:    slices.Clone(h.prefixes), // 复制现有前缀
+		observerOps: append(cloneObserverOperations(h.observerOps), observerOperation{kind: observerOpAttrs, attrs: slices.Clone(attrs)}),
+		ctx:         h.ctx,
 	}
 
 	// 检查是否有前缀键
@@ -380,10 +365,12 @@ func (h *eHandler) WithGroup(name string) slog.Handler {
 	}
 
 	return &eHandler{
-		handler:  h.handler.WithGroup(name),
-		opts:     h.opts,
-		groups:   append(slices.Clone(h.groups), name),
-		prefixes: slices.Clone(h.prefixes),
+		handler:     h.handler,
+		opts:        h.opts,
+		groups:      append(slices.Clone(h.groups), name),
+		prefixes:    slices.Clone(h.prefixes),
+		observerOps: append(cloneObserverOperations(h.observerOps), observerOperation{kind: observerOpGroup, group: name}),
+		ctx:         h.ctx,
 	}
 }
 
@@ -425,4 +412,167 @@ func (h *eHandler) transformAttr(groups []string, attr slog.Attr) slog.Attr {
 	}
 
 	return attr
+}
+
+// prepareRecord 根据当前扩展状态选择最轻的记录整理路径。
+func (h *eHandler) prepareRecord(ctx context.Context, r slog.Record) slog.Record {
+	if len(h.observerOps) > 0 {
+		return h.normalizedObserverRecord(ctx, r)
+	}
+	if h.canPassThrough(ctx) {
+		return r
+	}
+	return h.normalizeRuntimeRecord(ctx, r)
+}
+
+func (h *eHandler) canPassThrough(ctx context.Context) bool {
+	if h == nil {
+		return true
+	}
+	if h.hasPrefix() {
+		return false
+	}
+	if h.opts != nil && h.opts.hasMessageTransformer() {
+		return false
+	}
+	if h.opts != nil && h.opts.hasAttrTransformers() {
+		return false
+	}
+	if ctx == nil {
+		ctx = h.ctx
+	}
+	if hasContextFields(getFields(ctx)) {
+		return false
+	}
+	return currentContextPropagator() == nil
+}
+
+func (h *eHandler) hasPrefix() bool {
+	for _, prefix := range h.prefixes {
+		if prefix.Any() != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func (h *eHandler) normalizeRuntimeRecord(ctx context.Context, r slog.Record) slog.Record {
+	nr := slog.NewRecord(r.Time, r.Level, h.prefixedMessage(r.Message), r.PC)
+	for _, attr := range h.runtimeAttrs(ctx, r, h.groups) {
+		nr.AddAttrs(attr)
+	}
+	return nr
+}
+
+func (h *eHandler) normalizedObserverRecord(ctx context.Context, r slog.Record) slog.Record {
+	nr := slog.NewRecord(r.Time, r.Level, h.prefixedMessage(r.Message), r.PC)
+	currentGroups := make([]string, 0, len(h.groups))
+	for _, op := range h.observerOps {
+		switch op.kind {
+		case observerOpGroup:
+			currentGroups = append(currentGroups, op.group)
+		case observerOpAttrs:
+			attrs := h.transformAttrs(currentGroups, slices.Clone(op.attrs))
+			nr.AddAttrs(wrapAttrsWithGroups(currentGroups, attrs)...)
+		}
+	}
+	runtimeAttrs := h.runtimeAttrs(ctx, r, currentGroups)
+	nr.AddAttrs(wrapAttrsWithGroups(currentGroups, runtimeAttrs)...)
+	return nr
+}
+
+func (h *eHandler) prefixedMessage(msg string) string {
+	if len(h.prefixes) > 0 && h.prefixes[0].Any() != nil {
+		msg = "[" + h.prefixes[0].String() + "] " + msg
+	}
+	if h.opts != nil {
+		return h.opts.transformMessage(msg)
+	}
+	return msg
+}
+
+func (h *eHandler) runtimeAttrs(ctx context.Context, r slog.Record, groups []string) []slog.Attr {
+	if ctx == nil {
+		ctx = h.ctx
+	}
+
+	fields := getFields(ctx)
+	propagator := currentContextPropagator()
+
+	if !hasContextFields(fields) && propagator == nil {
+		return h.appendRecordAttrs(nil, r, groups)
+	}
+
+	attrs := make([]slog.Attr, 0, 8)
+	if hasContextFields(fields) {
+		seen := make(map[string]struct{}, 8)
+		r.Attrs(func(attr slog.Attr) bool {
+			seen[attr.Key] = struct{}{}
+			return true
+		})
+
+		fields.mu.RLock()
+		for key, val := range fields.values {
+			if _, exists := seen[key]; !exists && key != "$module" {
+				attrs = append(attrs, h.transformAttr(groups, slog.Any(key, val)))
+			}
+		}
+		fields.mu.RUnlock()
+	}
+
+	if propagator != nil {
+		if propagated := propagator(ctx); len(propagated) > 0 {
+			for _, attr := range propagated {
+				attrs = append(attrs, h.transformAttr(groups, attr))
+			}
+		}
+	}
+
+	return h.appendRecordAttrs(attrs, r, groups)
+}
+
+func hasContextFields(fields *Fields) bool {
+	if fields == nil {
+		return false
+	}
+	fields.mu.RLock()
+	defer fields.mu.RUnlock()
+	return len(fields.values) > 0
+}
+
+func (h *eHandler) appendRecordAttrs(dst []slog.Attr, r slog.Record, groups []string) []slog.Attr {
+	r.Attrs(func(attr slog.Attr) bool {
+		if attr.Key != "$module" {
+			dst = append(dst, h.transformAttr(groups, attr))
+		}
+		return true
+	})
+	return dst
+}
+
+func cloneObserverOperations(ops []observerOperation) []observerOperation {
+	if len(ops) == 0 {
+		return nil
+	}
+	cloned := make([]observerOperation, len(ops))
+	for i, op := range ops {
+		cloned[i] = observerOperation{
+			kind:  op.kind,
+			group: op.group,
+			attrs: slices.Clone(op.attrs),
+		}
+	}
+	return cloned
+}
+
+func wrapAttrsWithGroups(groups []string, attrs []slog.Attr) []slog.Attr {
+	if len(groups) == 0 || len(attrs) == 0 {
+		return attrs
+	}
+
+	wrapped := slices.Clone(attrs)
+	for i := len(groups) - 1; i >= 0; i-- {
+		wrapped = []slog.Attr{{Key: groups[i], Value: slog.GroupValue(wrapped...)}}
+	}
+	return wrapped
 }

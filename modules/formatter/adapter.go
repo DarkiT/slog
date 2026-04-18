@@ -51,29 +51,9 @@ func (f *FormatterAdapter) Configure(config modules.Config) error {
 			replacement = "error"
 		}
 		f.formatters = append(f.formatters, ErrorFormatter(replacement))
-	case "pii":
-		replacement := cfg.Replacement
-		if replacement == "" {
-			replacement = "*****"
-		}
-		f.formatters = append(f.formatters, PIIFormatter(replacement))
 	}
 
 	return nil
-}
-
-// GetFormatters 获取格式化器列表（返回兼容的函数类型）
-func (f *FormatterAdapter) GetFormatters() interface{} {
-	// 转换为兼容的函数类型
-	result := make([]func([]string, slog.Attr) (slog.Value, bool), len(f.formatters))
-	for i, formatter := range f.formatters {
-		// 避免闭包问题，为每个迭代创建局部变量
-		localFormatter := formatter
-		result[i] = func(groups []string, attr slog.Attr) (slog.Value, bool) {
-			return localFormatter(groups, attr)
-		}
-	}
-	return result
 }
 
 // FormatterFunctions 实现 modules.FormatterProvider，避免反射与 interface{} 转换。

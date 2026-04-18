@@ -286,6 +286,15 @@ func (s *StructDesensitizer) desensitizeMap(val reflect.Value, depth int) error 
 
 	// 对于map，我们需要重新设置值，因为MapIndex返回的是不可设置的值
 	for _, key := range val.MapKeys() {
+		newKey := key
+		if key.Kind() == reflect.String {
+			keyText := key.String()
+			desensitizedKey := s.engine.DesensitizeText(keyText)
+			if desensitizedKey != keyText {
+				newKey = reflect.ValueOf(desensitizedKey).Convert(key.Type())
+			}
+		}
+
 		mapVal := val.MapIndex(key)
 
 		// 创建一个新的可设置的值
@@ -293,9 +302,30 @@ func (s *StructDesensitizer) desensitizeMap(val reflect.Value, depth int) error 
 			newVal := reflect.New(mapVal.Type()).Elem()
 			newVal.Set(mapVal)
 
+			if mapVal.Kind() == reflect.String {
+				original := mapVal.String()
+				newVal.SetString(s.engine.DesensitizeText(original))
+			} else if mapVal.Kind() == reflect.Interface && !mapVal.IsNil() {
+				ifaceVal := mapVal.Elem()
+				switch ifaceVal.Kind() {
+				case reflect.String:
+					newVal.Set(reflect.ValueOf(s.engine.DesensitizeText(ifaceVal.String())))
+				default:
+					ifaceCopy := reflect.New(ifaceVal.Type()).Elem()
+					ifaceCopy.Set(ifaceVal)
+					if err := s.desensitizeValue(ifaceCopy, depth+1); err == nil {
+						newVal.Set(ifaceCopy)
+					}
+				}
+			}
+
 			if err := s.desensitizeValue(newVal, depth+1); err == nil {
+				// key 发生变化时删除旧键，避免并存。
+				if newKey != key {
+					val.SetMapIndex(key, reflect.Value{})
+				}
 				// 只有在脱敏成功时才更新map中的值
-				val.SetMapIndex(key, newVal)
+				val.SetMapIndex(newKey, newVal)
 			}
 		}
 	}

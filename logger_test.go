@@ -2,6 +2,7 @@ package slog
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"log/slog"
 	"strings"
@@ -120,6 +121,27 @@ func TestLoggerWith(t *testing.T) {
 	}
 }
 
+func TestDerivedSlogLoggerRetainsLazyAttrsAndGroups(t *testing.T) {
+	var buf bytes.Buffer
+	ResetGlobalLogger(&buf, false, false)
+	SetLevelInfo()
+	EnableTextLogger()
+	DisableJSONLogger()
+
+	logger := NewLogger(&buf, false, false).WithGroup("request").With("trace_id", "t-1")
+
+	buf.Reset()
+	logger.GetSlogLogger().Info("derived slog logger", "user", "alice")
+
+	output := buf.String()
+	if !strings.Contains(output, "request.trace_id=t-1") {
+		t.Fatalf("expected derived slog logger to include grouped trace_id, got: %s", output)
+	}
+	if !strings.Contains(output, "request.user=alice") {
+		t.Fatalf("expected derived slog logger to include grouped runtime attr, got: %s", output)
+	}
+}
+
 // TestSubscribe 测试订阅功能
 func TestSubscribe(t *testing.T) {
 	logger := NewLogger(nil, false, false)
@@ -138,15 +160,87 @@ func TestSubscribe(t *testing.T) {
 
 	for receivedCount < 2 {
 		select {
-		case record := <-records:
+		case event := <-records:
 			receivedCount++
+			record := event.Record
 			if record.Level != LevelInfo && record.Level != LevelError {
 				t.Errorf("Unexpected log level: %v", record.Level)
+			}
+			if event.Rendered == "" || event.Format == "" {
+				t.Fatalf("expected subscription event to include active semantic render, got %+v", event)
 			}
 		case <-timeout:
 			t.Fatalf("Timed out waiting for log records, received %d", receivedCount)
 			return
 		}
+	}
+}
+
+func TestSubscribeWithOptions_DropOldestStats(t *testing.T) {
+	logger := NewLogger(nil, false, false)
+	records, cancel := SubscribeWithOptions(SubscribeOptions{
+		BufferSize:   1,
+		Backpressure: SubscriptionDropOldest,
+	})
+	defer cancel()
+
+	logger.Info("msg-1")
+	logger.Info("msg-2")
+	logger.Info("msg-3")
+	time.Sleep(20 * time.Millisecond)
+
+	stats := GetSubscriptionStats()
+	if stats.Dropped == 0 {
+		t.Fatal("expected dropped records with drop_oldest policy")
+	}
+	if stats.DroppedOldest == 0 {
+		t.Fatal("expected dropped_oldest metric to increase")
+	}
+
+	// 消费一条，验证订阅通道仍可用。
+	select {
+	case <-records:
+	case <-time.After(time.Second):
+		t.Fatal("expected at least one record in subscriber channel")
+	}
+}
+
+func TestSubscribeWithOptions_DropNewestStats(t *testing.T) {
+	logger := NewLogger(nil, false, false)
+	_, cancel := SubscribeWithOptions(SubscribeOptions{
+		BufferSize:   1,
+		Backpressure: SubscriptionDropNewest,
+	})
+	defer cancel()
+
+	logger.Info("msg-1")
+	logger.Info("msg-2")
+	logger.Info("msg-3")
+	time.Sleep(20 * time.Millisecond)
+
+	stats := GetSubscriptionStats()
+	if stats.DroppedNewest == 0 {
+		t.Fatal("expected dropped_newest metric to increase")
+	}
+}
+
+func TestSubscribeWithOptions_BlockWithTimeoutStats(t *testing.T) {
+	logger := NewLogger(nil, false, false)
+	_, cancel := SubscribeWithOptions(SubscribeOptions{
+		BufferSize:   1,
+		Backpressure: SubscriptionBlockWithTimeout,
+		BlockTimeout: 2 * time.Millisecond,
+	})
+	defer cancel()
+
+	logger.Info("msg-1")
+	logger.Info("msg-2")
+	logger.Info("msg-3")
+	time.Sleep(30 * time.Millisecond)
+
+	stats := GetSubscriptionStats()
+	if stats.DroppedTimed == 0 {
+		t.Fatal("expected dropped_timed_out metric to increase")
 	}
 }
 
@@ -166,25 +260,6 @@ func TestDefaultWithModules(t *testing.T) {
 	output := buf.String()
 	if !strings.Contains(output, "test.module") {
 		t.Errorf("Expected output to contain module name 'test.module', got: %s", output)
-	}
-}
-
-// TestProgressBar 测试进度条功能
-func TestProgressBar(t *testing.T) {
-	var buf bytes.Buffer
-	logger := NewLogger(&buf, false, false)
-
-	// 测试进度条值设置（使用50.0表示50%，因为API设计是0-100范围）
-	logger.ProgressBarWithValue("Test Progress", 50.0, 10)
-
-	output := buf.String()
-	if !strings.Contains(output, "Test Progress") {
-		t.Errorf("Expected output to contain progress message, got: %s", output)
-	}
-
-	// 检查进度百分比
-	if !strings.Contains(output, "50") {
-		t.Errorf("Expected output to contain \"50\", got: %s", output)
 	}
 }
 
@@ -244,7 +319,7 @@ func TestLoggerWithValue(t *testing.T) {
 
 	// 直接检查全局设置
 	t.Logf("Text enabled: %v, JSON enabled: %v, Level: %v",
-		textEnabled, jsonEnabled, levelVar.Level())
+		isGlobalTextEnabled(), isGlobalJSONEnabled(), levelVar.Level())
 
 	logger.WithValue("test", "value").Info("test message")
 
@@ -306,7 +381,755 @@ func resetForTest() {
 	// 重置全局配置
 	levelVar.Set(LevelTrace) // 使用最低级别确保所有日志都能输出
 	// 启用文本输出，禁用JSON输出
-	textEnabled, jsonEnabled = true, false
+	setGlobalTextEnabled(true)
+	setGlobalJSONEnabled(false)
+}
+
+func TestLoggerSourcePointsToCaller(t *testing.T) {
+	var buf bytes.Buffer
+	ResetGlobalLogger(&buf, false, true)
+	SetLevelInfo()
+	EnableTextLogger()
+	DisableJSONLogger()
+
+	logger := NewLogger(&buf, false, true)
+	logger.SetLevel(LevelInfo)
+
+	buf.Reset()
+	emitSourceInfoLog(logger)
+
+	output := buf.String()
+	if !strings.Contains(output, "logger_test.go") {
+		t.Fatalf("expected source to point at test file, got: %s", output)
+	}
+	if strings.Contains(output, "logger.go") {
+		t.Fatalf("expected source to skip wrapper file, got: %s", output)
+	}
+}
+
+func TestGlobalSourcePointsToCaller(t *testing.T) {
+	var buf bytes.Buffer
+	ResetGlobalLogger(&buf, false, true)
+	SetLevelInfo()
+	EnableTextLogger()
+	DisableJSONLogger()
+
+	buf.Reset()
+	emitGlobalSourceInfoLog()
+
+	output := buf.String()
+	if !strings.Contains(output, "logger_test.go") {
+		t.Fatalf("expected global source to point at test file, got: %s", output)
+	}
+	if strings.Contains(output, "log.go") || strings.Contains(output, "logger.go") {
+		t.Fatalf("expected global source to skip slog wrappers, got: %s", output)
+	}
+}
+
+func emitSourceInfoLog(logger *Logger) {
+	logger.Info("source check")
+}
+
+func emitGlobalSourceInfoLog() {
+	Info("global source check")
+}
+
+func TestWrappedSourcePointsToBusinessCaller(t *testing.T) {
+	testWithSlogSourceLogger(t, func(logger *Logger) {
+		emitWrappedSourceInfoLog(logger)
+	})
+}
+
+func TestGlobalFormattedSourcePointsToCaller(t *testing.T) {
+	testWithSlogSourceLogger(t, func(logger *Logger) {
+		emitGlobalFormattedSourceInfoLog()
+	})
+}
+
+func TestLoggerFormattedSourcePointsToCaller(t *testing.T) {
+	testWithSlogSourceLogger(t, func(logger *Logger) {
+		emitLoggerFormattedSourceInfoLog(logger)
+	})
+}
+
+func TestLoggerContextSourcePointsToCaller(t *testing.T) {
+	testWithSlogSourceLogger(t, func(logger *Logger) {
+		emitLoggerContextSourceInfoLog(logger)
+	})
+}
+
+func TestDerivedLoggerSourcePointsToCaller(t *testing.T) {
+	testWithSlogSourceLogger(t, func(logger *Logger) {
+		emitDerivedLoggerSourceInfoLog(logger)
+	})
+}
+
+func testWithSlogSourceLogger(t *testing.T, emit func(logger *Logger)) {
+	t.Helper()
+	var buf bytes.Buffer
+	ResetGlobalLogger(&buf, false, true)
+	SetLevelInfo()
+	EnableTextLogger()
+	DisableJSONLogger()
+
+	logger := NewLogger(&buf, false, true)
+	logger.SetLevel(LevelInfo)
+
+	buf.Reset()
+	emit(logger)
+
+	assertSlogSourceOutput(t, buf.String())
+}
+
+func assertSlogSourceOutput(t *testing.T, output string) {
+	t.Helper()
+	if !strings.Contains(output, "logger_test.go") {
+		t.Fatalf("expected source to point at test file, got: %s", output)
+	}
+	if strings.Contains(output, "logger.go") {
+		t.Fatalf("expected source to skip slog wrapper file, got: %s", output)
+	}
+	if strings.Contains(output, "log.go") {
+		t.Fatalf("expected source to skip slog global wrapper file, got: %s", output)
+	}
+	if strings.Contains(output, "zap.go") {
+		t.Fatalf("expected source to skip zap wrapper file, got: %s", output)
+	}
+}
+
+func emitWrappedSourceInfoLog(logger *Logger) {
+	wrappedSourceBridge(logger)
+}
+
+func wrappedSourceBridge(logger *Logger) {
+	logger.Info("wrapped source check")
+}
+
+func emitGlobalFormattedSourceInfoLog() {
+	globalFormattedSourceBridge()
+}
+
+func globalFormattedSourceBridge() {
+	Infof("global formatted source %s", "check")
+}
+
+func emitLoggerFormattedSourceInfoLog(logger *Logger) {
+	loggerFormattedSourceBridge(logger)
+}
+
+func loggerFormattedSourceBridge(logger *Logger) {
+	logger.Infof("logger formatted source %s", "check")
+}
+
+func emitLoggerContextSourceInfoLog(logger *Logger) {
+	loggerContextSourceBridge(logger)
+}
+
+func loggerContextSourceBridge(logger *Logger) {
+	logger.InfoContext(context.Background(), "logger context source check", "key", "value")
+}
+
+func emitDerivedLoggerSourceInfoLog(logger *Logger) {
+	derivedLoggerSourceBridge(logger.With("scope", "derived"))
+}
+
+func derivedLoggerSourceBridge(logger *Logger) {
+	logger.Info("derived logger source check")
+}
+
+func benchmarkWrappedSourceBridge(logger *Logger) {
+	logger.Info("benchmark helper should not appear")
+}
+
+func emitBenchmarkWrappedSourceLog(logger *Logger) {
+	benchmarkWrappedSourceBridge(logger)
+}
+
+func TestBenchmarkLikeWrappedSourcePointsToCaller(t *testing.T) {
+	testWithSlogSourceLogger(t, func(logger *Logger) {
+		emitBenchmarkWrappedSourceLog(logger)
+	})
+}
+
+func testWithSlogSourceLoggerGlobalOnly(t *testing.T, emit func()) {
+	t.Helper()
+	var buf bytes.Buffer
+	ResetGlobalLogger(&buf, false, true)
+	SetLevelInfo()
+	EnableTextLogger()
+	DisableJSONLogger()
+
+	buf.Reset()
+	emit()
+
+	assertSlogSourceOutput(t, buf.String())
+}
+
+func TestGlobalContextSourcePointsToCaller(t *testing.T) {
+	testWithSlogSourceLoggerGlobalOnly(t, func() {
+		InfoContext(context.Background(), "global context source check", "key", "value")
+	})
+}
+
+func TestGlobalPrintLikeSourcePointsToCaller(t *testing.T) {
+	testWithSlogSourceLoggerGlobalOnly(t, func() {
+		Printf("global printf source %s", "check")
+	})
+}
+
+func TestGlobalDebugLikeSourcePointsToCaller(t *testing.T) {
+	var buf bytes.Buffer
+	ResetGlobalLogger(&buf, false, true)
+	SetLevelDebug()
+	EnableTextLogger()
+	DisableJSONLogger()
+
+	buf.Reset()
+	Debug("global debug source check")
+
+	assertSlogSourceOutput(t, buf.String())
+}
+
+func TestLoggerWithGroupSourcePointsToCaller(t *testing.T) {
+	testWithSlogSourceLogger(t, func(logger *Logger) {
+		groupBridge(logger.WithGroup("source-group"))
+	})
+}
+
+func groupBridge(logger *Logger) {
+	logger.Info("group source check")
+}
+
+func TestLoggerWarnSourcePointsToCaller(t *testing.T) {
+	testWithSlogSourceLogger(t, func(logger *Logger) {
+		warnBridge(logger)
+	})
+}
+
+func warnBridge(logger *Logger) {
+	logger.Warn("warn source check")
+}
+
+func TestLoggerErrorSourcePointsToCaller(t *testing.T) {
+	testWithSlogSourceLogger(t, func(logger *Logger) {
+		errorBridge(logger)
+	})
+}
+
+func errorBridge(logger *Logger) {
+	logger.Error("error source check")
+}
+
+func TestLoggerTracefSourcePointsToCaller(t *testing.T) {
+	var buf bytes.Buffer
+	ResetGlobalLogger(&buf, false, true)
+	SetLevelTrace()
+	EnableTextLogger()
+	DisableJSONLogger()
+
+	logger := NewLogger(&buf, false, true)
+	logger.SetLevel(LevelTrace)
+
+	buf.Reset()
+	tracefBridge(logger)
+
+	assertSlogSourceOutput(t, buf.String())
+}
+
+func tracefBridge(logger *Logger) {
+	logger.Tracef("trace source %s", "check")
+}
+
+func TestGlobalTraceSourcePointsToCaller(t *testing.T) {
+	var buf bytes.Buffer
+	ResetGlobalLogger(&buf, false, true)
+	SetLevelTrace()
+	EnableTextLogger()
+	DisableJSONLogger()
+
+	buf.Reset()
+	Trace("global trace source check")
+
+	assertSlogSourceOutput(t, buf.String())
+}
+
+func TestGlobalWarnSourcePointsToCaller(t *testing.T) {
+	testWithSlogSourceLoggerGlobalOnly(t, func() {
+		Warn("global warn source check")
+	})
+}
+
+func TestGlobalErrorSourcePointsToCaller(t *testing.T) {
+	testWithSlogSourceLoggerGlobalOnly(t, func() {
+		Error("global error source check")
+	})
+}
+
+func TestGlobalInfoWithFieldsSourcePointsToCaller(t *testing.T) {
+	testWithSlogSourceLoggerGlobalOnly(t, func() {
+		Info("global info source check", "key", "value")
+	})
+}
+
+func TestLoggerInfoWithFieldsSourcePointsToCaller(t *testing.T) {
+	testWithSlogSourceLogger(t, func(logger *Logger) {
+		logger.Info("logger info source check", "key", "value")
+	})
+}
+
+func TestGlobalWithDerivedLoggerSourcePointsToCaller(t *testing.T) {
+	testWithSlogSourceLogger(t, func(logger *Logger) {
+		derivedLoggerSourceBridge(Default("module").With("scope", "module-derived"))
+	})
+}
+
+func TestPrintlnSourcePointsToCaller(t *testing.T) {
+	testWithSlogSourceLoggerGlobalOnly(t, func() {
+		Println("global println source check")
+	})
+}
+
+func TestDebugfSourcePointsToCaller(t *testing.T) {
+	var buf bytes.Buffer
+	ResetGlobalLogger(&buf, false, true)
+	SetLevelDebug()
+	EnableTextLogger()
+	DisableJSONLogger()
+
+	buf.Reset()
+	Debugf("global debugf source %s", "check")
+
+	assertSlogSourceOutput(t, buf.String())
+}
+
+func TestLoggerWarnfSourcePointsToCaller(t *testing.T) {
+	testWithSlogSourceLogger(t, func(logger *Logger) {
+		logger.Warnf("warnf source %s", "check")
+	})
+}
+
+func TestLoggerErrorfSourcePointsToCaller(t *testing.T) {
+	testWithSlogSourceLogger(t, func(logger *Logger) {
+		logger.Errorf("errorf source %s", "check")
+	})
+}
+
+func TestGlobalWarnfSourcePointsToCaller(t *testing.T) {
+	testWithSlogSourceLoggerGlobalOnly(t, func() {
+		Warnf("global warnf source %s", "check")
+	})
+}
+
+func TestGlobalErrorfSourcePointsToCaller(t *testing.T) {
+	testWithSlogSourceLoggerGlobalOnly(t, func() {
+		Errorf("global errorf source %s", "check")
+	})
+}
+
+func TestGlobalTracefSourcePointsToCaller(t *testing.T) {
+	var buf bytes.Buffer
+	ResetGlobalLogger(&buf, false, true)
+	SetLevelTrace()
+	EnableTextLogger()
+	DisableJSONLogger()
+
+	buf.Reset()
+	Tracef("global tracef source %s", "check")
+
+	assertSlogSourceOutput(t, buf.String())
+}
+
+func TestLoggerTraceContextSourcePointsToCaller(t *testing.T) {
+	var buf bytes.Buffer
+	ResetGlobalLogger(&buf, false, true)
+	SetLevelTrace()
+	EnableTextLogger()
+	DisableJSONLogger()
+
+	logger := NewLogger(&buf, false, true)
+	logger.SetLevel(LevelTrace)
+
+	buf.Reset()
+	logger.TraceContext(context.Background(), "logger trace context source check", "key", "value")
+
+	assertSlogSourceOutput(t, buf.String())
+}
+
+func TestGlobalDebugContextSourcePointsToCaller(t *testing.T) {
+	var buf bytes.Buffer
+	ResetGlobalLogger(&buf, false, true)
+	SetLevelDebug()
+	EnableTextLogger()
+	DisableJSONLogger()
+
+	buf.Reset()
+	DebugContext(context.Background(), "global debug context source check", "key", "value")
+
+	assertSlogSourceOutput(t, buf.String())
+}
+
+func TestGlobalTraceContextSourcePointsToCaller(t *testing.T) {
+	var buf bytes.Buffer
+	ResetGlobalLogger(&buf, false, true)
+	SetLevelTrace()
+	EnableTextLogger()
+	DisableJSONLogger()
+
+	buf.Reset()
+	TraceContext(context.Background(), "global trace context source check", "key", "value")
+
+	assertSlogSourceOutput(t, buf.String())
+}
+
+func TestGlobalInfofContextSourcePointsToCaller(t *testing.T) {
+	testWithSlogSourceLoggerGlobalOnly(t, func() {
+		InfofContext(context.Background(), "global infof context %s", "check")
+	})
+}
+
+func TestLoggerInfofContextSourcePointsToCaller(t *testing.T) {
+	testWithSlogSourceLogger(t, func(logger *Logger) {
+		logger.InfofContext(context.Background(), "logger infof context %s", "check")
+	})
+}
+
+func TestLoggerWarnContextSourcePointsToCaller(t *testing.T) {
+	testWithSlogSourceLogger(t, func(logger *Logger) {
+		logger.WarnContext(context.Background(), "logger warn context source check", "key", "value")
+	})
+}
+
+func TestLoggerErrorContextSourcePointsToCaller(t *testing.T) {
+	testWithSlogSourceLogger(t, func(logger *Logger) {
+		logger.ErrorContext(context.Background(), "logger error context source check", "key", "value")
+	})
+}
+
+func TestGlobalWarnContextSourcePointsToCaller(t *testing.T) {
+	testWithSlogSourceLoggerGlobalOnly(t, func() {
+		WarnContext(context.Background(), "global warn context source check", "key", "value")
+	})
+}
+
+func TestGlobalErrorContextSourcePointsToCaller(t *testing.T) {
+	testWithSlogSourceLoggerGlobalOnly(t, func() {
+		ErrorContext(context.Background(), "global error context source check", "key", "value")
+	})
+}
+
+func TestGlobalDebugfContextSourcePointsToCaller(t *testing.T) {
+	var buf bytes.Buffer
+	ResetGlobalLogger(&buf, false, true)
+	SetLevelDebug()
+	EnableTextLogger()
+	DisableJSONLogger()
+
+	buf.Reset()
+	DebugfContext(context.Background(), "global debugf context %s", "check")
+
+	assertSlogSourceOutput(t, buf.String())
+}
+
+func TestLoggerDebugfContextSourcePointsToCaller(t *testing.T) {
+	var buf bytes.Buffer
+	ResetGlobalLogger(&buf, false, true)
+	SetLevelDebug()
+	EnableTextLogger()
+	DisableJSONLogger()
+
+	logger := NewLogger(&buf, false, true)
+	logger.SetLevel(LevelDebug)
+
+	buf.Reset()
+	logger.DebugfContext(context.Background(), "logger debugf context %s", "check")
+
+	assertSlogSourceOutput(t, buf.String())
+}
+
+func TestLoggerWarnfContextSourcePointsToCaller(t *testing.T) {
+	testWithSlogSourceLogger(t, func(logger *Logger) {
+		logger.WarnfContext(context.Background(), "logger warnf context %s", "check")
+	})
+}
+
+func TestLoggerErrorfContextSourcePointsToCaller(t *testing.T) {
+	testWithSlogSourceLogger(t, func(logger *Logger) {
+		logger.ErrorfContext(context.Background(), "logger errorf context %s", "check")
+	})
+}
+
+func TestGlobalWarnfContextSourcePointsToCaller(t *testing.T) {
+	testWithSlogSourceLoggerGlobalOnly(t, func() {
+		WarnfContext(context.Background(), "global warnf context %s", "check")
+	})
+}
+
+func TestGlobalErrorfContextSourcePointsToCaller(t *testing.T) {
+	testWithSlogSourceLoggerGlobalOnly(t, func() {
+		ErrorfContext(context.Background(), "global errorf context %s", "check")
+	})
+}
+
+func TestGlobalDefaultModuleLoggerSourcePointsToCaller(t *testing.T) {
+	testWithSlogSourceLogger(t, func(logger *Logger) {
+		moduleLoggerBridge(Default("module", "sub"))
+	})
+}
+
+func moduleLoggerBridge(logger *Logger) {
+	logger.Info("module logger source check")
+}
+
+func TestLoggerWithValueSourcePointsToCaller(t *testing.T) {
+	testWithSlogSourceLogger(t, func(logger *Logger) {
+		logger.WithValue("trace_id", "abc").Info("with value source check")
+	})
+}
+
+func TestGlobalDefaultLoggerWithGroupSourcePointsToCaller(t *testing.T) {
+	testWithSlogSourceLogger(t, func(logger *Logger) {
+		groupBridge(Default("module").WithGroup("group"))
+	})
+}
+
+func TestLoggerWithMultipleWrappersSourcePointsToCaller(t *testing.T) {
+	testWithSlogSourceLogger(t, func(logger *Logger) {
+		multiWrapperOne(logger)
+	})
+}
+
+func multiWrapperOne(logger *Logger) {
+	multiWrapperTwo(logger)
+}
+
+func multiWrapperTwo(logger *Logger) {
+	logger.Info("multi wrapper source check")
+}
+
+func TestGlobalMultipleWrappersSourcePointsToCaller(t *testing.T) {
+	testWithSlogSourceLoggerGlobalOnly(t, func() {
+		globalMultiWrapperOne()
+	})
+}
+
+func globalMultiWrapperOne() {
+	globalMultiWrapperTwo()
+}
+
+func globalMultiWrapperTwo() {
+	Info("global multi wrapper source check")
+}
+
+func TestLoggerDerivedGroupAndFieldsSourcePointsToCaller(t *testing.T) {
+	testWithSlogSourceLogger(t, func(logger *Logger) {
+		derivedLoggerSourceBridge(logger.With("scope", "derived").WithGroup("group"))
+	})
+}
+
+func TestGlobalDefaultModuleDerivedSourcePointsToCaller(t *testing.T) {
+	testWithSlogSourceLogger(t, func(logger *Logger) {
+		moduleLoggerBridge(Default("payments").With("scope", "settlement"))
+	})
+}
+
+func TestLoggerInfofWithFieldsSourcePointsToCaller(t *testing.T) {
+	testWithSlogSourceLogger(t, func(logger *Logger) {
+		logger.Infof("logger infof field source %s", "check")
+	})
+}
+
+func TestGlobalInfofWithFieldsSourcePointsToCaller(t *testing.T) {
+	testWithSlogSourceLoggerGlobalOnly(t, func() {
+		Infof("global infof source %s", "check")
+	})
+}
+
+func TestLoggerWithNestedWrappersSourcePointsToCaller(t *testing.T) {
+	testWithSlogSourceLogger(t, func(logger *Logger) {
+		nestedWrapperLevelOne(logger)
+	})
+}
+
+func nestedWrapperLevelOne(logger *Logger) {
+	nestedWrapperLevelTwo(logger)
+}
+
+func nestedWrapperLevelTwo(logger *Logger) {
+	logger.Info("nested wrapper source check")
+}
+
+func TestGlobalNestedWrappersSourcePointsToCaller(t *testing.T) {
+	testWithSlogSourceLoggerGlobalOnly(t, func() {
+		globalNestedWrapperLevelOne()
+	})
+}
+
+func globalNestedWrapperLevelOne() {
+	globalNestedWrapperLevelTwo()
+}
+
+func globalNestedWrapperLevelTwo() {
+	Info("global nested wrapper source check")
+}
+
+func TestLoggerErrorWithAttrsSourcePointsToCaller(t *testing.T) {
+	testWithSlogSourceLogger(t, func(logger *Logger) {
+		logger.Error("logger error attrs source check", "key", "value")
+	})
+}
+
+func TestGlobalErrorWithAttrsSourcePointsToCaller(t *testing.T) {
+	testWithSlogSourceLoggerGlobalOnly(t, func() {
+		Error("global error attrs source check", "key", "value")
+	})
+}
+
+func TestLoggerWarnWithAttrsSourcePointsToCaller(t *testing.T) {
+	testWithSlogSourceLogger(t, func(logger *Logger) {
+		logger.Warn("logger warn attrs source check", "key", "value")
+	})
+}
+
+func TestGlobalWarnWithAttrsSourcePointsToCaller(t *testing.T) {
+	testWithSlogSourceLoggerGlobalOnly(t, func() {
+		Warn("global warn attrs source check", "key", "value")
+	})
+}
+
+func TestLoggerDebugWithAttrsSourcePointsToCaller(t *testing.T) {
+	var buf bytes.Buffer
+	ResetGlobalLogger(&buf, false, true)
+	SetLevelDebug()
+	EnableTextLogger()
+	DisableJSONLogger()
+
+	logger := NewLogger(&buf, false, true)
+	logger.SetLevel(LevelDebug)
+
+	buf.Reset()
+	logger.Debug("logger debug attrs source check", "key", "value")
+
+	assertSlogSourceOutput(t, buf.String())
+}
+
+func TestGlobalDebugWithAttrsSourcePointsToCaller(t *testing.T) {
+	var buf bytes.Buffer
+	ResetGlobalLogger(&buf, false, true)
+	SetLevelDebug()
+	EnableTextLogger()
+	DisableJSONLogger()
+
+	buf.Reset()
+	Debug("global debug attrs source check", "key", "value")
+
+	assertSlogSourceOutput(t, buf.String())
+}
+
+func TestLoggerTraceWithAttrsSourcePointsToCaller(t *testing.T) {
+	var buf bytes.Buffer
+	ResetGlobalLogger(&buf, false, true)
+	SetLevelTrace()
+	EnableTextLogger()
+	DisableJSONLogger()
+
+	logger := NewLogger(&buf, false, true)
+	logger.SetLevel(LevelTrace)
+
+	buf.Reset()
+	logger.Trace("logger trace attrs source check", "key", "value")
+
+	assertSlogSourceOutput(t, buf.String())
+}
+
+func TestGlobalTraceWithAttrsSourcePointsToCaller(t *testing.T) {
+	var buf bytes.Buffer
+	ResetGlobalLogger(&buf, false, true)
+	SetLevelTrace()
+	EnableTextLogger()
+	DisableJSONLogger()
+
+	buf.Reset()
+	Trace("global trace attrs source check", "key", "value")
+
+	assertSlogSourceOutput(t, buf.String())
+}
+
+func TestLoggerModuleDefaultSourcePointsToCaller(t *testing.T) {
+	testWithSlogSourceLogger(t, func(logger *Logger) {
+		moduleLoggerBridge(Default("orders"))
+	})
+}
+
+func TestLoggerWithGroupAndAttrsSourcePointsToCaller(t *testing.T) {
+	testWithSlogSourceLogger(t, func(logger *Logger) {
+		groupBridge(logger.WithGroup("group").With("key", "value"))
+	})
+}
+
+func TestGlobalModuleNestedDerivedSourcePointsToCaller(t *testing.T) {
+	testWithSlogSourceLogger(t, func(logger *Logger) {
+		moduleLoggerBridge(Default("orders", "payment").With("trace_id", "t-1"))
+	})
+}
+
+func TestLoggerMultipleWithCallsSourcePointsToCaller(t *testing.T) {
+	testWithSlogSourceLogger(t, func(logger *Logger) {
+		derivedLoggerSourceBridge(logger.With("k1", "v1").With("k2", "v2"))
+	})
+}
+
+func TestGlobalMultipleModuleCallsSourcePointsToCaller(t *testing.T) {
+	testWithSlogSourceLogger(t, func(logger *Logger) {
+		moduleLoggerBridge(Default("a", "b", "c"))
+	})
+}
+
+func TestLoggerWithContextAndAttrsSourcePointsToCaller(t *testing.T) {
+	testWithSlogSourceLogger(t, func(logger *Logger) {
+		logger.InfoContext(context.Background(), "logger context attrs source check", "key", "value")
+	})
+}
+
+func TestGlobalWithContextAndAttrsSourcePointsToCaller(t *testing.T) {
+	testWithSlogSourceLoggerGlobalOnly(t, func() {
+		InfoContext(context.Background(), "global context attrs source check", "key", "value")
+	})
+}
+
+func TestLoggerRepeatedWrapperChainSourcePointsToCaller(t *testing.T) {
+	testWithSlogSourceLogger(t, func(logger *Logger) {
+		repeatedWrapperOne(logger)
+	})
+}
+
+func repeatedWrapperOne(logger *Logger) {
+	repeatedWrapperTwo(logger)
+}
+
+func repeatedWrapperTwo(logger *Logger) {
+	repeatedWrapperThree(logger)
+}
+
+func repeatedWrapperThree(logger *Logger) {
+	logger.Info("repeated wrapper source check")
+}
+
+func TestGlobalRepeatedWrapperChainSourcePointsToCaller(t *testing.T) {
+	testWithSlogSourceLoggerGlobalOnly(t, func() {
+		globalRepeatedWrapperOne()
+	})
+}
+
+func globalRepeatedWrapperOne() {
+	globalRepeatedWrapperTwo()
+}
+
+func globalRepeatedWrapperTwo() {
+	globalRepeatedWrapperThree()
+}
+
+func globalRepeatedWrapperThree() {
+	Info("global repeated wrapper source check")
 }
 
 // TestJSONLogger 测试JSON格式输出

@@ -2,51 +2,42 @@ package syslog
 
 import (
 	"context"
-	"encoding/json"
 	"io"
 	"log/slog"
+	"slices"
 
 	"github.com/darkit/slog/internal/common"
+	"github.com/darkit/slog/modules"
 )
 
 const ceePrefix = "@cee: "
 
 type Option struct {
-	// log level (default: debug)
+	// log level (default: info)
 	Level slog.Leveler
 
-	// connection to syslog server
+	// connection target writer
 	Writer io.Writer
 
-	// optional: customize json payload builder
-	Converter Converter
-	// optional: custom marshaler
-	Marshaler func(v any) ([]byte, error)
 	// optional: fetch attributes from context
 	AttrFromContext []func(ctx context.Context) []slog.Attr
 
-	// optional: see slog.HandlerOptions
-	AddSource   bool
-	ReplaceAttr func(groups []string, a slog.Attr) slog.Attr
+	// optional: codec
+	Codec Codec
 }
 
 func NewSyslogHandler(w io.Writer, o *Option) slog.Handler {
+	if o == nil {
+		o = &Option{}
+	}
 	if o.Level == nil {
-		o.Level = slog.LevelDebug
+		o.Level = slog.LevelInfo
 	}
-
 	o.Writer = w
-
-	if o.Converter == nil {
-		o.Converter = DefaultConverter
-	}
-
-	if o.Marshaler == nil {
-		o.Marshaler = json.Marshal
-	}
-
-	if o.AttrFromContext == nil {
-		o.AttrFromContext = []func(ctx context.Context) []slog.Attr{}
+	o.AttrFromContext = modules.DefaultAttrFromContext(o.AttrFromContext)
+	if o.Codec == nil {
+		codec, _ := GetCodec("default")
+		o.Codec = codec
 	}
 
 	return &SyslogHandler{
@@ -70,18 +61,16 @@ func (h *SyslogHandler) Enabled(_ context.Context, level slog.Level) bool {
 
 func (h *SyslogHandler) Handle(ctx context.Context, record slog.Record) error {
 	fromContext := common.ContextExtractor(ctx, h.option.AttrFromContext)
-	message := h.option.Converter(h.option.AddSource, h.option.ReplaceAttr, append(h.attrs, fromContext...), h.groups, &record)
-
-	bytes, err := h.option.Marshaler(message)
+	allAttrs := append(slices.Clone(h.attrs), fromContext...)
+	payload, err := h.option.Codec.Encode(ctx, &record, allAttrs, h.groups)
 	if err != nil {
 		return err
 	}
 
-	// non-blocking
-	go func() {
-		_, _ = h.option.Writer.Write(append([]byte(ceePrefix), bytes...))
-	}()
-
+	modules.RunAsync("syslog", func() error {
+		_, err := h.option.Writer.Write(append([]byte(ceePrefix), payload...))
+		return err
+	})
 	return nil
 }
 
@@ -94,11 +83,9 @@ func (h *SyslogHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 }
 
 func (h *SyslogHandler) WithGroup(name string) slog.Handler {
-	// https://cs.opensource.google/go/x/exp/+/46b07846:slog/handler.go;l=247
 	if name == "" {
 		return h
 	}
-
 	return &SyslogHandler{
 		option: h.option,
 		attrs:  h.attrs,

@@ -217,8 +217,8 @@ func TestLoggerWithGroupCoverage(t *testing.T) {
 // TestGlobalLoggerFunctions 测试全局日志函数
 func TestGlobalLoggerFunctions(t *testing.T) {
 	// 保存原始设置
-	originalTextEnabled := textEnabled
-	originalJSONEnabled := jsonEnabled
+	originalTextEnabled := isGlobalTextEnabled()
+	originalJSONEnabled := isGlobalJSONEnabled()
 
 	defer func() {
 		// 恢复原始设置
@@ -242,7 +242,7 @@ func TestGlobalLoggerFunctions(t *testing.T) {
 			name: "启用文本日志",
 			test: func(t *testing.T) {
 				EnableTextLogger()
-				if !textEnabled {
+				if !isGlobalTextEnabled() {
 					t.Error("文本日志应该被启用")
 				}
 			},
@@ -251,7 +251,7 @@ func TestGlobalLoggerFunctions(t *testing.T) {
 			name: "禁用文本日志",
 			test: func(t *testing.T) {
 				DisableTextLogger()
-				if textEnabled {
+				if isGlobalTextEnabled() {
 					t.Error("文本日志应该被禁用")
 				}
 			},
@@ -260,7 +260,7 @@ func TestGlobalLoggerFunctions(t *testing.T) {
 			name: "启用JSON日志",
 			test: func(t *testing.T) {
 				EnableJSONLogger()
-				if !jsonEnabled {
+				if !isGlobalJSONEnabled() {
 					t.Error("JSON日志应该被启用")
 				}
 			},
@@ -269,7 +269,7 @@ func TestGlobalLoggerFunctions(t *testing.T) {
 			name: "禁用JSON日志",
 			test: func(t *testing.T) {
 				DisableJSONLogger()
-				if jsonEnabled {
+				if isGlobalJSONEnabled() {
 					t.Error("JSON日志应该被禁用")
 				}
 			},
