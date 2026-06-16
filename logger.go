@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -31,9 +32,10 @@ var (
 	callerSkipPrefixes      []string
 	callerSkipPrefixesValue atomic.Value
 
-	// 字符串构建器池，用于优化字符串拼接性能
+	// 字符串构建器池，用于优化字符串拼接性能。
+	//nolint:unused // 仅供测试/基准代码复用。
 	stringBuilderPool = sync.Pool{
-		New: func() interface{} {
+		New: func() any {
 			return &strings.Builder{}
 		},
 	}
@@ -46,15 +48,6 @@ var (
 		LevelError: "E",
 		LevelTrace: "T",
 		LevelFatal: "F",
-	}
-	// 日志级别对应的JSON名称映射
-	levelJSONNames = map[Level]string{
-		LevelInfo:  "Info",
-		LevelDebug: "Debug",
-		LevelWarn:  "Warn",
-		LevelError: "Error",
-		LevelTrace: "Trace",
-		LevelFatal: "Fatal",
 	}
 
 	// 日志格式字符串缓存，存储常用的格式字符串检测结果
@@ -141,10 +134,8 @@ func RegisterCallerSkipPrefix(prefix string) {
 	}
 	callerSkipPrefixesMu.Lock()
 	defer callerSkipPrefixesMu.Unlock()
-	for _, existing := range callerSkipPrefixes {
-		if existing == prefix {
-			return
-		}
+	if slices.Contains(callerSkipPrefixes, prefix) {
+		return
 	}
 	callerSkipPrefixes = append(callerSkipPrefixes, prefix)
 	storeCallerSkipPrefixesLocked()
@@ -316,6 +307,7 @@ type Logger struct {
 	text         *slog.Logger       // 文本格式日志记录器
 	json         *slog.Logger       // JSON格式日志记录器
 	ctx          context.Context    // 上下文信息
+	boundAttrs   []slog.Attr        // 绑定到 Logger 实例的固定属性
 	noColor      bool               // 是否禁用颜色输出
 	level        Level              // 日志级别
 	mu           sync.Mutex         // 添加互斥锁，用于处理并发
@@ -355,19 +347,41 @@ func (l *Logger) outputEnabled() (textOn, jsonOn bool) {
 }
 
 // GetSlogLogger 方法
-func (l *Logger) GetSlogLogger() *slog.Logger {
+func (l *Logger) GetSlogLogger() *SlogLogger {
+	if l == nil {
+		return nil
+	}
 	textEnabledForInstance, jsonEnabledForInstance := l.outputEnabled()
 
 	if jsonEnabledForInstance && !textEnabledForInstance && l.json != nil {
-		return l.json
+		return l.materializedSlogLogger(l.json)
 	}
 	if l.text != nil {
-		return l.text
+		return l.materializedSlogLogger(l.text)
 	}
 	if l.json != nil {
-		return l.json
+		return l.materializedSlogLogger(l.json)
 	}
 	return nil
+}
+
+// Handler 返回当前 Logger 采用的底层标准 slog.Handler。
+func (l *Logger) Handler() Handler {
+	if logger := l.GetSlogLogger(); logger != nil {
+		return logger.Handler()
+	}
+	return DiscardHandler
+}
+
+// Enabled 判断当前 Logger 在给定上下文和级别下是否会输出日志。
+func (l *Logger) Enabled(ctx context.Context, level Level) bool {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if handler := l.Handler(); handler != nil {
+		return handler.Enabled(ctx, level)
+	}
+	return false
 }
 
 // Diagnostics 返回模块健康与指标快照。
@@ -390,6 +404,9 @@ func (l *Logger) logfWithLevel(level Level, format string, args ...any) {
 // logRecord 日志记录的核心实现
 // 处理所有类型的日志记录请求
 func (l *Logger) logRecord(level Level, ctx context.Context, msg string, sprintf bool, args ...any) {
+	if l == nil {
+		return
+	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -409,10 +426,13 @@ func (l *Logger) logRecord(level Level, ctx context.Context, msg string, sprintf
 	var r slog.Record
 	if sprintf {
 		r = newRecordWithPC(level, recordPC, msg)
+		appendBoundAttrs(&r, l.boundAttrs)
 	} else if formatLog(msg, args...) {
 		r = newRecordWithPC(level, recordPC, msg, args...)
+		appendBoundAttrs(&r, l.boundAttrs)
 	} else {
 		r = newRecordWithPC(level, recordPC, msg)
+		appendBoundAttrs(&r, l.boundAttrs)
 		r.Add(args...)
 	}
 
@@ -439,9 +459,9 @@ func (l *Logger) logRecord(level Level, ctx context.Context, msg string, sprintf
 	}
 
 	event := l.subscriptionEvent(ctx, r)
-	var toDelete []interface{}
+	var toDelete []any
 
-	subscribers.Range(func(key, value interface{}) bool {
+	subscribers.Range(func(key, value any) bool {
 		sub := value.(*subscriber)
 
 		// 发布到订阅者：高压下按策略丢弃，不阻塞主链路。
@@ -477,22 +497,16 @@ func (l *Logger) needsCallerPC(textOn, jsonOn bool) bool {
 
 // With 创建一个带有额外字段的新日志记录器
 func (l *Logger) With(args ...any) *Logger {
+	if l == nil {
+		return nil
+	}
 	if len(args) == 0 {
 		return l
 	}
 
 	newLogger := l.clone()
 	attrs := argsToAttrs(args)
-
-	// 更新text logger
-	if l.text != nil {
-		newLogger.text = slog.New(l.text.Handler().WithAttrs(attrs))
-	}
-
-	// 更新json logger
-	if l.json != nil {
-		newLogger.json = slog.New(l.json.Handler().WithAttrs(attrs))
-	}
+	newLogger.boundAttrs = append(newLogger.boundAttrs, attrs...)
 
 	return newLogger
 }
@@ -504,6 +518,9 @@ func (l *Logger) With(args ...any) *Logger {
 // 返回:
 //   - 带有指定组名的新日志记录器实例
 func (l *Logger) WithGroup(name string) *Logger {
+	if l == nil {
+		return nil
+	}
 	// 如果组名为空则返回当前logger
 	if name == "" {
 		return l
@@ -557,6 +574,11 @@ func (l *Logger) Debug(msg string, args ...any) {
 	l.logWithLevel(LevelDebug, msg, args...)
 }
 
+// DebugContext 记录 Debug 级别日志，附带上下文传播。
+func (l *Logger) DebugContext(ctx context.Context, msg string, args ...any) {
+	l.logRecord(LevelDebug, ctx, msg, false, args...)
+}
+
 // Info 记录信息级别的日志
 func (l *Logger) Info(msg string, args ...any) {
 	l.logWithLevel(LevelInfo, msg, args...)
@@ -607,6 +629,20 @@ func (l *Logger) Trace(msg string, args ...any) {
 // TraceContext 记录跟踪日志，附带上下文传播。
 func (l *Logger) TraceContext(ctx context.Context, msg string, args ...any) {
 	l.logRecord(LevelTrace, ctx, msg, false, args...)
+}
+
+// Log 以指定级别记录日志，兼容标准库 slog.Logger.Log。
+func (l *Logger) Log(ctx context.Context, level Level, msg string, args ...any) {
+	l.logRecord(level, ctx, msg, false, args...)
+}
+
+// LogAttrs 以指定级别记录 Attr 列表，兼容标准库 slog.Logger.LogAttrs。
+func (l *Logger) LogAttrs(ctx context.Context, level Level, msg string, attrs ...Attr) {
+	attrArgs := make([]any, len(attrs))
+	for i, attr := range attrs {
+		attrArgs[i] = attr
+	}
+	l.logRecord(level, ctx, msg, false, attrArgs...)
 }
 
 // Debugf 记录格式化的调试级别日志
@@ -689,6 +725,7 @@ func (l *Logger) clone() *Logger {
 		text:         l.text,
 		json:         l.json,
 		ctx:          l.ctx,
+		boundAttrs:   slices.Clone(l.boundAttrs),
 		noColor:      l.noColor,
 		level:        l.level,
 		mu:           sync.Mutex{}, // 每个logger实例都有独立的互斥锁
@@ -741,6 +778,10 @@ func formatLog(msg string, args ...any) bool {
 	if val, ok := formatCache.GetString(msg); ok {
 		return val == "true"
 	}
+	if !strings.Contains(msg, "%") {
+		formatCache.PutString(msg, "false")
+		return false
+	}
 
 	// 以下是完整的格式扫描逻辑
 	// 因为缓存会存储结果，所以即使这部分代码复杂，也只会对每个唯一的字符串执行一次
@@ -756,7 +797,7 @@ func formatLog(msg string, args ...any) bool {
 	return result
 }
 
-// cleanFormatCache 清理格式缓存
+//nolint:unused // 仅供测试代码显式重置缓存。
 func cleanFormatCache() {
 	// 清空缓存
 	formatCache.Clear()
@@ -811,6 +852,20 @@ func scanFormatSpecifiers(msg string) bool {
 	}
 
 	return false
+}
+
+func appendBoundAttrs(r *slog.Record, attrs []slog.Attr) {
+	if r == nil || len(attrs) == 0 {
+		return
+	}
+	r.AddAttrs(attrs...)
+}
+
+func (l *Logger) materializedSlogLogger(base *slog.Logger) *slog.Logger {
+	if base == nil || len(l.boundAttrs) == 0 {
+		return base
+	}
+	return slog.New(base.Handler().WithAttrs(l.boundAttrs))
 }
 
 // NewLoggerWithConfig 使用配置创建新的日志记录器

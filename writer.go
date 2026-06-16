@@ -2,6 +2,7 @@ package slog
 
 import (
 	"compress/gzip"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -18,6 +19,8 @@ const (
 	defaultMaxSize    = 100 // 默认单个文件最大 100MB
 	defaultMaxAge     = 30  // 默认保留 30 天
 	defaultMaxBackups = 30  // 默认保留 30 个备份文件
+	logDirPerm        = 0o750
+	logFilePerm       = 0o600
 )
 
 var _ io.WriteCloser = (*writer)(nil)
@@ -115,8 +118,8 @@ func (w *writer) SetCompress(compress bool) *writer {
 }
 
 func (w *writer) Write(p []byte) (n int, err error) {
-	if err := w.validate(); err != nil {
-		return 0, err
+	if validateErr := w.validate(); validateErr != nil {
+		return 0, validateErr
 	}
 
 	w.mu.Lock()
@@ -137,8 +140,8 @@ func (w *writer) Write(p []byte) (n int, err error) {
 	}
 
 	if w.size+writeLen > w.maxBytes() {
-		if err := w.rotate(); err != nil {
-			return 0, err
+		if rotateErr := w.rotate(); rotateErr != nil {
+			return 0, rotateErr
 		}
 	}
 
@@ -164,7 +167,7 @@ func (w *writer) close() error {
 
 func (w *writer) rotate() error {
 	if err := w.close(); err != nil {
-		return fmt.Errorf("failed to close current log file: %v", err)
+		return fmt.Errorf("failed to close current log file: %w", err)
 	}
 
 	currentName := w.filename()
@@ -174,14 +177,14 @@ func (w *writer) rotate() error {
 	if err := os.Rename(currentName, backupName); err != nil {
 		// 重命名失败，尝试恢复文件状态
 		if reopenErr := w.openFile(); reopenErr != nil {
-			return fmt.Errorf("failed to backup log file (%v) and failed to reopen (%v)", err, reopenErr)
+			return fmt.Errorf("failed to backup log file and failed to reopen: %w", errors.Join(err, reopenErr))
 		}
-		return fmt.Errorf("failed to backup log file: %v", err)
+		return fmt.Errorf("failed to backup log file: %w", err)
 	}
 
 	// 创建新文件
 	if err := w.openFile(); err != nil {
-		return fmt.Errorf("failed to create new log file: %v", err)
+		return fmt.Errorf("failed to create new log file: %w", err)
 	}
 
 	// 异步处理旧文件
@@ -198,18 +201,20 @@ func (w *writer) rotate() error {
 func (w *writer) openFile() error {
 	filename := w.filename()
 
-	if err := os.MkdirAll(filepath.Dir(filename), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(filename), logDirPerm); err != nil {
 		return err
 	}
 
-	f, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	f, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY|os.O_APPEND, logFilePerm) // #nosec G304 -- caller-supplied log destination is the writer contract.
 	if err != nil {
 		return err
 	}
 
 	info, err := f.Stat()
 	if err != nil {
-		f.Close()
+		if closeErr := f.Close(); closeErr != nil {
+			return errors.Join(err, closeErr)
+		}
 		return err
 	}
 
@@ -223,12 +228,12 @@ func (w *writer) filename() string {
 		if !filepath.IsAbs(w.filePath) {
 			dir, _ := os.Getwd()
 			fullPath := filepath.Join(dir, w.filePath)
-			if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+			if err := os.MkdirAll(filepath.Dir(fullPath), logDirPerm); err != nil {
 				return filepath.Join(os.TempDir(), filepath.Base(w.filePath))
 			}
 			return fullPath
 		}
-		if err := os.MkdirAll(filepath.Dir(w.filePath), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(w.filePath), logDirPerm); err != nil {
 			return filepath.Join(os.TempDir(), filepath.Base(w.filePath))
 		}
 		return w.filePath
@@ -285,7 +290,7 @@ func (w *writer) processOldFiles() error {
 
 	files, err := w.oldLogFiles()
 	if err != nil {
-		return fmt.Errorf("failed to get old log files: %v", err)
+		return fmt.Errorf("failed to get old log files: %w", err)
 	}
 
 	// 按时间排序（最新的在前）
@@ -344,20 +349,20 @@ func (w *writer) compressFile(src string) error {
 	const maxRetries = 3
 	var err error
 
-	for i := 0; i < maxRetries; i++ {
+	for i := range maxRetries {
 		err = w.tryCompressfile(src)
 		if err == nil {
 			return nil
 		}
 		time.Sleep(time.Millisecond * 100 * time.Duration(i+1))
 	}
-	return fmt.Errorf("failed to compress file after %d retries: %v", maxRetries, err)
+	return fmt.Errorf("failed to compress file after %d retries: %w", maxRetries, err)
 }
 
 func (w *writer) tryCompressfile(src string) error {
 	dst := src + "." + compressSuffix
 
-	f, err := os.Open(src)
+	f, err := os.Open(src) // #nosec G304 -- src is derived from managed rotated log files.
 	if err != nil {
 		return err
 	}
@@ -368,7 +373,7 @@ func (w *writer) tryCompressfile(src string) error {
 		}
 	}()
 
-	gzf, err := os.OpenFile(dst, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
+	gzf, err := os.OpenFile(dst, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, logFilePerm) // #nosec G304 -- dst is derived from managed rotated log files.
 	if err != nil {
 		return err
 	}
@@ -388,22 +393,26 @@ func (w *writer) tryCompressfile(src string) error {
 	}()
 
 	if _, err := io.Copy(gz, f); err != nil {
-		os.Remove(dst) // 清理失败的压缩文件
-		return err
+		return removeFailedCompressedFile(dst, err)
 	}
 
 	// 确保压缩数据写入磁盘
 	if err := gz.Close(); err != nil {
-		os.Remove(dst)
-		return err
+		return removeFailedCompressedFile(dst, err)
 	}
 
 	if err := gzf.Close(); err != nil {
-		os.Remove(dst)
-		return err
+		return removeFailedCompressedFile(dst, err)
 	}
 
 	return os.Remove(src)
+}
+
+func removeFailedCompressedFile(path string, cause error) error {
+	if removeErr := os.Remove(path); removeErr != nil && !os.IsNotExist(removeErr) {
+		return errors.Join(cause, removeErr)
+	}
+	return cause
 }
 
 func (w *writer) oldLogFiles() ([]logInfo, error) {

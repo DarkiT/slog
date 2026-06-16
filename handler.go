@@ -17,7 +17,7 @@ import (
 )
 
 var (
-	defaultLevel  = LevelError
+	defaultLevel  = LevelInfo
 	levelColorMap = map[slog.Level]string{
 		LevelDebug: ansiBrightBlue,
 		LevelInfo:  ansiBrightGreen,
@@ -50,7 +50,7 @@ type groupState struct {
 	joined []string
 }
 
-func (s groupState) clone() groupState {
+func (s *groupState) clone() groupState {
 	return groupState{
 		names:  slices.Clone(s.names),
 		joined: slices.Clone(s.joined),
@@ -90,7 +90,7 @@ func (s *groupState) values() []string {
 
 // NewConsoleHandler returns a [log/slog.Handler] using the receiver's options.
 // Default options are used if opts is nil.
-func NewConsoleHandler(w io.Writer, noColor bool, opts *slog.HandlerOptions) slog.Handler {
+func NewConsoleHandler(w io.Writer, noColor bool, opts *HandlerOptions) Handler {
 	if opts == nil {
 		opts = &slog.HandlerOptions{}
 	}
@@ -132,34 +132,34 @@ func (h *handler) Handle(ctx context.Context, r slog.Record) error {
 		val := r.Time.Round(0)
 		if rep == nil {
 			t := r.Time
-			sb.WriteString(t.Format(h.timeFormat))
+			sb.AppendString(t.Format(h.timeFormat))
 		} else if a := rep(nil, slog.Time(slog.TimeKey, val)); a.Key != "" {
 			if a.Value.Kind() == slog.KindTime {
-				sb.WriteString(a.Value.Time().Format(h.timeFormat))
+				sb.AppendString(a.Value.Time().Format(h.timeFormat))
 			} else if a.Value.Kind() == slog.KindString {
-				sb.WriteString(a.Value.String())
+				sb.AppendString(a.Value.String())
 			}
-			sb.WriteByte(' ')
+			sb.AppendByte(' ')
 		}
 	}
 
 	h.appendLevel(sb, r.Level)
-	sb.WriteByte(' ')
+	sb.AppendByte(' ')
 
 	if h.addSource && r.PC != 0 {
-		sb.WriteString(h.newSourceAttr(r.PC))
-		sb.WriteByte(' ')
+		sb.AppendString(h.newSourceAttr(r.PC))
+		sb.AppendByte(' ')
 	}
 
-	sb.WriteString(r.Message)
+	sb.AppendString(r.Message)
 	if h.attrs != "" {
-		sb.WriteString(h.attrs)
+		sb.AppendString(h.attrs)
 	}
 	r.Attrs(func(a slog.Attr) bool {
 		h.appendAttr(sb, &groups, a)
 		return true
 	})
-	sb.WriteByte('\n')
+	sb.AppendByte('\n')
 
 	if renderState, ok := dynamicRenderFromContext(ctx); ok && h.dynamicTTY {
 		return h.writeDynamicBuffer(sb, renderState.final)
@@ -285,11 +285,18 @@ func (h *handler) appendLevel(sb *buffer, level slog.Level) {
 		color = ansiBrightRed
 	}
 
-	sb.WriteStringIf(!h.noColor, color)
-	sb.WriteString("[")
-	sb.WriteString(levelTextNames[level])
-	sb.WriteString("]")
-	sb.WriteStringIf(!h.noColor, ansiReset)
+	sb.AppendStringIf(!h.noColor, color)
+	sb.AppendString("[")
+	sb.AppendString(levelTextName(level))
+	sb.AppendString("]")
+	sb.AppendStringIf(!h.noColor, ansiReset)
+}
+
+func levelTextName(level slog.Level) string {
+	if name, ok := levelTextNames[level]; ok {
+		return name
+	}
+	return level.String()
 }
 
 func (h *handler) appendAttr(sb *buffer, groups *groupState, a slog.Attr) {
@@ -322,7 +329,7 @@ func (h *handler) appendAttr(sb *buffer, groups *groupState, a slog.Attr) {
 }
 
 func appendKey(sb *buffer, prefix string, key string) {
-	sb.WriteByte(' ')
+	sb.AppendByte(' ')
 	if prefix != "" {
 		if key != "" {
 			key = prefix + "." + key
@@ -331,11 +338,11 @@ func appendKey(sb *buffer, prefix string, key string) {
 		}
 	}
 	if needsQuoting(key) {
-		sb.WriteString(strconv.Quote(key))
+		sb.AppendString(strconv.Quote(key))
 	} else {
-		sb.WriteString(key)
+		sb.AppendString(key)
 	}
-	sb.WriteByte('=')
+	sb.AppendByte('=')
 }
 
 func (h *handler) appendVal(sb *buffer, val slog.Value) {
@@ -343,23 +350,23 @@ func (h *handler) appendVal(sb *buffer, val slog.Value) {
 	case slog.KindString:
 		appendString(sb, val.String())
 	case slog.KindInt64:
-		sb.WriteString(strconv.FormatInt(val.Int64(), 10))
+		sb.AppendString(strconv.FormatInt(val.Int64(), 10))
 	case slog.KindUint64:
-		sb.WriteString(strconv.FormatUint(val.Uint64(), 10))
+		sb.AppendString(strconv.FormatUint(val.Uint64(), 10))
 	case slog.KindFloat64:
-		sb.WriteString(strconv.FormatFloat(val.Float64(), 'g', -1, 64))
+		sb.AppendString(strconv.FormatFloat(val.Float64(), 'g', -1, 64))
 	case slog.KindBool:
-		sb.WriteString(strconv.FormatBool(val.Bool()))
+		sb.AppendString(strconv.FormatBool(val.Bool()))
 	case slog.KindDuration:
 		appendString(sb, val.Duration().String())
 	case slog.KindTime:
 		quoteTime := needsQuoting(h.timeFormat)
 		if quoteTime {
-			sb.WriteByte(' ')
+			sb.AppendByte(' ')
 		}
-		sb.WriteString(val.Time().Format(h.timeFormat))
+		sb.AppendString(val.Time().Format(h.timeFormat))
 		if quoteTime {
-			sb.WriteByte(' ')
+			sb.AppendByte(' ')
 		}
 	case slog.KindGroup, slog.KindLogValuer:
 		if tm, ok := val.Any().(encoding.TextMarshaler); ok {
@@ -387,9 +394,9 @@ func (h *handler) appendVal(sb *buffer, val slog.Value) {
 
 func appendString(sb *buffer, s string) {
 	if needsQuoting(s) {
-		sb.WriteString(strconv.Quote(s))
+		sb.AppendString(strconv.Quote(s))
 	} else {
-		sb.WriteString(s)
+		sb.AppendString(s)
 	}
 }
 

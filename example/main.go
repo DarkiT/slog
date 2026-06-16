@@ -20,6 +20,13 @@ import (
 	_ "github.com/darkit/slog/modules/webhook"   // 自动注册webhook模块
 )
 
+type contextKey string
+
+const (
+	traceIDContextKey contextKey = "trace_id"
+	userIDContextKey  contextKey = "user_id"
+)
+
 func init() {
 	// 初始化日志设置
 	slog.EnableTextLogger()           // 启用文本日志
@@ -31,10 +38,10 @@ func init() {
 			return nil
 		}
 		attrs := make([]slog.Attr, 0, 2)
-		if traceID, ok := ctx.Value("trace_id").(string); ok {
+		if traceID, ok := ctx.Value(traceIDContextKey).(string); ok {
 			attrs = append(attrs, slog.String("trace_id", traceID))
 		}
-		if userID, ok := ctx.Value("user_id").(string); ok {
+		if userID, ok := ctx.Value(userIDContextKey).(string); ok {
 			attrs = append(attrs, slog.String("user_id", userID))
 		}
 		return attrs
@@ -209,7 +216,7 @@ func demoDynamicLevelControl() {
 
 	// 1. 生产模式 - 只记录重要信息
 	fmt.Println("\n1. 生产模式启动 (level: error)")
-	slog.SetLevel("error")
+	_ = slog.SetLevel("error")
 	fmt.Printf("   当前级别: %v\n", slog.GetLevel())
 
 	fmt.Println("   正常业务运行:")
@@ -217,7 +224,7 @@ func demoDynamicLevelControl() {
 
 	// 2. 发现异常 - 开启详细日志
 	fmt.Println("\n2. 发现异常，开启调试模式 (level: debug)")
-	slog.SetLevel("debug")
+	_ = slog.SetLevel("debug")
 	fmt.Printf("   当前级别: %v\n", slog.GetLevel())
 
 	fmt.Println("   详细排查模式:")
@@ -225,7 +232,7 @@ func demoDynamicLevelControl() {
 
 	// 3. 恢复生产模式
 	fmt.Println("\n3. 问题解决，恢复生产模式 (level: error)")
-	slog.SetLevel("error")
+	_ = slog.SetLevel("error")
 	fmt.Printf("   当前级别: %v\n", slog.GetLevel())
 
 	fmt.Println("   恢复正常运行:")
@@ -288,7 +295,10 @@ func demoDLPMasking() {
 	}
 
 	fmt.Printf("   脱敏前: %+v\n", user)
-	dlpEngine.DesensitizeStruct(&user)
+	if err := dlpEngine.DesensitizeStruct(&user); err != nil {
+		fmt.Printf("   脱敏失败: %v\n", err)
+		return
+	}
 	fmt.Printf("   脱敏后: %+v\n", user)
 }
 
@@ -388,7 +398,7 @@ func demoAsyncLogging() {
 	logger := slog.NewLogger(&bytes.Buffer{}, false, false)
 
 	fmt.Println("   生产日志记录...")
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		logger.Info("异步处理测试",
 			"序号", i,
 			"时间", time.Now().Format("15:04:05.000"))
@@ -424,12 +434,12 @@ func demoContextAndTracing(logger *slog.Logger) {
 	fmt.Println("📋 上下文传递和链路追踪:")
 
 	// 设置合适的日志级别以显示所有日志
-	slog.SetLevel("debug")
+	_ = slog.SetLevel("debug")
 
 	// 创建带追踪ID的上下文
 	ctx := context.Background()
-	ctx = context.WithValue(ctx, "trace_id", "trace-"+fmt.Sprintf("%d", time.Now().Unix()))
-	ctx = context.WithValue(ctx, "user_id", "user-12345")
+	ctx = context.WithValue(ctx, traceIDContextKey, "trace-"+fmt.Sprintf("%d", time.Now().Unix()))
+	ctx = context.WithValue(ctx, userIDContextKey, "user-12345")
 
 	ctxLogger := logger.WithContext(ctx)
 
@@ -502,7 +512,7 @@ func demoRuntimeControls(logger *slog.Logger) {
 	// 3. 日志限流演示
 	fmt.Println("\n   3. 日志限流:")
 	slog.ConfigureRecordLimiter(2, 2)
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		logger.Info("限流演示", "index", i, "timestamp", time.Now().Format("15:04:05.000"))
 	}
 	fmt.Println("      (部分日志会因限流被丢弃，上方 stderr 会提示)")
@@ -511,8 +521,8 @@ func demoRuntimeControls(logger *slog.Logger) {
 
 	// 4. 上下文自动传播
 	fmt.Println("\n   4. 上下文自动传播:")
-	ctx := context.WithValue(context.Background(), "trace_id", "runtime-trace-001")
-	ctx = context.WithValue(ctx, "user_id", "runtime-user")
+	ctx := context.WithValue(context.Background(), traceIDContextKey, "runtime-trace-001")
+	ctx = context.WithValue(ctx, userIDContextKey, "runtime-user")
 	ctxLogger := logger.WithContext(ctx)
 	ctxLogger.Info("上下文字段已自动注入", "event", "runtime-demo")
 }
@@ -525,12 +535,12 @@ func demoErrorHandling(logger *slog.Logger) {
 	errors := []struct {
 		scenario string
 		err      error
-		context  map[string]interface{}
+		context  map[string]any
 	}{
 		{
 			scenario: "数据库连接失败",
 			err:      fmt.Errorf("connection timeout after 5s"),
-			context: map[string]interface{}{
+			context: map[string]any{
 				"host":     "db.example.com",
 				"port":     3306,
 				"database": "orders",
@@ -540,7 +550,7 @@ func demoErrorHandling(logger *slog.Logger) {
 		{
 			scenario: "API调用失败",
 			err:      fmt.Errorf("HTTP 503 Service Unavailable"),
-			context: map[string]interface{}{
+			context: map[string]any{
 				"url":           "https://api.payment.com/charge",
 				"method":        "POST",
 				"timeout":       "30s",
@@ -550,7 +560,7 @@ func demoErrorHandling(logger *slog.Logger) {
 		{
 			scenario: "文件操作失败",
 			err:      fmt.Errorf("permission denied"),
-			context: map[string]interface{}{
+			context: map[string]any{
 				"file_path":  "/var/log/app.log",
 				"operation":  "write",
 				"file_size":  "125MB",
@@ -564,7 +574,7 @@ func demoErrorHandling(logger *slog.Logger) {
 		fmt.Printf("\n   场景 %d: %s\n", i+1, errCase.scenario)
 
 		// 记录错误日志，包含丰富的上下文信息
-		fields := []interface{}{"error", errCase.err.Error()}
+		fields := []any{"error", errCase.err.Error()}
 		for key, value := range errCase.context {
 			fields = append(fields, key, value)
 		}
@@ -584,7 +594,7 @@ func demoProductionScenarios() {
 	fmt.Println("🏭 生产环境真实场景:")
 
 	// 设置合适的日志级别以显示所有日志
-	slog.SetLevel("debug")
+	_ = slog.SetLevel("debug")
 
 	scenarios := []struct {
 		name string
@@ -616,7 +626,7 @@ func testBasicPerformance() {
 	iterations := 10000
 
 	start := time.Now()
-	for i := 0; i < iterations; i++ {
+	for i := range iterations {
 		logger.Info("性能测试", "iteration", i, "data", "test_payload")
 	}
 	duration := time.Since(start)
@@ -634,11 +644,11 @@ func testConcurrencyPerformance() {
 	var wg sync.WaitGroup
 	start := time.Now()
 
-	for i := 0; i < goroutines; i++ {
+	for i := range goroutines {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
-			for j := 0; j < iterationsPerGoroutine; j++ {
+			for j := range iterationsPerGoroutine {
 				logger.Info("并发测试", "goroutine", id, "iteration", j)
 			}
 		}(i)
@@ -662,7 +672,7 @@ func testMemoryUsage() {
 	var m1, m2 runtime.MemStats
 	runtime.ReadMemStats(&m1)
 
-	for i := 0; i < iterations; i++ {
+	for i := range iterations {
 		logger.Info("内存测试",
 			"iteration", i,
 			"timestamp", time.Now(),

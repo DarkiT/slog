@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -15,14 +16,14 @@ import (
 )
 
 // FormatterFunc 内部格式化器接口，避免直接依赖formatter包
-type FormatterFunc func(groups []string, attr slog.Attr) (slog.Value, bool)
+type FormatterFunc func(groups []string, attr Attr) (Value, bool)
 
 // RegisterFormatter 在运行时注册新的格式化函数，返回可用于移除的 ID。
 func RegisterFormatter(name string, fn FormatterFunc) string {
-	if ext == nil {
-		ext = &extensions{}
+	if ext != nil {
+		return ext.registerFormatterInternal(name, fn)
 	}
-	return ext.registerFormatterInternal(name, fn)
+	return ""
 }
 
 // RemoveFormatter 根据 ID 移除先前注册的格式化函数。
@@ -44,7 +45,7 @@ func ListFormatters() []string {
 // EnableDiagnosticsLogging 控制扩展管线的调试输出，可选自定义输出目标。
 func EnableDiagnosticsLogging(on bool, writer ...io.Writer) {
 	if ext == nil {
-		ext = &extensions{}
+		return
 	}
 	if !on {
 		ext.diagnostics.Store(false)
@@ -62,13 +63,15 @@ func EnableDiagnosticsLogging(on bool, writer ...io.Writer) {
 type extensions struct {
 	prefixKeys        []string
 	formatters        []formatterEntry
-	dlpEnabled        bool
 	dlpEngine         *dlp.DlpEngine
 	moduleRegistry    *modules.Registry
 	registeredModules []modules.Module
 	formatterMu       sync.RWMutex
 	modulesMu         sync.RWMutex
+	dlpMu             sync.Mutex // 保护 dlpEngine 初始化
 	nextFormatterID   atomic.Int64
+	formatterCount    atomic.Int64
+	dlpEnabled        atomic.Bool
 	moduleIndex       map[string]modules.Module
 	diagnostics       atomic.Bool
 	diagnosticsWriter atomic.Pointer[io.Writer]
@@ -82,16 +85,23 @@ type formatterEntry struct {
 
 // enableDLP 启用日志脱敏功能
 func (e *extensions) enableDLP() {
-	e.dlpEnabled = true
+	if e == nil {
+		return
+	}
+	e.dlpMu.Lock()
 	if e.dlpEngine == nil {
 		e.dlpEngine = dlp.NewDlpEngine()
 	}
-	e.dlpEngine.Enable()
+	e.dlpMu.Unlock()
+	if e.dlpEngine != nil {
+		e.dlpEngine.Enable()
+	}
+	e.dlpEnabled.Store(true)
 }
 
 // disableDLP 禁用日志脱敏功能
 func (e *extensions) disableDLP() {
-	e.dlpEnabled = false
+	e.dlpEnabled.Store(false)
 	if e.dlpEngine != nil {
 		e.dlpEngine.Disable()
 	}
@@ -99,9 +109,19 @@ func (e *extensions) disableDLP() {
 
 // registerModule 注册模块到扩展系统
 func (e *extensions) registerModule(module modules.Module) error {
+	if e == nil || module == nil {
+		return fmt.Errorf("invalid extensions or module")
+	}
+
+	// 在锁内初始化 moduleRegistry（一次性操作）
+	e.modulesMu.Lock()
 	if e.moduleRegistry == nil {
 		e.moduleRegistry = modules.GetRegistry()
 	}
+	if e.moduleIndex == nil {
+		e.moduleIndex = make(map[string]modules.Module)
+	}
+	e.modulesMu.Unlock()
 
 	// 将模块添加到注册表
 	if err := e.moduleRegistry.Register(module); err != nil {
@@ -110,9 +130,6 @@ func (e *extensions) registerModule(module modules.Module) error {
 
 	// 添加到本地模块列表
 	e.modulesMu.Lock()
-	if e.moduleIndex == nil {
-		e.moduleIndex = make(map[string]modules.Module)
-	}
 	e.registeredModules = append(e.registeredModules, module)
 	e.moduleIndex[module.Name()] = module
 	e.modulesMu.Unlock()
@@ -122,7 +139,7 @@ func (e *extensions) registerModule(module modules.Module) error {
 	case modules.TypeFormatter:
 		if provider, ok := module.(modules.FormatterProvider); ok {
 			e.addFormatterFuncs(provider.FormatterFunctions())
-		} else if adapter, ok := module.(interface{ GetFormatters() interface{} }); ok {
+		} else if adapter, ok := module.(interface{ GetFormatters() any }); ok {
 			if formatters := adapter.GetFormatters(); formatters != nil {
 				e.addFormattersFromModule(formatters)
 			}
@@ -141,11 +158,11 @@ func (e *extensions) addFormatterFuncs(funcs []func([]string, slog.Attr) (slog.V
 	}
 }
 
-func (e *extensions) addFormattersFromModule(formatters interface{}) {
+func (e *extensions) addFormattersFromModule(formatters any) {
 	switch v := formatters.(type) {
 	case []func([]string, slog.Attr) (slog.Value, bool):
 		e.addFormatterFuncs(v)
-	case []interface{}:
+	case []any:
 		for _, item := range v {
 			if f, ok := item.(func([]string, slog.Attr) (slog.Value, bool)); ok {
 				e.addFormatterFuncs([]func([]string, slog.Attr) (slog.Value, bool){f})
@@ -163,6 +180,7 @@ func (e *extensions) registerFormatterInternal(name string, fn FormatterFunc) st
 	e.formatterMu.Lock()
 	e.formatters = append(e.formatters, entry)
 	e.formatterMu.Unlock()
+	e.formatterCount.Add(1)
 	return id
 }
 
@@ -175,6 +193,7 @@ func (e *extensions) removeFormatterInternal(id string) bool {
 	for i, entry := range e.formatters {
 		if entry.id == id {
 			e.formatters = append(e.formatters[:i], e.formatters[i+1:]...)
+			e.formatterCount.Add(-1)
 			return true
 		}
 	}
@@ -198,6 +217,9 @@ func (e *extensions) snapshotModules() []modules.Module {
 }
 
 func (e *extensions) applyFormatters(groups []string, attr slog.Attr) slog.Attr {
+	if e == nil || e.formatterCount.Load() == 0 {
+		return attr
+	}
 	e.formatterMu.RLock()
 	defer e.formatterMu.RUnlock()
 	for _, entry := range e.formatters {
@@ -216,17 +238,15 @@ func (e *extensions) hasAttrTransformers() bool {
 	if e == nil {
 		return false
 	}
-	if e.dlpEnabled && e.dlpEngine != nil {
+	if e.dlpEnabled.Load() && e.dlpEngine != nil {
 		return true
 	}
-	e.formatterMu.RLock()
-	defer e.formatterMu.RUnlock()
-	return len(e.formatters) > 0
+	return e.formatterCount.Load() > 0
 }
 
 // hasMessageTransformer 判断消息正文是否需要在扩展链中被改写。
 func (e *extensions) hasMessageTransformer() bool {
-	return e != nil && e.dlpEnabled && e.dlpEngine != nil
+	return e != nil && e.dlpEnabled.Load() && e.dlpEngine != nil
 }
 
 func (e *extensions) emitDiagnostics(stage string, groups []string, before, after slog.Attr) {
@@ -254,7 +274,11 @@ func attrChanged(before, after slog.Attr) bool {
 }
 
 func (e *extensions) transformMessage(msg string) string {
-	if e == nil || !e.dlpEnabled || e.dlpEngine == nil || msg == "" {
+	if e == nil || !e.dlpEnabled.Load() || e.dlpEngine == nil || msg == "" {
+		return msg
+	}
+	// 快速路径：短消息通常不包含敏感信息，跳过脱敏以提高性能
+	if len(msg) < 8 {
 		return msg
 	}
 	return e.dlpEngine.DesensitizeText(msg)
@@ -387,19 +411,22 @@ func (h *eHandler) transformAttr(groups []string, attr slog.Attr) slog.Attr {
 	for attr.Value.Kind() == slog.KindLogValuer {
 		attr.Value = attr.Value.LogValuer().LogValue()
 	}
-	// 应用所有formatters
-	if h.opts != nil {
-		before := attr
-		attr = h.opts.applyFormatters(groups, attr)
-		h.opts.emitDiagnostics("formatter", groups, before, attr)
+
+	if h.opts == nil {
+		return attr
 	}
 
+	// 应用所有formatters
+	before := attr
+	attr = h.opts.applyFormatters(groups, attr)
+	h.opts.emitDiagnostics("formatter", groups, before, attr)
+
 	// DLP处理
-	if h.opts.dlpEnabled && h.opts.dlpEngine != nil {
+	if h.opts.dlpEnabled.Load() && h.opts.dlpEngine != nil {
 		before := attr
 		switch attr.Value.Kind() {
 		case slog.KindString:
-			attr.Value = slog.StringValue(h.opts.dlpEngine.DesensitizeText(attr.Value.String()))
+			attr.Value = slog.StringValue(desensitizeAttrValue(h.opts.dlpEngine, attr.Key, attr.Value.String()))
 		case slog.KindGroup:
 			attrs := attr.Value.Group()
 			newAttrs := make([]slog.Attr, len(attrs))
@@ -412,6 +439,37 @@ func (h *eHandler) transformAttr(groups []string, attr slog.Attr) slog.Attr {
 	}
 
 	return attr
+}
+
+func desensitizeAttrValue(engine *dlp.DlpEngine, key string, value string) string {
+	if engine == nil || value == "" {
+		return value
+	}
+
+	switch strings.ToLower(key) {
+	case "phone", "mobile", "mobile_phone", "telephone":
+		return engine.DesensitizeSpecificType(value, "mobile_phone")
+	case "email", "email_address", "mail":
+		return engine.DesensitizeSpecificType(value, "email")
+	case "id_card", "idcard", "identity_card":
+		return engine.DesensitizeSpecificType(value, "id_card")
+	case "bank_card", "bankcard":
+		return engine.DesensitizeSpecificType(value, "bank_card")
+	case "ipv4", "ipv6", "ip", "ip_address":
+		return engine.DesensitizeSpecificType(value, "ipv4")
+	case "imei":
+		return engine.DesensitizeSpecificType(value, "imei")
+	case "url", "uri":
+		return engine.DesensitizeSpecificType(value, "url")
+	case "domain", "hostname":
+		return engine.DesensitizeSpecificType(value, "domain")
+	case "jwt":
+		return engine.DesensitizeSpecificType(value, "jwt")
+	case "access_token", "token":
+		return engine.DesensitizeSpecificType(value, "access_token")
+	}
+
+	return engine.DesensitizeText(value)
 }
 
 // prepareRecord 根据当前扩展状态选择最轻的记录整理路径。

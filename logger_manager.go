@@ -74,6 +74,38 @@ func (lm *LoggerManager) GetDefault() *Logger {
 	return lm.defaultLogger
 }
 
+// setDefaultSlogLogger 将标准库 slog.Logger 适配成本包默认 Logger。
+func (lm *LoggerManager) setDefaultSlogLogger(logger *SlogLogger) {
+	if logger == nil {
+		return
+	}
+
+	lm.mu.Lock()
+	defer lm.mu.Unlock()
+
+	cfg := DefaultConfig()
+	cfg.SetEnableText(true)
+	cfg.SetEnableJSON(false)
+	lm.defaultLogger = &Logger{
+		text:         logger,
+		ctx:          context.Background(),
+		level:        levelVar.Level(),
+		config:       cfg,
+		renderConfig: outputRenderConfig{},
+	}
+}
+
+// setDefaultLogger 设置本包增强 Logger 为默认实例。
+func (lm *LoggerManager) setDefaultLogger(logger *Logger) {
+	if logger == nil {
+		return
+	}
+
+	lm.mu.Lock()
+	defer lm.mu.Unlock()
+	lm.defaultLogger = logger
+}
+
 // GetNamed 获取或创建命名logger实例
 // 支持实例隔离，每个名称对应独立的logger
 func (lm *LoggerManager) GetNamed(name string) *Logger {

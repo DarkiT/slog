@@ -2,12 +2,11 @@ package slog
 
 import (
 	"context"
-	"log/slog"
 	"sync/atomic"
 )
 
 // ContextPropagatorFunc 将自定义上下文信息转换成 slog.Attr。
-type ContextPropagatorFunc func(ctx context.Context) []slog.Attr
+type ContextPropagatorFunc func(ctx context.Context) []Attr
 
 var contextPropagator atomic.Value
 

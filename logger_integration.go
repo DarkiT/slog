@@ -11,7 +11,7 @@ import (
 )
 
 // RecordRouter 定义模块路由策略，返回要接收当前记录的模块名列表。
-type RecordRouter func(record slog.Record) []string
+type RecordRouter func(record Record) []string
 
 var recordRouter atomic.Value
 
@@ -22,11 +22,19 @@ func SetRecordRouter(router RecordRouter) {
 
 // Use 为 Logger 添加模块实例。
 func (l *Logger) Use(module modules.Module) *Logger {
-	if module == nil || !module.Enabled() {
-		return l
-	}
-	ext.registerModule(module)
+	_ = l.UseWithError(module)
 	return l
+}
+
+// UseWithError 为 Logger 添加模块实例，并向调用方返回注册错误。
+func (l *Logger) UseWithError(module modules.Module) error {
+	if module == nil || !module.Enabled() {
+		return nil
+	}
+	if ext == nil {
+		return errors.New("slog extensions are not initialized")
+	}
+	return ext.registerModule(module)
 }
 
 // WithModules 便捷添加多个模块。
@@ -40,6 +48,11 @@ func (l *Logger) WithModules(modules ...modules.Module) *Logger {
 // UseModule 全局方法：使用模块实例。
 func UseModule(module modules.Module) *Logger {
 	return GetGlobalLogger().Use(module)
+}
+
+// UseModuleWithError 全局注册模块，并返回注册错误，便于第三方模块接入时显式处理失败。
+func UseModuleWithError(module modules.Module) error {
+	return GetGlobalLogger().UseWithError(module)
 }
 
 // UpdateModuleConfig 热更新已注册模块的配置。
@@ -61,7 +74,7 @@ func RegisteredModules() []string {
 }
 
 // ApplyModulesToHandler 将模块处理器应用到基础处理器上。
-func ApplyModulesToHandler(baseHandler slog.Handler, moduleList []modules.Module) slog.Handler {
+func ApplyModulesToHandler(baseHandler Handler, moduleList []modules.Module) Handler {
 	router, _ := recordRouter.Load().(RecordRouter)
 	moduleHandlers := make(map[string]slog.Handler)
 	handlers := []slog.Handler{baseHandler}

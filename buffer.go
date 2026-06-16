@@ -21,7 +21,7 @@ type buffer struct {
 
 // bufferPool 全局buffer池实例
 var bufferPool = sync.Pool{
-	New: func() interface{} {
+	New: func() any {
 		return &buffer{
 			buf: make([]byte, 0, defaultBufferSize),
 		}
@@ -68,13 +68,7 @@ func (b *buffer) Write(p []byte) (n int, err error) {
 
 	// 容量不足时进行扩容
 	if cap(b.buf)-len(b.buf) < len(p) {
-		newCap := cap(b.buf) * 2
-		if newCap < cap(b.buf)+len(p) {
-			newCap = cap(b.buf) + len(p)
-		}
-		if newCap > maxBufferSize {
-			newCap = maxBufferSize
-		}
+		newCap := min(max(cap(b.buf)*2, cap(b.buf)+len(p)), maxBufferSize)
 		newBuf := make([]byte, len(b.buf), newCap)
 		copy(newBuf, b.buf)
 		b.buf = newBuf
@@ -96,12 +90,32 @@ func (b *buffer) WriteStringIf(ok bool, str string) {
 	b.buf = append(b.buf, str...)
 }
 
+// AppendString 追加字符串到内部 buffer。
+// 与 WriteString 不同，它是内部无失败路径 API，避免调用方误以为需要处理 I/O 错误。
+func (b *buffer) AppendString(s string) {
+	b.n++
+	b.buf = append(b.buf, s...)
+}
+
+// AppendStringIf 在条件成立时追加字符串到内部 buffer。
+func (b *buffer) AppendStringIf(ok bool, s string) {
+	if ok {
+		b.AppendString(s)
+	}
+}
+
 // WriteString 写入字符串到buffer
 // 实现了io.StringWriter接口
 func (b *buffer) WriteString(s string) (n int, err error) {
 	b.n++
 	b.buf = append(b.buf, s...)
 	return len(s), nil
+}
+
+// AppendByte 追加单个字节到内部 buffer。
+func (b *buffer) AppendByte(c byte) {
+	b.n++
+	b.buf = append(b.buf, c)
 }
 
 // WriteByte 写入单个字节到buffer

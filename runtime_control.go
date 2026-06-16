@@ -25,7 +25,7 @@ func GetRuntimeSnapshot() RuntimeSnapshot {
 		Level:       levelVar.Level(),
 		TextEnabled: isGlobalTextEnabled(),
 		JSONEnabled: isGlobalJSONEnabled(),
-		DLPEnabled:  ext != nil && ext.dlpEnabled,
+		DLPEnabled:  ext != nil && ext.dlpEnabled.Load(),
 		DLPVersion:  dlpVersion,
 	}
 }

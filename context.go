@@ -3,6 +3,7 @@ package slog
 import (
 	"context"
 	"log/slog"
+	"maps"
 	"sync"
 	"time"
 )
@@ -16,15 +17,15 @@ const (
 
 // Fields 存储上下文字段
 type Fields struct {
-	values map[string]interface{}
+	values map[string]any
 	mu     sync.RWMutex
 }
 
 // fieldsPool 对象池
 var fieldsPool = sync.Pool{
-	New: func() interface{} {
+	New: func() any {
 		return &Fields{
-			values: make(map[string]interface{}),
+			values: make(map[string]any),
 		}
 	},
 }
@@ -34,22 +35,12 @@ func newFields() *Fields {
 	return fieldsPool.Get().(*Fields)
 }
 
-// release 释放Fields实例
-func (f *Fields) release() {
-	f.mu.Lock()
-	clear(f.values)
-	f.mu.Unlock()
-	fieldsPool.Put(f)
-}
-
 // clone 克隆Fields实例
 func (f *Fields) clone() *Fields {
 	newF := newFields()
 	if f != nil {
 		f.mu.RLock()
-		for k, v := range f.values {
-			newF.values[k] = v
-		}
+		maps.Copy(newF.values, f.values)
 		f.mu.RUnlock()
 	}
 	return newF
@@ -75,14 +66,6 @@ func (l *Logger) WithContext(ctx context.Context) *Logger {
 	newLogger := l.clone()
 	newLogger.ctx = ctx
 
-	// 使用 context.AfterFunc 替代手动 goroutine，避免 goroutine 泄漏
-	// 当 context 被取消时自动释放 Fields 资源
-	context.AfterFunc(ctx, func() {
-		if fields := getFields(ctx); fields != nil {
-			fields.release()
-		}
-	})
-
 	// 更新 handlers 的 context，避免重复包装
 	if newLogger.text != nil {
 		newLogger.text = slog.New(cloneHandlerWithContext(newLogger.text.Handler(), ctx))
@@ -95,7 +78,7 @@ func (l *Logger) WithContext(ctx context.Context) *Logger {
 }
 
 // WithValue 在上下文中存储一个键值对，并返回新的上下文
-func (l *Logger) WithValue(key string, val interface{}) *Logger {
+func (l *Logger) WithValue(key string, val any) *Logger {
 	if key == "" || val == nil {
 		return l
 	}
@@ -119,15 +102,7 @@ func (l *Logger) WithValue(key string, val interface{}) *Logger {
 	newFields.mu.Unlock()
 
 	// 创建新的context
-	ctx, cancel := context.WithCancel(newLogger.ctx)
-	newLogger.ctx = context.WithValue(ctx, fieldsKey, newFields)
-
-	// 使用 context.AfterFunc 替代手动 goroutine，避免 goroutine 泄漏
-	// 当 context 被取消时自动释放 Fields 资源
-	context.AfterFunc(ctx, func() {
-		newFields.release()
-		cancel()
-	})
+	newLogger.ctx = context.WithValue(newLogger.ctx, fieldsKey, newFields)
 
 	return newLogger
 }

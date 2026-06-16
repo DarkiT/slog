@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -72,7 +73,7 @@ type SubscribeOptions struct {
 // 其中 Record 保留结构化视图，Rendered 则严格跟随当前激活的主输出格式。
 type SubscriptionEvent struct {
 	// Record 是已应用前缀、formatter、DLP 与 context 字段后的结构化日志。
-	Record slog.Record
+	Record Record
 	// Rendered 是与当前激活主输出一致的最终语义化内容；若未启用任何输出则为空。
 	Rendered string
 	// Format 表示 Rendered 采用的格式，取值为 text、json 或空字符串。
@@ -152,6 +153,7 @@ type subscriber struct {
 	cancel context.CancelFunc
 	done   <-chan struct{}
 	opts   SubscribeOptions
+	mu     sync.RWMutex // 保护订阅通道关闭与并发投递，避免 send/close 竞争。
 	state  atomic.Int32 // 原子状态管理
 	once   sync.Once    // 确保只关闭一次
 	stats  subscriberMetrics
@@ -168,6 +170,8 @@ func (s *subscriber) close() {
 	s.once.Do(func() {
 		s.state.Store(int32(stateClosing))
 		s.cancel()
+		s.mu.Lock()
+		defer s.mu.Unlock()
 		close(s.ch)
 		s.state.Store(int32(stateClosed))
 	})
@@ -175,6 +179,11 @@ func (s *subscriber) close() {
 
 // trySend 尝试发送订阅事件，如果失败则返回false
 func (s *subscriber) trySend(event SubscriptionEvent) (result sendResult) {
+	if !s.isActive() {
+		return sendResultInactive
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	if !s.isActive() {
 		return sendResultInactive
 	}
@@ -304,7 +313,9 @@ func init() {
 		EnableText:     true,
 		EnableJSON:     false,
 	}
-	globalManager.Configure(config)
+	if err := globalManager.Configure(config); err != nil {
+		panic(fmt.Sprintf("slog: configure default logger: %v", err))
+	}
 	attrFormatterOrder.Store(defaultAttrFormatterOrder)
 }
 
@@ -333,7 +344,7 @@ func ConfigureRecordLimiter(ratePerSecond, burst int) {
 	globalRateLimiter.configure(ratePerSecond, burst, ratePerSecond > 0)
 }
 
-func New(handler Handler) *slog.Logger {
+func New(handler Handler) *SlogLogger {
 	return slog.New(handler)
 }
 
@@ -373,7 +384,7 @@ func NewLogger(w io.Writer, noColor, addSource bool) *Logger {
 }
 
 // NewLogfmtLogger 使用 logfmt handler 创建 Logger，便于直接接入 Loki/Vector。
-func NewLogfmtLogger(w io.Writer, opts *slog.HandlerOptions) *Logger {
+func NewLogfmtLogger(w io.Writer, opts *HandlerOptions) *Logger {
 	if w == nil {
 		w = NewWriter()
 	}
@@ -396,7 +407,7 @@ func NewLogfmtLogger(w io.Writer, opts *slog.HandlerOptions) *Logger {
 }
 
 // NewGELFLogger 使用 GELF handler 创建 Logger，面向 Graylog/Logstash。
-func NewGELFLogger(w io.Writer, opts *slog.HandlerOptions, gopts *gelfmod.Options) *Logger {
+func NewGELFLogger(w io.Writer, opts *HandlerOptions, gopts *gelfmod.Options) *Logger {
 	if w == nil {
 		w = NewWriter()
 	}
@@ -474,7 +485,7 @@ func SetAttrFormatterOrder(order ...AttrFormatterRule) {
 }
 
 // NewOptions 创建新的处理程序选项。
-func NewOptions(options *slog.HandlerOptions) *slog.HandlerOptions {
+func NewOptions(options *HandlerOptions) *HandlerOptions {
 	var opts slog.HandlerOptions
 	if options != nil {
 		opts = *options
@@ -516,11 +527,16 @@ func getAttrFormatterOrder() []AttrFormatterRule {
 }
 
 func (f attrFormatter) replace(groups []string, a slog.Attr) slog.Attr {
-	if a.Key != TimeKey && a.Key != LevelKey && a.Key != SourceKey &&
-		a.Value.Kind() != slog.KindGroup && a.Value.Kind() != slog.KindLogValuer {
-		return a
+	switch a.Key {
+	case TimeKey, LevelKey, SourceKey:
+		return f.applyBuiltinRule(a)
+	default:
+		kind := a.Value.Kind()
+		if kind != slog.KindGroup && kind != slog.KindLogValuer {
+			return a
+		}
+		return f.walk(groups, a)
 	}
-	return f.walk(groups, a)
 }
 
 func (f attrFormatter) walk(groups []string, a slog.Attr) slog.Attr {
@@ -541,17 +557,24 @@ func (f attrFormatter) walk(groups []string, a slog.Attr) slog.Attr {
 		a.Value = slog.GroupValue(newAttrs...)
 		return a
 	}
+	return f.applyBuiltinRule(a)
+}
+
+func (f attrFormatter) applyBuiltinRule(a slog.Attr) slog.Attr {
 	for _, rule := range f.order {
 		switch rule {
 		case AttrFormatterRuleSource:
-			a = f.normalizeSource(a)
+			if a.Key == slog.SourceKey {
+				return f.normalizeSource(a)
+			}
 		case AttrFormatterRuleLevel:
-			a = f.normalizeLevel(a)
+			if a.Key == LevelKey {
+				return f.normalizeLevel(a)
+			}
 		case AttrFormatterRuleTime:
-			a = f.normalizeTime(a)
-		}
-		if a.Equal(slog.Attr{}) {
-			return a
+			if a.Key == TimeKey {
+				return f.normalizeTime(a)
+			}
 		}
 	}
 	return a
@@ -574,7 +597,7 @@ func (f attrFormatter) normalizeLevel(a slog.Attr) slog.Attr {
 		return a
 	}
 	if level, ok := levelFromValue(a.Value); ok {
-		if name, exists := levelJSONNames[level]; exists {
+		if name, exists := levelJSONName(level); exists {
 			a.Value = slog.StringValue(name)
 		}
 	}
@@ -622,6 +645,25 @@ func levelFromValue(val slog.Value) (Level, bool) {
 	return level, ok
 }
 
+func levelJSONName(level Level) (string, bool) {
+	switch level {
+	case LevelInfo:
+		return "Info", true
+	case LevelDebug:
+		return "Debug", true
+	case LevelWarn:
+		return "Warn", true
+	case LevelError:
+		return "Error", true
+	case LevelTrace:
+		return "Trace", true
+	case LevelFatal:
+		return "Fatal", true
+	default:
+		return "", false
+	}
+}
+
 func chainReplaceAttr(first, second func([]string, slog.Attr) slog.Attr) func([]string, slog.Attr) slog.Attr {
 	switch {
 	case first == nil:
@@ -654,12 +696,11 @@ func Default(modules ...string) *Logger {
 
 	// 创建新的上下文
 	newLogger.ctx = context.Background() // 确保每个模块有独立的上下文
-
-	// 设置模块前缀
-	newHandler := newAddonsHandler(newLogger.text.Handler(), ext)
-	newHandler.prefixes[0] = slog.StringValue(module)
-
-	newLogger.text = slog.New(newHandler)
+	if newLogger.text != nil {
+		newHandler := newAddonsHandler(newLogger.text.Handler(), ext)
+		newHandler.prefixes[0] = slog.StringValue(module)
+		newLogger.text = slog.New(newHandler)
+	}
 	if newLogger.json != nil {
 		jsonHandler := newAddonsHandler(newLogger.json.Handler(), ext)
 		jsonHandler.prefixes[0] = slog.StringValue(module)
@@ -670,7 +711,7 @@ func Default(modules ...string) *Logger {
 }
 
 // GetSlogLogger 返回原始log/slog的日志记录器
-func GetSlogLogger() *slog.Logger {
+func GetSlogLogger() *SlogLogger {
 	return globalManager.GetDefault().GetSlogLogger()
 }
 
@@ -997,7 +1038,7 @@ func GetSubscriptionStats() SubscriptionStats {
 	var stats SubscriptionStats
 	stats.Evicted = subscriberEvicted.Load()
 
-	subscribers.Range(func(_, value interface{}) bool {
+	subscribers.Range(func(_, value any) bool {
 		sub := value.(*subscriber)
 		s := sub.snapshot()
 		stats.Subscribers++
@@ -1024,7 +1065,7 @@ func GetSubscriptionStats() SubscriptionStats {
 // ListSubscriberStats 返回所有订阅者统计快照（按订阅ID升序）。
 func ListSubscriberStats() []SubscriberStats {
 	all := make([]SubscriberStats, 0, 8)
-	subscribers.Range(func(_, value interface{}) bool {
+	subscribers.Range(func(_, value any) bool {
 		sub := value.(*subscriber)
 		all = append(all, sub.snapshot())
 		return true
@@ -1095,10 +1136,5 @@ func isValidLevel(level Level) bool {
 		LevelFatal, // 12
 	}
 
-	for _, l := range validLevels {
-		if level == l {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(validLevels, level)
 }

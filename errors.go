@@ -1,6 +1,7 @@
 package slog
 
 import (
+	"errors"
 	"fmt"
 )
 
@@ -42,7 +43,7 @@ type SlogError struct {
 	Field     string
 	Expected  string
 	Actual    string
-	Details   map[string]interface{}
+	Details   map[string]any
 	Cause     error
 }
 
@@ -100,18 +101,18 @@ func (e *SlogError) Unwrap() error {
 }
 
 // WithDetails 添加详细信息
-func (e *SlogError) WithDetails(key string, value interface{}) *SlogError {
+func (e *SlogError) WithDetails(key string, value any) *SlogError {
 	if e.Details == nil {
-		e.Details = make(map[string]interface{})
+		e.Details = make(map[string]any)
 	}
 	e.Details[key] = value
 	return e
 }
 
 // GetDetails 获取详细信息
-func (e *SlogError) GetDetails() map[string]interface{} {
+func (e *SlogError) GetDetails() map[string]any {
 	if e.Details == nil {
-		return make(map[string]interface{})
+		return make(map[string]any)
 	}
 	return e.Details
 }
@@ -204,7 +205,8 @@ func NewFormatterError(operation string, cause error) *SlogError {
 
 // IsErrorType 检查错误是否为指定类型
 func IsErrorType(err error, errorType ErrorType) bool {
-	if slogErr, ok := err.(*SlogError); ok {
+	var slogErr *SlogError
+	if errors.As(err, &slogErr) {
 		return slogErr.Type == errorType
 	}
 	return false
@@ -212,7 +214,8 @@ func IsErrorType(err error, errorType ErrorType) bool {
 
 // GetErrorComponent 获取错误组件名称
 func GetErrorComponent(err error) string {
-	if slogErr, ok := err.(*SlogError); ok {
+	var slogErr *SlogError
+	if errors.As(err, &slogErr) {
 		return slogErr.Component
 	}
 	return ""
@@ -220,7 +223,8 @@ func GetErrorComponent(err error) string {
 
 // GetErrorOperation 获取错误操作名称
 func GetErrorOperation(err error) string {
-	if slogErr, ok := err.(*SlogError); ok {
+	var slogErr *SlogError
+	if errors.As(err, &slogErr) {
 		return slogErr.Operation
 	}
 	return ""
