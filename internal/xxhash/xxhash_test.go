@@ -6,18 +6,6 @@ import (
 
 // 测试向量来自 xxHash 官方参考实现
 // https://github.com/Cyan4973/xxHash/blob/dev/doc/xxhash_spec.md
-var testCases = []struct {
-	name     string
-	input    string
-	expected uint64
-}{
-	{"empty", "", 0xef46db3751d8e999},
-	{"single_byte", "a", 0xd24ec4f1a98c6e5b},
-	{"short_string", "abc", 0x44bc2cf5ad770999},
-	{"hello", "Hello, World!", 0x7b06c531ea43e89f},
-	{"32_bytes", "12345678901234567890123456789012", 0x2d4ed0c8f1e3e8a1},
-}
-
 func TestSum64_Empty(t *testing.T) {
 	result := Sum64(nil)
 	expected := uint64(0xef46db3751d8e999)
@@ -125,7 +113,7 @@ func TestSum64_Deterministic(t *testing.T) {
 	input := []byte("deterministic test input")
 	first := Sum64(input)
 
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		if Sum64(input) != first {
 			t.Fatalf("Sum64 not deterministic at iteration %d", i)
 		}

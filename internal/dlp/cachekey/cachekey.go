@@ -99,10 +99,7 @@ func (cko *CacheKey) GenerateFastKey(data string) string {
 		return data[:prefixLen] + "..." + data[dataLen-suffixLen:] + ":" + strconv.Itoa(dataLen)
 	}
 
-	prefixLen := 8
-	if dataLen < prefixLen {
-		prefixLen = dataLen
-	}
+	prefixLen := min(dataLen, 8)
 
 	middlePart := data[prefixLen:]
 	hash := xxhash.Sum64String(middlePart)
@@ -163,8 +160,8 @@ func (cko *CacheKey) IsXXHashEnabled() bool {
 }
 
 // GetCacheStats 获取缓存优化器统计信息
-func (cko *CacheKey) GetCacheStats() map[string]interface{} {
-	return map[string]interface{}{
+func (cko *CacheKey) GetCacheStats() map[string]any {
+	return map[string]any{
 		"xxhash_enabled":    cko.useXXHash,
 		"prefix_cache_size": len(cko.prefixCache),
 		"algorithm":         "xxhash64",
@@ -187,7 +184,7 @@ func (cko *CacheKey) FastStringHash(s string) uint64 {
 		return hash
 	}
 
-	return xxhash.Sum64(*(*[]byte)(unsafe.Pointer(&struct {
+	return xxhash.Sum64(*(*[]byte)(unsafe.Pointer(&struct { // #nosec G103 -- read-only string-to-bytes view for hashing; no mutation escapes.
 		string
 		int
 	}{s, len(s)})))

@@ -116,7 +116,7 @@ func TestTieredBuffer_Operations(t *testing.T) {
 		}
 
 		// 写入数据后检查长度
-		buffer.WriteString("test data")
+		_, _ = buffer.WriteString("test data")
 		if buffer.Len() != 9 {
 			t.Errorf("写入后长度应该为9, 实际: %d", buffer.Len())
 		}
@@ -171,7 +171,7 @@ func TestTieredPools_BufferReuse(t *testing.T) {
 
 	// 第一次获取
 	buffer1 := tp.GetBuffer(1024)
-	buffer1.WriteString("test data")
+	_, _ = buffer1.WriteString("test data")
 	originalPtr := fmt.Sprintf("%p", buffer1)
 	tp.PutBuffer(buffer1)
 
@@ -203,11 +203,11 @@ func TestTieredPools_Concurrency(t *testing.T) {
 	wg.Add(numGoroutines)
 
 	// 并发获取和放回buffer
-	for i := 0; i < numGoroutines; i++ {
+	for i := range numGoroutines {
 		go func(id int) {
 			defer wg.Done()
 
-			for j := 0; j < numOperations; j++ {
+			for j := range numOperations {
 				// 随机选择不同大小的buffer
 				size := (id*numOperations + j) % 3
 				var buffer *TieredBuffer
@@ -222,7 +222,7 @@ func TestTieredPools_Concurrency(t *testing.T) {
 				}
 
 				// 写入一些数据
-				buffer.WriteString(fmt.Sprintf("goroutine-%d-op-%d", id, j))
+				fmt.Fprintf(buffer, "goroutine-%d-op-%d", id, j)
 
 				// 放回池中
 				tp.PutBuffer(buffer)
@@ -298,7 +298,7 @@ func TestTieredPools_MemoryManagement(t *testing.T) {
 
 		// 人为扩大buffer容量（模拟过度使用）
 		largeData := make([]byte, 100*1024) // 100KB
-		buffer.Write(largeData)
+		_, _ = buffer.Write(largeData)
 
 		initialStats := tp.GetStats()
 		tp.PutBuffer(buffer)
@@ -338,7 +338,7 @@ func BenchmarkTieredPools_BufferOperations(b *testing.B) {
 	b.Run("SmallBuffer", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			buffer := tp.GetBuffer(512)
-			buffer.WriteString("Hello World")
+			_, _ = buffer.WriteString("Hello World")
 			tp.PutBuffer(buffer)
 		}
 	})
@@ -346,7 +346,7 @@ func BenchmarkTieredPools_BufferOperations(b *testing.B) {
 	b.Run("MediumBuffer", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			buffer := tp.GetBuffer(4096)
-			buffer.WriteString(strings.Repeat("data ", 100))
+			_, _ = buffer.WriteString(strings.Repeat("data ", 100))
 			tp.PutBuffer(buffer)
 		}
 	})
@@ -354,7 +354,7 @@ func BenchmarkTieredPools_BufferOperations(b *testing.B) {
 	b.Run("LargeBuffer", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			buffer := tp.GetBuffer(16384)
-			buffer.WriteString(strings.Repeat("large data ", 500))
+			_, _ = buffer.WriteString(strings.Repeat("large data ", 500))
 			tp.PutBuffer(buffer)
 		}
 	})
@@ -375,7 +375,7 @@ func BenchmarkTieredPools_StringBuilders(b *testing.B) {
 	b.Run("MediumStringBuilder", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			builder := tp.GetStringBuilder(1024)
-			for j := 0; j < 20; j++ {
+			for range 20 {
 				builder.WriteString("Medium content ")
 			}
 			tp.PutStringBuilder(builder, 1024)
@@ -385,7 +385,7 @@ func BenchmarkTieredPools_StringBuilders(b *testing.B) {
 	b.Run("LargeStringBuilder", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			builder := tp.GetStringBuilder(4096)
-			for j := 0; j < 100; j++ {
+			for range 100 {
 				builder.WriteString("Large content block ")
 			}
 			tp.PutStringBuilder(builder, 4096)
@@ -400,7 +400,7 @@ func BenchmarkTieredPools_vs_SyncPool(b *testing.B) {
 
 	// 传统sync.Pool
 	var traditional sync.Pool
-	traditional.New = func() interface{} {
+	traditional.New = func() any {
 		return &strings.Builder{}
 	}
 

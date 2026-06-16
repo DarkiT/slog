@@ -141,7 +141,7 @@ func NewBufferPool(initSize, maxSize int, stats *PoolStats) *BufferPool {
 	}
 
 	bp.pool = sync.Pool{
-		New: func() interface{} {
+		New: func() any {
 			atomic.AddInt64(&stats.news, 1)
 			return &TieredBuffer{
 				data:     make([]byte, 0, initSize),
@@ -161,7 +161,7 @@ func NewStringBuilderPool(capacity int, stats *PoolStats) *StringBuilderPool {
 	}
 
 	sp.pool = sync.Pool{
-		New: func() interface{} {
+		New: func() any {
 			atomic.AddInt64(&stats.news, 1)
 			builder := &strings.Builder{}
 			builder.Grow(capacity)

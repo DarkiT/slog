@@ -10,17 +10,17 @@ import (
 // 提供线程安全的LRU缓存，支持自动淘汰最久未使用的条目
 type LRUCache struct {
 	mu       sync.RWMutex
-	capacity int                           // 缓存容量
-	cache    map[interface{}]*list.Element // 键到链表节点的映射
-	list     *list.List                    // 双向链表，维护访问顺序
-	misses   atomic.Int64                  // 全局未命中次数（原子操作）
-	hits     atomic.Int64                  // 全局命中次数（原子操作）
+	capacity int                   // 缓存容量
+	cache    map[any]*list.Element // 键到链表节点的映射
+	list     *list.List            // 双向链表，维护访问顺序
+	misses   atomic.Int64          // 全局未命中次数（原子操作）
+	hits     atomic.Int64          // 全局命中次数（原子操作）
 }
 
 // CacheEntry 缓存条目
 type CacheEntry struct {
-	Key   interface{} // 缓存键
-	Value interface{} // 缓存值
+	Key   any // 缓存键
+	Value any // 缓存值
 }
 
 // LRUCacheStats LRU缓存统计信息
@@ -40,13 +40,13 @@ func NewLRUCache(capacity int) *LRUCache {
 
 	return &LRUCache{
 		capacity: capacity,
-		cache:    make(map[interface{}]*list.Element),
+		cache:    make(map[any]*list.Element),
 		list:     list.New(),
 	}
 }
 
 // Get 获取缓存值
-func (lru *LRUCache) Get(key interface{}) (interface{}, bool) {
+func (lru *LRUCache) Get(key any) (any, bool) {
 	lru.mu.Lock()
 	defer lru.mu.Unlock()
 
@@ -67,7 +67,7 @@ func (lru *LRUCache) Get(key interface{}) (interface{}, bool) {
 }
 
 // Put 设置缓存值
-func (lru *LRUCache) Put(key interface{}, value interface{}) {
+func (lru *LRUCache) Put(key any, value any) {
 	lru.mu.Lock()
 	defer lru.mu.Unlock()
 
@@ -117,7 +117,7 @@ func (lru *LRUCache) removeElement(elem *list.Element) {
 }
 
 // Remove 移除指定键的缓存
-func (lru *LRUCache) Remove(key interface{}) bool {
+func (lru *LRUCache) Remove(key any) bool {
 	lru.mu.Lock()
 	defer lru.mu.Unlock()
 
@@ -134,7 +134,7 @@ func (lru *LRUCache) Clear() {
 	lru.mu.Lock()
 	defer lru.mu.Unlock()
 
-	lru.cache = make(map[interface{}]*list.Element)
+	lru.cache = make(map[any]*list.Element)
 	lru.list = list.New()
 	lru.misses.Store(0) // 重置miss计数器
 	lru.hits.Store(0)   // 重置hits计数器
@@ -197,7 +197,7 @@ func (lru *LRUCache) GetStats() LRUCacheStats {
 }
 
 // GetOldestKey 获取最久未使用的键（用于调试）
-func (lru *LRUCache) GetOldestKey() interface{} {
+func (lru *LRUCache) GetOldestKey() any {
 	lru.mu.RLock()
 	defer lru.mu.RUnlock()
 
@@ -215,7 +215,7 @@ func (lru *LRUCache) GetOldestKey() interface{} {
 }
 
 // GetMostRecentKey 获取最近使用的键（用于调试）
-func (lru *LRUCache) GetMostRecentKey() interface{} {
+func (lru *LRUCache) GetMostRecentKey() any {
 	lru.mu.RLock()
 	defer lru.mu.RUnlock()
 
@@ -233,11 +233,11 @@ func (lru *LRUCache) GetMostRecentKey() interface{} {
 }
 
 // GetKeys 获取所有键（按访问顺序，从最新到最旧）
-func (lru *LRUCache) GetKeys() []interface{} {
+func (lru *LRUCache) GetKeys() []any {
 	lru.mu.RLock()
 	defer lru.mu.RUnlock()
 
-	keys := make([]interface{}, 0, lru.list.Len())
+	keys := make([]any, 0, lru.list.Len())
 	for elem := lru.list.Front(); elem != nil; elem = elem.Next() {
 		entry := elem.Value.(*CacheEntry)
 		keys = append(keys, entry.Key)
@@ -247,7 +247,7 @@ func (lru *LRUCache) GetKeys() []interface{} {
 }
 
 // Contains 检查是否包含指定键
-func (lru *LRUCache) Contains(key interface{}) bool {
+func (lru *LRUCache) Contains(key any) bool {
 	lru.mu.RLock()
 	defer lru.mu.RUnlock()
 
@@ -256,7 +256,7 @@ func (lru *LRUCache) Contains(key interface{}) bool {
 }
 
 // Peek 查看缓存值但不更新访问顺序
-func (lru *LRUCache) Peek(key interface{}) (interface{}, bool) {
+func (lru *LRUCache) Peek(key any) (any, bool) {
 	lru.mu.RLock()
 	defer lru.mu.RUnlock()
 

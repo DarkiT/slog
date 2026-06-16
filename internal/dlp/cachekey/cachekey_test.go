@@ -76,7 +76,7 @@ func TestCacheKey_HashCollision(t *testing.T) {
 	keys := make(map[string]bool)
 	collisions := 0
 
-	for i := 0; i < 10000; i++ {
+	for i := range 10000 {
 		data := strings.Repeat("data", i%100) + string(rune(i))
 		key := optimizer.GenerateHashKey(data)
 
@@ -106,7 +106,7 @@ func TestCacheKey_Performance(t *testing.T) {
 
 	for name, method := range methods {
 		t.Run(name, func(t *testing.T) {
-			for i := 0; i < 100; i++ {
+			for range 100 {
 				method(longText)
 			}
 

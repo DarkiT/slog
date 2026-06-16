@@ -291,7 +291,7 @@ func TestLRUCache_Concurrency(t *testing.T) {
 	done := make(chan bool, 100)
 
 	// 并发写入
-	for i := 0; i < 50; i++ {
+	for i := range 50 {
 		go func(id int) {
 			key := strconv.Itoa(id)
 			cache.Put(key, id)
@@ -300,7 +300,7 @@ func TestLRUCache_Concurrency(t *testing.T) {
 	}
 
 	// 并发读取
-	for i := 0; i < 50; i++ {
+	for i := range 50 {
 		go func(id int) {
 			key := strconv.Itoa(id % 25) // 读取部分存在的键
 			cache.Get(key)
@@ -309,7 +309,7 @@ func TestLRUCache_Concurrency(t *testing.T) {
 	}
 
 	// 等待所有操作完成
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		<-done
 	}
 
@@ -378,7 +378,7 @@ func BenchmarkLRUCache_Get(b *testing.B) {
 	cache := NewLRUCache(1000)
 
 	// 预填充缓存
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		cache.Put(strconv.Itoa(i), i)
 	}
 
@@ -407,7 +407,7 @@ func BenchmarkLRUStringCache_GetString(b *testing.B) {
 	cache := NewLRUStringCache(1000)
 
 	// 预填充缓存
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		cache.PutString(strconv.Itoa(i), "value"+strconv.Itoa(i))
 	}
 
@@ -422,7 +422,7 @@ func BenchmarkLRUCache_ConcurrentAccess(b *testing.B) {
 	cache := NewLRUCache(1000)
 
 	// 预填充缓存
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		cache.Put(strconv.Itoa(i), i)
 	}
 

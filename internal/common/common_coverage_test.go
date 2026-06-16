@@ -1,11 +1,34 @@
 package common
 
 import (
+	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 	"testing"
 	"time"
 )
+
+func TestExtractFromContextHandlesNonStringKeysAndNilContext(t *testing.T) {
+	type requestIDKey struct{}
+
+	key := requestIDKey{}
+	ctx := context.WithValue(context.Background(), key, "req-1")
+	extractor := ExtractFromContext("trace_id", key)
+
+	attrs := extractor(ctx)
+	if len(attrs) != 2 {
+		t.Fatalf("expected 2 attrs, got %d", len(attrs))
+	}
+	if attrs[1].Key != fmt.Sprint(key) || attrs[1].Value.String() != "req-1" {
+		t.Fatalf("unexpected non-string key attr: %+v", attrs[1])
+	}
+
+	nilAttrs := ExtractFromContext("trace_id")(nil)
+	if len(nilAttrs) != 1 || nilAttrs[0].Value.Kind() != slog.KindAny {
+		t.Fatalf("nil context should produce a stable nil attr, got %+v", nilAttrs)
+	}
+}
 
 // TestLRUCache_AdditionalEdgeCases 测试LRU缓存的边界情况
 func TestLRUCache_AdditionalEdgeCases(t *testing.T) {
@@ -41,12 +64,12 @@ func TestLRUCache_AdditionalEdgeCases(t *testing.T) {
 				cache := NewLRUCache(10000)
 
 				// 添加大量数据
-				for i := 0; i < 1000; i++ {
+				for i := range 1000 {
 					cache.Put(i, i*2)
 				}
 
 				// 验证数据存在
-				for i := 0; i < 1000; i++ {
+				for i := range 1000 {
 					if value, exists := cache.Get(i); !exists || value != i*2 {
 						t.Errorf("大容量缓存数据丢失: key=%d", i)
 					}
@@ -131,7 +154,7 @@ func TestLRUCache_ClearAndSize(t *testing.T) {
 	cache := NewLRUCache(5)
 
 	// 添加数据
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		cache.Put(i, i*2)
 	}
 
@@ -147,7 +170,7 @@ func TestLRUCache_ClearAndSize(t *testing.T) {
 	}
 
 	// 验证数据确实被清除
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if _, exists := cache.Get(i); exists {
 			t.Errorf("清除后数据不应该存在: key=%d", i)
 		}
@@ -169,11 +192,11 @@ func TestLRUCache_ThreadSafety(t *testing.T) {
 	var wg sync.WaitGroup
 
 	// 并发写入
-	for i := 0; i < numGoroutines; i++ {
+	for i := range numGoroutines {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
-			for j := 0; j < numOperations; j++ {
+			for j := range numOperations {
 				key := id*numOperations + j
 				cache.Put(key, key*2)
 			}
@@ -181,11 +204,11 @@ func TestLRUCache_ThreadSafety(t *testing.T) {
 	}
 
 	// 并发读取
-	for i := 0; i < numGoroutines; i++ {
+	for i := range numGoroutines {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
-			for j := 0; j < numOperations; j++ {
+			for j := range numOperations {
 				key := id*numOperations + j
 				cache.Get(key)
 			}
@@ -202,7 +225,7 @@ func TestLRUCache_ThreadSafety(t *testing.T) {
 
 	go func() {
 		defer wg.Done()
-		for i := 0; i < 50; i++ {
+		for range 50 {
 			cache.GetStats()
 			time.Sleep(time.Microsecond * 100)
 		}
@@ -262,7 +285,7 @@ func TestTieredPools_Coverage(t *testing.T) {
 
 			// 测试写入功能
 			testData := "test data for buffer"
-			buffer.WriteString(testData)
+			_, _ = buffer.WriteString(testData)
 
 			if buffer.String() != testData {
 				t.Error("buffer写入失败")
@@ -280,7 +303,7 @@ func TestTieredPools_StatisticsCoverage(t *testing.T) {
 
 	// 获取多个buffer并放回
 	buffers := make([]*TieredBuffer, 5)
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		buffers[i] = pools.GetBuffer(3000) // 3KB -> medium buffer (> 2KB but <= 8KB)
 	}
 
@@ -315,18 +338,18 @@ func TestTieredPools_ConcurrencyCoverage(t *testing.T) {
 
 	var wg sync.WaitGroup
 
-	for i := 0; i < numGoroutines; i++ {
+	for i := range numGoroutines {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
 
-			for j := 0; j < numOperations; j++ {
+			for j := range numOperations {
 				// 随机大小的buffer
 				size := (id*numOperations + j) % 15000
 				buffer := pools.GetBuffer(size)
 
 				// 写入一些数据
-				buffer.WriteString("test data")
+				_, _ = buffer.WriteString("test data")
 
 				// 放回池中
 				pools.PutBuffer(buffer)
@@ -338,7 +361,7 @@ func TestTieredPools_ConcurrencyCoverage(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		for i := 0; i < 100; i++ {
+		for range 100 {
 			pools.GetStats()
 			time.Sleep(time.Microsecond * 100)
 		}

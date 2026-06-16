@@ -317,9 +317,9 @@ func findAttributeWithDepth(attrs []slog.Attr, groups []string, key string, dept
 	if len(groups) > 0 {
 		for _, attr := range attrs {
 			if attr.Value.Kind() == slog.KindGroup && attr.Key == groups[0] {
-				attr, found := findAttributeWithDepth(attr.Value.Group(), groups[1:], key, depth+1)
+				nestedAttr, found := findAttributeWithDepth(attr.Value.Group(), groups[1:], key, depth+1)
 				if found {
-					return attr, true
+					return nestedAttr, true
 				}
 			}
 		}

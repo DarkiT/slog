@@ -2,6 +2,7 @@ package common
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 )
 
@@ -17,7 +18,15 @@ func ExtractFromContext(keys ...any) func(ctx context.Context) []slog.Attr {
 	return func(ctx context.Context) []slog.Attr {
 		attrs := []slog.Attr{}
 		for _, key := range keys {
-			attrs = append(attrs, slog.Any(key.(string), ctx.Value(key)))
+			name, ok := key.(string)
+			if !ok {
+				name = fmt.Sprint(key)
+			}
+			var value any
+			if ctx != nil {
+				value = ctx.Value(key)
+			}
+			attrs = append(attrs, slog.Any(name, value))
 		}
 		return attrs
 	}

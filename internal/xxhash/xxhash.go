@@ -80,7 +80,7 @@ func Sum64(b []byte) uint64 {
 // Avoids an extra allocation by reinterpreting the string header as a byte slice.
 func Sum64String(s string) uint64 {
 	// Use unsafe.StringData to avoid extra allocation while keeping pointer safety rules.
-	b := unsafe.Slice(unsafe.StringData(s), len(s))
+	b := unsafe.Slice(unsafe.StringData(s), len(s)) // #nosec G103 -- read-only string-to-bytes view for hashing; no mutation escapes.
 	return Sum64(b)
 }
 
