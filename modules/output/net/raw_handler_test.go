@@ -3,6 +3,7 @@ package outputnet
 import (
 	"bytes"
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 	"sync"
@@ -95,6 +96,15 @@ func TestRawHandler_JSONCodec(t *testing.T) {
 	}
 	if got := w.String(); !strings.Contains(got, "\"message\":\"hello-json\"") {
 		t.Fatalf("unexpected json payload: %q", got)
+	}
+}
+
+func TestRawHandler_NilWriterReturnsError(t *testing.T) {
+	h := NewRawHandlerWithOption(RawOption{Writer: nil})
+	r := slog.Record{Time: time.Now(), Level: slog.LevelInfo, Message: "nil writer"}
+
+	if err := h.Handle(context.Background(), r); !errors.Is(err, errNilWriter) {
+		t.Fatalf("Handle() error = %v, want %v", err, errNilWriter)
 	}
 }
 

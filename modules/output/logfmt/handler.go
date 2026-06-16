@@ -118,10 +118,12 @@ func (h *Handler) WithGroup(name string) slog.Handler {
 
 // 模块注册
 func init() {
-	modules.RegisterFactory("logfmt", func(config modules.Config) (modules.Module, error) {
+	if err := modules.RegisterFactory("logfmt", func(config modules.Config) (modules.Module, error) {
 		h := New(Option{})
 		return modules.NewHandlerModule("logfmt", h), nil
-	})
+	}); err != nil {
+		modules.ReportAsyncError("registry.logfmt", err)
+	}
 }
 
 // --- helpers ---

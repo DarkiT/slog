@@ -76,8 +76,10 @@ func (w *WebhookAdapter) Configure(config modules.Config) error {
 
 // init 注册webhook模块工厂
 func init() {
-	modules.RegisterFactory("webhook", func(config modules.Config) (modules.Module, error) {
+	if err := modules.RegisterFactory("webhook", func(config modules.Config) (modules.Module, error) {
 		adapter := NewWebhookAdapter()
 		return adapter, adapter.Configure(config)
-	})
+	}); err != nil {
+		modules.ReportAsyncError("registry.webhook", err)
+	}
 }

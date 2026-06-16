@@ -70,8 +70,10 @@ func (f *FormatterAdapter) FormatterFunctions() []func([]string, slog.Attr) (slo
 
 // init 注册formatter模块工厂
 func init() {
-	modules.RegisterFactory("formatter", func(config modules.Config) (modules.Module, error) {
+	if err := modules.RegisterFactory("formatter", func(config modules.Config) (modules.Module, error) {
 		adapter := NewFormatterAdapter()
 		return adapter, adapter.Configure(config)
-	})
+	}); err != nil {
+		modules.ReportAsyncError("registry.formatter", err)
+	}
 }

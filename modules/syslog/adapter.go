@@ -81,8 +81,10 @@ func (s *SyslogAdapter) Configure(config modules.Config) error {
 
 // init 注册syslog模块工厂
 func init() {
-	modules.RegisterFactory("syslog", func(config modules.Config) (modules.Module, error) {
+	if err := modules.RegisterFactory("syslog", func(config modules.Config) (modules.Module, error) {
 		adapter := NewSyslogAdapter()
 		return adapter, adapter.Configure(config)
-	})
+	}); err != nil {
+		modules.ReportAsyncError("registry.syslog", err)
+	}
 }

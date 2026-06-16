@@ -10,7 +10,10 @@ import (
 	"github.com/darkit/slog/modules"
 )
 
-var errInvalidCodec = errors.New("outputnet: invalid codec")
+var (
+	errInvalidCodec = errors.New("outputnet: invalid codec")
+	errNilWriter    = errors.New("outputnet: writer cannot be nil")
+)
 
 // RawOption controls generic output.net formatting.
 type RawOption struct {
@@ -55,6 +58,10 @@ func (h *RawHandler) Enabled(_ context.Context, level slog.Level) bool {
 }
 
 func (h *RawHandler) Handle(_ context.Context, record slog.Record) error {
+	if h.option.Writer == nil {
+		return errNilWriter
+	}
+
 	payload, err := h.option.Codec.Encode(&record, h.attrs, h.groups)
 	if err != nil {
 		return err

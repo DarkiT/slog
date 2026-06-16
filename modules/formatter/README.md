@@ -507,4 +507,4 @@ make watch-test
 
 版权所有 © 2023 [Samuel Berthe](https://github.com/samber)。
 
-本项目采用 [MIT](../../LICENSE) 许可证。 
+本项目采用 [MIT](./LICENSE) 许可证。 

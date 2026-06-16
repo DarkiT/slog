@@ -101,8 +101,10 @@ func parseLevel(level string) slog.Leveler {
 }
 
 func init() {
-	modules.RegisterFactory("output.net", func(config modules.Config) (modules.Module, error) {
+	if err := modules.RegisterFactory("output.net", func(config modules.Config) (modules.Module, error) {
 		adapter := NewNetAdapter()
 		return adapter, adapter.Configure(config)
-	})
+	}); err != nil {
+		modules.ReportAsyncError("registry.output.net", err)
+	}
 }

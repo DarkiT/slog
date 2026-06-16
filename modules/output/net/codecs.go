@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"log/slog"
+	"maps"
 	"strings"
 	"sync"
 	"time"
@@ -97,8 +98,6 @@ func (c jsonCodec) Encode(record *slog.Record, attrs []slog.Attr, groups []strin
 	if !record.Time.IsZero() {
 		payload["timestamp"] = record.Time.UTC().Format(time.RFC3339Nano)
 	}
-	for k, v := range flat {
-		payload[k] = v
-	}
+	maps.Copy(payload, flat)
 	return json.Marshal(payload)
 }

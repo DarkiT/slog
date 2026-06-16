@@ -137,10 +137,12 @@ func (h *Handler) levelToSyslog(level slog.Level) int {
 
 // 模块注册：gelf
 func init() {
-	modules.RegisterFactory("gelf", func(config modules.Config) (modules.Module, error) {
+	if err := modules.RegisterFactory("gelf", func(config modules.Config) (modules.Module, error) {
 		h := New(Options{})
 		return modules.NewHandlerModule("gelf", h), nil
-	})
+	}); err != nil {
+		modules.ReportAsyncError("registry.gelf", err)
+	}
 }
 
 // --- helpers ---

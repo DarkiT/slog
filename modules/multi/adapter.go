@@ -72,8 +72,10 @@ func (m *MultiAdapter) GetHandlers() []slog.Handler {
 
 // init 注册multi模块工厂
 func init() {
-	modules.RegisterFactory("multi", func(config modules.Config) (modules.Module, error) {
+	if err := modules.RegisterFactory("multi", func(config modules.Config) (modules.Module, error) {
 		adapter := NewMultiAdapter()
 		return adapter, adapter.Configure(config)
-	})
+	}); err != nil {
+		modules.ReportAsyncError("registry.multi", err)
+	}
 }

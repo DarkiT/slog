@@ -2,6 +2,7 @@ package syslog
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"slices"
@@ -11,6 +12,8 @@ import (
 )
 
 const ceePrefix = "@cee: "
+
+var errNilWriter = errors.New("syslog: writer cannot be nil")
 
 type Option struct {
 	// log level (default: info)
@@ -60,6 +63,10 @@ func (h *SyslogHandler) Enabled(_ context.Context, level slog.Level) bool {
 }
 
 func (h *SyslogHandler) Handle(ctx context.Context, record slog.Record) error {
+	if h.option.Writer == nil {
+		return errNilWriter
+	}
+
 	fromContext := common.ContextExtractor(ctx, h.option.AttrFromContext)
 	allAttrs := append(slices.Clone(h.attrs), fromContext...)
 	payload, err := h.option.Codec.Encode(ctx, &record, allAttrs, h.groups)

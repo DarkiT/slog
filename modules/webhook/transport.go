@@ -3,6 +3,7 @@ package webhook
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"time"
@@ -51,5 +52,8 @@ func (t *HTTPTransport) Send(ctx context.Context, payload []byte) error {
 	}
 	defer resp.Body.Close()
 	_, _ = io.Copy(io.Discard, resp.Body)
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return fmt.Errorf("webhook: unexpected HTTP status %d", resp.StatusCode)
+	}
 	return nil
 }

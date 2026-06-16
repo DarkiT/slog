@@ -109,6 +109,15 @@ func TestSyslogHandler_Handle(t *testing.T) {
 	}
 }
 
+func TestSyslogHandler_NilWriterReturnsError(t *testing.T) {
+	h := NewSyslogHandler(nil, &Option{Level: slog.LevelInfo})
+	record := slog.Record{Time: time.Now(), Level: slog.LevelInfo, Message: "nil writer"}
+
+	if err := h.Handle(context.Background(), record); !errors.Is(err, errNilWriter) {
+		t.Fatalf("Handle() error = %v, want %v", err, errNilWriter)
+	}
+}
+
 func TestSyslogHandler_WithAttrs(t *testing.T) {
 	w := &mockWriter{}
 	h := NewSyslogHandler(w, &Option{
@@ -392,7 +401,7 @@ func BenchmarkSyslogHandler_Handle(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		h.Handle(context.Background(), record)
+		_ = h.Handle(context.Background(), record)
 	}
 }
 

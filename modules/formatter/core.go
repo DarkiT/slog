@@ -175,7 +175,7 @@ func matchFullGroupPath(current []string, key string, target []string) bool {
 	if len(target) != len(current)+1 {
 		return false
 	}
-	for i := 0; i < len(current); i++ {
+	for i := range current {
 		if current[i] != target[i] {
 			return false
 		}

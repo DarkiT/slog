@@ -83,12 +83,12 @@ func (s *Sender) Write(p []byte) (int, error) {
 		return 0, s.lastDialErr
 	}
 
-	s.closeConnLocked()
+	_ = s.closeConnLocked()
 	if err := s.ensureConnLocked(); err != nil {
 		return 0, err
 	}
 	if err := s.writeLocked(payload); err != nil {
-		s.closeConnLocked()
+		_ = s.closeConnLocked()
 		return 0, err
 	}
 	return len(p), nil

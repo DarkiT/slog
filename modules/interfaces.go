@@ -48,6 +48,6 @@ type Healthable interface {
 
 // Measurable 可度量接口 - 用于诊断聚合。
 type Measurable interface {
-	GetMetrics() map[string]interface{}
+	GetMetrics() map[string]any
 	ResetMetrics()
 }

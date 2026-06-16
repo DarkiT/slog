@@ -37,3 +37,19 @@ func TestHTTPTransport_Send(t *testing.T) {
 		t.Fatalf("unexpected payload: %#v", got)
 	}
 }
+
+func TestHTTPTransport_SendReturnsErrorOnNon2xx(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	tr := &HTTPTransport{
+		Endpoint: server.URL,
+		Timeout:  time.Second,
+	}
+
+	if err := tr.Send(context.Background(), []byte(`{"k":"v"}`)); err == nil {
+		t.Fatal("expected non-2xx status to return error")
+	}
+}
