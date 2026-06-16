@@ -7,6 +7,10 @@ import (
 	"testing"
 )
 
+type builderContextKey string
+
+const traceIDBuilderContextKey builderContextKey = "trace_id"
+
 func TestLoggerBuilder_BuildsLogger(t *testing.T) {
 	buf := &bytes.Buffer{}
 	logger := NewLoggerBuilder().
@@ -30,7 +34,7 @@ func TestLoggerBuilder_BuildsLogger(t *testing.T) {
 
 func TestLoggerBuilder_ContextHelper(t *testing.T) {
 	SetContextPropagator(func(ctx context.Context) []Attr {
-		if v, ok := ctx.Value("trace_id").(string); ok {
+		if v, ok := ctx.Value(traceIDBuilderContextKey).(string); ok {
 			return []Attr{String("trace_id", v)}
 		}
 		return nil
@@ -38,7 +42,7 @@ func TestLoggerBuilder_ContextHelper(t *testing.T) {
 
 	buf := &bytes.Buffer{}
 	logger := NewLoggerBuilder().WithWriter(buf).Build()
-	ctx := context.WithValue(context.Background(), "trace_id", "abc-123")
+	ctx := context.WithValue(context.Background(), traceIDBuilderContextKey, "abc-123")
 	logger.InfoContext(ctx, "ctx message")
 
 	out := buf.String()

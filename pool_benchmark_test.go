@@ -13,7 +13,7 @@ import (
 func BenchmarkPoolComparison(b *testing.B) {
 	// 传统单一sync.Pool
 	var traditionalPool sync.Pool
-	traditionalPool.New = func() interface{} {
+	traditionalPool.New = func() any {
 		return &strings.Builder{}
 	}
 
@@ -86,7 +86,7 @@ func BenchmarkPoolComparison(b *testing.B) {
 func BenchmarkMemoryEfficiency(b *testing.B) {
 	b.Run("Traditional_MixedSizes", func(b *testing.B) {
 		var pool sync.Pool
-		pool.New = func() interface{} {
+		pool.New = func() any {
 			return &strings.Builder{}
 		}
 
@@ -142,7 +142,7 @@ func BenchmarkMemoryEfficiency(b *testing.B) {
 func BenchmarkConcurrentAccess(b *testing.B) {
 	b.Run("Traditional_Concurrent", func(b *testing.B) {
 		var pool sync.Pool
-		pool.New = func() interface{} {
+		pool.New = func() any {
 			return &strings.Builder{}
 		}
 
@@ -151,7 +151,7 @@ func BenchmarkConcurrentAccess(b *testing.B) {
 			for pb.Next() {
 				builder := pool.Get().(*strings.Builder)
 				builder.Reset()
-				builder.WriteString(fmt.Sprintf("并发测试 %d", i))
+				fmt.Fprintf(builder, "并发测试 %d", i)
 				_ = builder.String()
 				pool.Put(builder)
 				i++
@@ -166,7 +166,7 @@ func BenchmarkConcurrentAccess(b *testing.B) {
 			i := 0
 			for pb.Next() {
 				builder := tieredPools.GetStringBuilder(512)
-				builder.WriteString(fmt.Sprintf("并发测试 %d", i))
+				fmt.Fprintf(builder, "并发测试 %d", i)
 				_ = builder.String()
 				tieredPools.PutStringBuilder(builder, 512)
 				i++
@@ -179,7 +179,7 @@ func BenchmarkConcurrentAccess(b *testing.B) {
 func BenchmarkRealWorldScenario(b *testing.B) {
 	b.Run("Logger_Traditional", func(b *testing.B) {
 		var pool sync.Pool
-		pool.New = func() interface{} {
+		pool.New = func() any {
 			return &strings.Builder{}
 		}
 
@@ -191,7 +191,7 @@ func BenchmarkRealWorldScenario(b *testing.B) {
 			builder.WriteString("2025/08/02 19:15.52.409 ")
 			builder.WriteString("[INFO] ")
 			builder.WriteString("用户操作 - ID: ")
-			builder.WriteString(fmt.Sprintf("%d", i))
+			fmt.Fprintf(builder, "%d", i)
 			builder.WriteString(", 操作: 登录")
 
 			_ = builder.String()
@@ -210,7 +210,7 @@ func BenchmarkRealWorldScenario(b *testing.B) {
 			builder.WriteString("2025/08/02 19:15.52.409 ")
 			builder.WriteString("[INFO] ")
 			builder.WriteString("用户操作 - ID: ")
-			builder.WriteString(fmt.Sprintf("%d", i))
+			fmt.Fprintf(builder, "%d", i)
 			builder.WriteString(", 操作: 登录")
 
 			_ = builder.String()
@@ -220,7 +220,7 @@ func BenchmarkRealWorldScenario(b *testing.B) {
 
 	b.Run("DLP_Traditional", func(b *testing.B) {
 		var pool sync.Pool
-		pool.New = func() interface{} {
+		pool.New = func() any {
 			return &strings.Builder{}
 		}
 
@@ -275,30 +275,30 @@ func TestTieredPoolsMemoryFootprint(t *testing.T) {
 	var buffers []*common.TieredBuffer
 
 	// 小对象
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		builders = append(builders, tieredPools.GetStringBuilder(256))
 		buffers = append(buffers, tieredPools.GetBuffer(512))
 	}
 
 	// 中对象
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		builders = append(builders, tieredPools.GetStringBuilder(1024))
 		buffers = append(buffers, tieredPools.GetBuffer(4096))
 	}
 
 	// 大对象
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		builders = append(builders, tieredPools.GetStringBuilder(4096))
 		buffers = append(buffers, tieredPools.GetBuffer(16384))
 	}
 
 	// 使用对象
 	for i, builder := range builders {
-		builder.WriteString(fmt.Sprintf("测试数据 %d", i))
+		fmt.Fprintf(builder, "测试数据 %d", i)
 	}
 
 	for i, buffer := range buffers {
-		buffer.WriteString(fmt.Sprintf("缓冲区数据 %d", i))
+		fmt.Fprintf(buffer, "缓冲区数据 %d", i)
 	}
 
 	// 释放对象

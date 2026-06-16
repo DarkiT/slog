@@ -1,0 +1,44 @@
+// Template: typed context keys and slog context propagation.
+package logging
+
+import (
+	"context"
+
+	"github.com/darkit/slog"
+)
+
+type contextKey string
+
+const (
+	traceIDKey   contextKey = "trace_id"
+	requestIDKey contextKey = "request_id"
+	userIDKey    contextKey = "user_id"
+)
+
+func WithTraceID(ctx context.Context, traceID string) context.Context {
+	return context.WithValue(ctx, traceIDKey, traceID)
+}
+
+func WithRequestID(ctx context.Context, requestID string) context.Context {
+	return context.WithValue(ctx, requestIDKey, requestID)
+}
+
+func WithUserID(ctx context.Context, userID string) context.Context {
+	return context.WithValue(ctx, userIDKey, userID)
+}
+
+func SetupContextPropagator() {
+	slog.SetContextPropagator(func(ctx context.Context) []slog.Attr {
+		attrs := make([]slog.Attr, 0, 3)
+		if v, ok := ctx.Value(traceIDKey).(string); ok && v != "" {
+			attrs = append(attrs, slog.String("trace_id", v))
+		}
+		if v, ok := ctx.Value(requestIDKey).(string); ok && v != "" {
+			attrs = append(attrs, slog.String("request_id", v))
+		}
+		if v, ok := ctx.Value(userIDKey).(string); ok && v != "" {
+			attrs = append(attrs, slog.String("user_id", v))
+		}
+		return attrs
+	})
+}

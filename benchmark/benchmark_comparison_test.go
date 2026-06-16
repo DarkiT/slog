@@ -1,7 +1,8 @@
 package slog
 
 import (
-	"bytes"
+	"context"
+	"io"
 	"log/slog"
 	"testing"
 	"time"
@@ -17,24 +18,22 @@ func BenchmarkSimpleMessage(b *testing.B) {
 	message := "Simple log message for performance comparison"
 
 	// 设置各种logger
-	var darkitBuf, slogBuf, logrusBuf, zapBuf bytes.Buffer
-
 	// darkit/slog (我们的库)
-	darkitLogger := zslog.NewLogger(&darkitBuf, true, false) // noColor=true
+	darkitLogger := zslog.NewLogger(io.Discard, true, false) // noColor=true
 
 	// log/slog (Go标准库)
-	slogLogger := slog.New(slog.NewTextHandler(&slogBuf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	slogLogger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
 	// logrus
 	logrusLogger := logrus.New()
-	logrusLogger.SetOutput(&logrusBuf)
+	logrusLogger.SetOutput(io.Discard)
 	logrusLogger.SetFormatter(&logrus.TextFormatter{DisableColors: true})
 	logrusLogger.SetLevel(logrus.InfoLevel)
 
 	// zap
 	zapCore := zapcore.NewCore(
 		zapcore.NewConsoleEncoder(zap.NewDevelopmentEncoderConfig()),
-		zapcore.AddSync(&zapBuf),
+		zapcore.AddSync(io.Discard),
 		zapcore.InfoLevel,
 	)
 	zapLogger := zap.New(zapCore)
@@ -75,10 +74,8 @@ func BenchmarkStructuredLogging(b *testing.B) {
 	action := "login"
 	timestamp := time.Now()
 
-	var darkitBuf, slogJSONBuf, logrusJSONBuf, zapJSONBuf bytes.Buffer
-
 	// darkit/slog JSON模式
-	darkitLogger := zslog.NewLogger(&darkitBuf, true, false)
+	darkitLogger := zslog.NewLogger(io.Discard, true, false)
 	zslog.EnableJSONLogger()
 	zslog.DisableTextLogger()
 	defer func() {
@@ -87,18 +84,18 @@ func BenchmarkStructuredLogging(b *testing.B) {
 	}()
 
 	// log/slog JSON
-	slogJSONLogger := slog.New(slog.NewJSONHandler(&slogJSONBuf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	slogJSONLogger := slog.New(slog.NewJSONHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
 	// logrus JSON
 	logrusJSONLogger := logrus.New()
-	logrusJSONLogger.SetOutput(&logrusJSONBuf)
+	logrusJSONLogger.SetOutput(io.Discard)
 	logrusJSONLogger.SetFormatter(&logrus.JSONFormatter{})
 	logrusJSONLogger.SetLevel(logrus.InfoLevel)
 
 	// zap JSON
 	zapJSONCore := zapcore.NewCore(
 		zapcore.NewJSONEncoder(zap.NewProductionEncoderConfig()),
-		zapcore.AddSync(&zapJSONBuf),
+		zapcore.AddSync(io.Discard),
 		zapcore.InfoLevel,
 	)
 	zapJSONLogger := zap.New(zapJSONCore)
@@ -150,10 +147,8 @@ func BenchmarkStructuredLogging(b *testing.B) {
 
 // BenchmarkDLPFeature DLP功能性能影响测试
 func BenchmarkDLPFeature(b *testing.B) {
-	var darkitBuf, slogBuf bytes.Buffer
-
-	darkitLogger := zslog.NewLogger(&darkitBuf, true, false)
-	slogLogger := slog.New(slog.NewJSONHandler(&slogBuf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	darkitLogger := zslog.NewLogger(io.Discard, true, false)
+	slogLogger := slog.New(slog.NewJSONHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
 	// 包含敏感信息的数据
 	sensitiveMessage := "User registration"
@@ -200,14 +195,12 @@ func BenchmarkDLPFeature(b *testing.B) {
 
 // BenchmarkMemoryAllocation 内存分配对比
 func BenchmarkMemoryAllocation(b *testing.B) {
-	var darkitBuf, slogBuf, zapBuf bytes.Buffer
-
-	darkitLogger := zslog.NewLogger(&darkitBuf, true, false)
-	slogLogger := slog.New(slog.NewJSONHandler(&slogBuf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	darkitLogger := zslog.NewLogger(io.Discard, true, false)
+	slogLogger := slog.New(slog.NewJSONHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
 	zapCore := zapcore.NewCore(
 		zapcore.NewJSONEncoder(zap.NewProductionEncoderConfig()),
-		zapcore.AddSync(&zapBuf),
+		zapcore.AddSync(io.Discard),
 		zapcore.InfoLevel,
 	)
 	zapLogger := zap.New(zapCore)
@@ -261,8 +254,7 @@ func BenchmarkConcurrentLogging(b *testing.B) {
 	message := "Concurrent logging test"
 
 	b.Run("darkit/slog-concurrent", func(b *testing.B) {
-		var darkitBuf bytes.Buffer
-		darkitLogger := zslog.NewLogger(&darkitBuf, true, false)
+		darkitLogger := zslog.NewLogger(io.Discard, true, false)
 		b.ResetTimer()
 		b.RunParallel(func(pb *testing.PB) {
 			for pb.Next() {
@@ -272,8 +264,7 @@ func BenchmarkConcurrentLogging(b *testing.B) {
 	})
 
 	b.Run("log/slog-concurrent", func(b *testing.B) {
-		var slogBuf bytes.Buffer
-		slogLogger := slog.New(slog.NewJSONHandler(&slogBuf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+		slogLogger := slog.New(slog.NewJSONHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelInfo}))
 		b.ResetTimer()
 		b.RunParallel(func(pb *testing.PB) {
 			for pb.Next() {
@@ -282,10 +273,14 @@ func BenchmarkConcurrentLogging(b *testing.B) {
 		})
 	})
 
-	// Zap需要特殊处理并发安全
+	// Zap 使用真实 encoder + io.Discard，避免 nop logger 失真。
 	b.Run("zap-concurrent", func(b *testing.B) {
-		// 使用无缓冲输出避免并发问题
-		zapLogger := zap.NewNop() // No-op logger for concurrent testing
+		zapCore := zapcore.NewCore(
+			zapcore.NewJSONEncoder(zap.NewProductionEncoderConfig()),
+			zapcore.AddSync(io.Discard),
+			zapcore.InfoLevel,
+		)
+		zapLogger := zap.New(zapCore)
 		b.ResetTimer()
 		b.RunParallel(func(pb *testing.PB) {
 			for pb.Next() {
@@ -298,26 +293,59 @@ func BenchmarkConcurrentLogging(b *testing.B) {
 	})
 }
 
-// BenchmarkWithContext 上下文日志性能测试
-func BenchmarkWithContext(b *testing.B) {
-	var darkitBuf, slogBuf bytes.Buffer
+// BenchmarkWithFields 评估每次调用都派生子 logger 并追加字段的成本。
+func BenchmarkWithFields(b *testing.B) {
+	darkitLogger := zslog.NewLogger(io.Discard, true, false)
+	slogLogger := slog.New(slog.NewJSONHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
-	darkitLogger := zslog.NewLogger(&darkitBuf, true, false)
-	slogLogger := slog.New(slog.NewJSONHandler(&slogBuf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	message := "Bound fields logging"
 
-	message := "Context-aware logging"
-
-	b.Run("darkit/slog-with-context", func(b *testing.B) {
+	b.Run("darkit/slog-with-fields", func(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			darkitLogger.With("request_id", "req-123", "trace_id", "trace-456").Info(message)
 		}
 	})
 
-	b.Run("log/slog-with-context", func(b *testing.B) {
+	b.Run("log/slog-with-fields", func(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			slogLogger.With("request_id", "req-123", "trace_id", "trace-456").Info(message)
+		}
+	})
+}
+
+type benchContextKey string
+
+const (
+	benchRequestIDKey benchContextKey = "request_id"
+	benchTraceIDKey   benchContextKey = "trace_id"
+)
+
+// BenchmarkContextPropagation 评估复用 context-aware logger 的写日志成本。
+func BenchmarkContextPropagation(b *testing.B) {
+	zslog.SetContextPropagator(func(ctx context.Context) []slog.Attr {
+		attrs := make([]slog.Attr, 0, 2)
+		if requestID, ok := ctx.Value(benchRequestIDKey).(string); ok {
+			attrs = append(attrs, slog.String("request_id", requestID))
+		}
+		if traceID, ok := ctx.Value(benchTraceIDKey).(string); ok {
+			attrs = append(attrs, slog.String("trace_id", traceID))
+		}
+		return attrs
+	})
+	defer zslog.SetContextPropagator(nil)
+
+	ctx := context.WithValue(context.Background(), benchRequestIDKey, "req-123")
+	ctx = context.WithValue(ctx, benchTraceIDKey, "trace-456")
+
+	ctxLogger := zslog.NewLogger(io.Discard, true, false).WithContext(ctx)
+	message := "Context-aware logging"
+
+	b.Run("darkit/slog-context-propagation", func(b *testing.B) {
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			ctxLogger.Info(message)
 		}
 	})
 }

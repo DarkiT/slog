@@ -16,7 +16,7 @@ func TestLRUCacheVsSyncMapPerformance(t *testing.T) {
 
 	// 测试数据
 	testCases := make([]string, iterations)
-	for i := 0; i < iterations; i++ {
+	for i := range iterations {
 		testCases[i] = fmt.Sprintf("test_format_string_%d_%%s", i%cacheSize)
 	}
 
@@ -141,7 +141,7 @@ func BenchmarkLRUCacheContention(b *testing.B) {
 	cache := common.NewLRUCache(1000)
 
 	// 预填充一些数据
-	for i := 0; i < 500; i++ {
+	for i := range 500 {
 		cache.Put(fmt.Sprintf("key_%d", i), fmt.Sprintf("value_%d", i))
 	}
 
@@ -175,7 +175,7 @@ func TestLRUCacheMemoryEfficiency(t *testing.T) {
 	cache := common.NewLRUCache(maxSize)
 
 	// 添加超过容量的数据
-	for i := 0; i < maxSize*2; i++ {
+	for i := range maxSize * 2 {
 		cache.Put(fmt.Sprintf("key_%d", i), fmt.Sprintf("value_%d", i))
 
 		// 验证缓存大小不超过限制
@@ -193,7 +193,7 @@ func TestLRUCacheMemoryEfficiency(t *testing.T) {
 	earlyKeys := 0
 	lateKeys := 0
 
-	for i := 0; i < maxSize; i++ {
+	for i := range maxSize {
 		if cache.Contains(fmt.Sprintf("key_%d", i)) {
 			earlyKeys++
 		}

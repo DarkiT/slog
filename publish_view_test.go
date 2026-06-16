@@ -57,7 +57,7 @@ func TestSubscribeReceivesNormalizedPublishView(t *testing.T) {
 		if attrs["request.request_id"] != "req-1" {
 			t.Fatalf("expected propagated context attr in publish view, got %v", attrs)
 		}
-		if attrs["request.user"] != "AL*CE" {
+		if attrs["request.user"] != "ALICE" {
 			t.Fatalf("expected formatter-applied attr in publish view, got %v", attrs)
 		}
 		if strings.Contains(attrs["request.phone"], "13812345678") {

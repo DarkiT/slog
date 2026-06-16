@@ -1,0 +1,24 @@
+// Template: register an attribute formatter.
+package logging
+
+import (
+	"strings"
+
+	"github.com/darkit/slog"
+)
+
+func RegisterProductionFormatters() func() {
+	id := slog.RegisterFormatter("mask-sensitive-fields", func(groups []string, attr slog.Attr) (slog.Value, bool) {
+		key := strings.ToLower(attr.Key)
+		switch key {
+		case "password", "secret", "token", "api_key":
+			return slog.StringValue("[REDACTED]"), true
+		default:
+			return attr.Value, false
+		}
+	})
+
+	return func() {
+		_ = slog.RemoveFormatter(id)
+	}
+}

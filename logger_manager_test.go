@@ -246,10 +246,10 @@ func TestLoggerManager_ConcurrentAccess(t *testing.T) {
 	wg.Add(numGoroutines)
 
 	// 并发测试
-	for i := 0; i < numGoroutines; i++ {
+	for i := range numGoroutines {
 		go func(id int) {
 			defer wg.Done()
-			for j := 0; j < numOperations; j++ {
+			for range numOperations {
 				// 并发访问默认logger
 				logger := manager.GetDefault()
 				if logger == nil {

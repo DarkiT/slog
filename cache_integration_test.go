@@ -1,6 +1,7 @@
 package slog
 
 import (
+	"slices"
 	"testing"
 )
 
@@ -50,13 +51,7 @@ func TestLRUFormatCacheIntegration(t *testing.T) {
 
 	// 验证缓存键的存在
 	keys := formatCache.GetStringKeys()
-	found := false
-	for _, key := range keys {
-		if key == testMsg {
-			found = true
-			break
-		}
-	}
+	found := slices.Contains(keys, testMsg)
 
 	if !found {
 		t.Errorf("缓存中应该包含键: %q", testMsg)

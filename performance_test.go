@@ -103,7 +103,7 @@ func TestCacheCleaning(t *testing.T) {
 	initialCapacity := formatCache.Capacity()
 
 	// 添加数据项
-	for i := 0; i < 15; i++ {
+	for i := range 15 {
 		formatLog(fmt.Sprintf("测试消息 %d %%s", i), "arg")
 	}
 
@@ -207,10 +207,10 @@ func TestConcurrentSafety(t *testing.T) {
 
 	wg.Add(goroutines)
 
-	for i := 0; i < goroutines; i++ {
+	for i := range goroutines {
 		go func(id int) {
 			defer wg.Done()
-			for j := 0; j < iterations; j++ {
+			for j := range iterations {
 				logger.Info("并发测试", "goroutine", id, "iteration", j)
 			}
 		}(i)

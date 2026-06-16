@@ -1,0 +1,34 @@
+// Template: standard log/slog-compatible usage without importing log/slog.
+package main
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"time"
+
+	"github.com/darkit/slog"
+)
+
+func main() {
+	var out bytes.Buffer
+
+	var level slog.LevelVar
+	level.Set(slog.LevelDebug)
+
+	handler := slog.NewJSONHandler(&out, &slog.HandlerOptions{
+		Level: &level,
+	})
+	logger := slog.New(handler)
+	slog.SetDefault(logger)
+
+	slog.StdDefault().LogAttrs(context.Background(), slog.LevelInfo, "standard event",
+		slog.String("component", "worker"),
+		slog.GroupAttrs("http",
+			slog.String("method", "GET"),
+			slog.Duration("latency", 25*time.Millisecond),
+		),
+	)
+
+	fmt.Print(out.String())
+}

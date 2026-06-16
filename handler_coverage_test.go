@@ -2,8 +2,11 @@ package slog
 
 import (
 	"bytes"
+	"context"
+	stdslog "log/slog"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestLoggerBasicCoverage 基础覆盖率测试
@@ -44,6 +47,28 @@ func TestLoggerBasicCoverage(t *testing.T) {
 				t.Errorf("%sf格式化日志记录失败", test.name)
 			}
 		})
+	}
+}
+
+func TestConsoleHandler_DefaultInfoAndCustomLevel(t *testing.T) {
+	var buf bytes.Buffer
+	h := NewConsoleHandler(&buf, true, nil)
+
+	record := stdslog.NewRecord(time.Now(), LevelInfo, "direct info", 0)
+	if err := h.Handle(context.Background(), record); err != nil {
+		t.Fatalf("Handle() error = %v", err)
+	}
+	if !strings.Contains(buf.String(), "direct info") {
+		t.Fatalf("default handler should emit info logs, got %q", buf.String())
+	}
+
+	buf.Reset()
+	custom := stdslog.NewRecord(time.Now(), stdslog.Level(2), "custom level", 0)
+	if err := h.Handle(context.Background(), custom); err != nil {
+		t.Fatalf("Handle() custom level error = %v", err)
+	}
+	if strings.Contains(buf.String(), "[]") || !strings.Contains(buf.String(), "[INFO+2]") {
+		t.Fatalf("custom slog level should be rendered explicitly, got %q", buf.String())
 	}
 }
 
@@ -212,17 +237,17 @@ func TestConcurrencyCoverage(t *testing.T) {
 	// 简单的并发测试
 	done := make(chan bool, 3)
 
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		go func(id int) {
 			defer func() { done <- true }()
-			for j := 0; j < 10; j++ {
+			for j := range 10 {
 				logger.Infof("Goroutine %d message %d", id, j)
 			}
 		}(i)
 	}
 
 	// 等待完成
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		<-done
 	}
 

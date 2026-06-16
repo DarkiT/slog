@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -142,6 +143,25 @@ func TestDerivedSlogLoggerRetainsLazyAttrsAndGroups(t *testing.T) {
 	}
 }
 
+func TestDLPMessageDesensitizesRawSensitiveValueWithoutKeyword(t *testing.T) {
+	resetForTest()
+	EnableDLPLogger()
+	defer DisableDLPLogger()
+
+	var buf bytes.Buffer
+	logger := NewLogger(&buf, true, false)
+
+	logger.Info("联系我 13812345678")
+
+	output := buf.String()
+	if strings.Contains(output, "13812345678") {
+		t.Fatalf("expected raw sensitive value in message to be desensitized, got %q", output)
+	}
+	if !strings.Contains(output, "138****5678") {
+		t.Fatalf("expected masked phone value in output, got %q", output)
+	}
+}
+
 // TestSubscribe 测试订阅功能
 func TestSubscribe(t *testing.T) {
 	logger := NewLogger(nil, false, false)
@@ -244,6 +264,43 @@ func TestSubscribeWithOptions_BlockWithTimeoutStats(t *testing.T) {
 	}
 }
 
+func TestSubscribeCancelConcurrentPublish(t *testing.T) {
+	logger := NewLogger(nil, false, false)
+	records, cancel := SubscribeWithOptions(SubscribeOptions{
+		BufferSize:   1,
+		Backpressure: SubscriptionDropOldest,
+	})
+	done := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-done:
+				return
+			case _, ok := <-records:
+				if !ok {
+					return
+				}
+			}
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 1000; i++ {
+			logger.Info("concurrent publish", "idx", i)
+			if i == 32 {
+				cancel()
+			}
+		}
+	}()
+
+	wg.Wait()
+	close(done)
+	cancel()
+}
+
 // TestDefaultWithModules 测试带模块前缀的Default函数
 func TestDefaultWithModules(t *testing.T) {
 	var buf bytes.Buffer
@@ -328,6 +385,55 @@ func TestLoggerWithValue(t *testing.T) {
 
 	if !strings.Contains(output, "test=value") {
 		t.Errorf("Expected output to contain context value, got: %s", output)
+	}
+}
+
+func TestLoggerWithValueSurvivesDerivedContextCancel(t *testing.T) {
+	resetForTest()
+
+	var buf bytes.Buffer
+	logger := NewLogger(&buf, true, false).WithValue("trace_id", "abc-123")
+	logger.SetLevel(LevelInfo)
+	EnableTextLogger()
+
+	timeoutLogger, cancel := logger.WithTimeout(time.Hour)
+	cancel()
+
+	timeoutLogger.Info("after cancel")
+	output := buf.String()
+	if !strings.Contains(output, "trace_id=abc-123") {
+		t.Fatalf("context cancellation should not clear logger fields, got %q", output)
+	}
+}
+
+func TestDefaultModuleWorksWhenTextDisabled(t *testing.T) {
+	resetForTest()
+	t.Cleanup(func() {
+		_ = GetManager().Configure(defaultGlobalConfig)
+		GetManager().Reset()
+		resetForTest()
+	})
+
+	var buf bytes.Buffer
+	config := &GlobalConfig{
+		DefaultWriter:  &buf,
+		DefaultLevel:   LevelInfo,
+		DefaultNoColor: true,
+		DefaultSource:  false,
+		EnableText:     false,
+		EnableJSON:     true,
+	}
+	if err := GetManager().Configure(config); err != nil {
+		t.Fatalf("Configure() error = %v", err)
+	}
+	GetManager().Reset()
+
+	logger := Default("api")
+	logger.Info("module json")
+
+	output := buf.String()
+	if !strings.Contains(output, "[api] module json") {
+		t.Fatalf("module prefix should work without text handler, got %q", output)
 	}
 }
 
@@ -1157,7 +1263,7 @@ func TestJSONLogger(t *testing.T) {
 	}
 
 	// 解析JSON输出
-	var logEntry map[string]interface{}
+	var logEntry map[string]any
 	err := json.Unmarshal(buf.Bytes(), &logEntry)
 	if err != nil {
 		t.Fatalf("Failed to parse JSON output: %v\nOutput was: %q", err, jsonOutput)

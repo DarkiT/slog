@@ -95,7 +95,7 @@ func BenchmarkTieredPoolsIntegration(b *testing.B) {
 			builder.WriteString("2025/08/02 19:15.52.409 ")
 			builder.WriteString("[INFO] ")
 			builder.WriteString("用户登录成功 - 用户ID: ")
-			builder.WriteString(fmt.Sprintf("%d", i))
+			fmt.Fprintf(builder, "%d", i)
 
 			_ = builder.String()
 			tieredPools.PutStringBuilder(builder, 256)
@@ -123,7 +123,7 @@ func BenchmarkTieredPoolsIntegration(b *testing.B) {
 
 	b.Run("传统sync.Pool对比", func(b *testing.B) {
 		var pool sync.Pool
-		pool.New = func() interface{} {
+		pool.New = func() any {
 			return &strings.Builder{}
 		}
 
@@ -151,19 +151,19 @@ func TestTieredPoolsMemoryEfficiency(t *testing.T) {
 		var builders []*strings.Builder
 
 		// 获取一批对象
-		for i := 0; i < 100; i++ {
+		for range 100 {
 			buffers = append(buffers, tieredPools.GetBuffer(1024))
 			builders = append(builders, tieredPools.GetStringBuilder(512))
 		}
 
 		// 放回一半对象
-		for i := 0; i < 50; i++ {
+		for i := range 50 {
 			tieredPools.PutBuffer(buffers[i])
 			tieredPools.PutStringBuilder(builders[i], 512)
 		}
 
 		// 重新获取，应该复用已有对象
-		for i := 0; i < 50; i++ {
+		for range 50 {
 			buffer := tieredPools.GetBuffer(1024)
 			builder := tieredPools.GetStringBuilder(512)
 
@@ -206,36 +206,36 @@ func TestTieredPoolsConcurrentStress(t *testing.T) {
 	wg.Add(numWorkers)
 
 	// 并发工作者
-	for i := 0; i < numWorkers; i++ {
+	for i := range numWorkers {
 		go func(workerID int) {
 			defer wg.Done()
 
-			for j := 0; j < operationsPerWorker; j++ {
+			for j := range operationsPerWorker {
 				// 随机选择操作类型
 				opType := (workerID*operationsPerWorker + j) % 4
 
 				switch opType {
 				case 0: // 小buffer操作
 					buffer := tieredPools.GetBuffer(512)
-					buffer.WriteString(fmt.Sprintf("Worker %d Op %d", workerID, j))
+					fmt.Fprintf(buffer, "Worker %d Op %d", workerID, j)
 					tieredPools.PutBuffer(buffer)
 
 				case 1: // 中buffer操作
 					buffer := tieredPools.GetBuffer(4096)
-					for k := 0; k < 10; k++ {
-						buffer.WriteString(fmt.Sprintf("Data %d ", k))
+					for k := range 10 {
+						fmt.Fprintf(buffer, "Data %d ", k)
 					}
 					tieredPools.PutBuffer(buffer)
 
 				case 2: // 小字符串构建器
 					builder := tieredPools.GetStringBuilder(256)
-					builder.WriteString(fmt.Sprintf("Small string %d-%d", workerID, j))
+					fmt.Fprintf(builder, "Small string %d-%d", workerID, j)
 					tieredPools.PutStringBuilder(builder, 256)
 
 				case 3: // 大字符串构建器
 					builder := tieredPools.GetStringBuilder(2048)
-					for k := 0; k < 20; k++ {
-						builder.WriteString(fmt.Sprintf("Large content block %d ", k))
+					for k := range 20 {
+						fmt.Fprintf(builder, "Large content block %d ", k)
 					}
 					tieredPools.PutStringBuilder(builder, 2048)
 				}

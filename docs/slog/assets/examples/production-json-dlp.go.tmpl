@@ -1,0 +1,34 @@
+// Template: production JSON logger with DLP enabled.
+package main
+
+import (
+	"os"
+
+	"github.com/darkit/slog"
+)
+
+func main() {
+	cfg := slog.DefaultConfig()
+	cfg.NoColor = true
+	cfg.AddSource = false
+	cfg.SetEnableText(false)
+	cfg.SetEnableJSON(true)
+
+	logger := slog.NewLoggerBuilder().
+		WithWriter(os.Stdout).
+		WithConfig(cfg).
+		WithModule("order-service").
+		WithAttrs(slog.String("env", "production")).
+		EnableJSON(true).
+		EnableDLP(true).
+		Build()
+
+	slog.SetDefault(logger)
+	_ = slog.SetLevel("info")
+
+	slog.Info("order created",
+		"order_id", "ORD-001",
+		"phone", "13812345678",
+		"amount_cents", 9900,
+	)
+}

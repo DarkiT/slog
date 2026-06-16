@@ -1,0 +1,40 @@
+// Template: log subscription with explicit backpressure.
+package main
+
+import (
+	"fmt"
+	"time"
+
+	"github.com/darkit/slog"
+)
+
+func main() {
+	ch, cancel := slog.SubscribeWithOptions(slog.SubscribeOptions{
+		BufferSize:   1024,
+		Backpressure: slog.SubscriptionDropOldest,
+		BlockTimeout: 5 * time.Millisecond,
+	})
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for event := range ch {
+			fmt.Printf("format=%s message=%s rendered=%q\n",
+				event.Format,
+				event.Record.Message,
+				event.Rendered,
+			)
+		}
+	}()
+
+	slog.Info("worker started", "id", 1)
+	slog.Warn("queue high", "depth", 900)
+
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+	<-done
+
+	stats := slog.GetSubscriptionStats()
+	fmt.Printf("published=%d delivered=%d dropped=%d\n", stats.Published, stats.Delivered, stats.Dropped)
+}

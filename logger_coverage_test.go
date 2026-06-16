@@ -408,18 +408,18 @@ func TestLoggerConcurrency(t *testing.T) {
 
 	done := make(chan struct{}, numGoroutines)
 
-	for i := 0; i < numGoroutines; i++ {
+	for i := range numGoroutines {
 		go func(id int) {
 			defer func() { done <- struct{}{} }()
 
-			for j := 0; j < numMessages; j++ {
+			for j := range numMessages {
 				logger.Infof("Goroutine %d - Message %d", id, j)
 			}
 		}(i)
 	}
 
 	// 等待所有goroutine完成
-	for i := 0; i < numGoroutines; i++ {
+	for range numGoroutines {
 		select {
 		case <-done:
 		case <-time.After(5 * time.Second):

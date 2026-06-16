@@ -1,0 +1,26 @@
+// Template: fan out records without importing log/slog directly.
+package main
+
+import (
+	"os"
+
+	"github.com/darkit/slog"
+)
+
+func main() {
+	file, err := os.CreateTemp("", "app-*.jsonl")
+	if err != nil {
+		panic(err)
+	}
+	defer file.Close()
+
+	handler := slog.NewMultiHandler(
+		slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}),
+		slog.NewJSONHandler(file, &slog.HandlerOptions{Level: slog.LevelDebug}),
+	)
+
+	logger := slog.New(handler)
+	slog.SetDefault(logger)
+
+	slog.StdDefault().Info("fanout event", "target", "stdout+file")
+}

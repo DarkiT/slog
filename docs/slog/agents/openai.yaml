@@ -1,0 +1,4 @@
+interface:
+  display_name: "darkit/slog"
+  short_description: "Production logging workflows for darkit/slog"
+  default_prompt: "Use $darkit-slog to configure production JSON logging with DLP, trace context, and safe slog-compatible APIs."

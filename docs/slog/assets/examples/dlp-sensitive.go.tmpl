@@ -1,0 +1,47 @@
+// Template: explicit DLP masking for text and structs.
+package main
+
+import (
+	"fmt"
+
+	"github.com/darkit/slog"
+	"github.com/darkit/slog/dlp"
+)
+
+type User struct {
+	Name   string `dlp:"chinese_name"`
+	Phone  string `dlp:"mobile_phone"`
+	Email  string `dlp:"email"`
+	Token  string `dlp:"access_token"`
+	Public string `dlp:"-"`
+}
+
+func main() {
+	slog.EnableDLPLogger()
+
+	engine := dlp.NewDlpEngine()
+	engine.Enable()
+
+	user := User{
+		Name:   "张三",
+		Phone:  "13812345678",
+		Email:  "user@example.com",
+		Token:  "eyJhbGciOiJIUzI1NiJ9.example.signature",
+		Public: "visible",
+	}
+
+	if err := engine.DesensitizeStructAdvanced(&user); err != nil {
+		slog.Error("dlp struct masking failed", "error", err)
+		return
+	}
+
+	masked := engine.DesensitizeText("phone=13812345678 email=user@example.com")
+	fmt.Println(masked)
+
+	slog.Info("masked user",
+		"name", user.Name,
+		"phone", user.Phone,
+		"email", user.Email,
+		"public", user.Public,
+	)
+}

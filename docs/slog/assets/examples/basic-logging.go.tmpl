@@ -1,0 +1,13 @@
+// Template: basic darkit/slog usage.
+package main
+
+import "github.com/darkit/slog"
+
+func main() {
+	slog.SetLevelDebug()
+
+	slog.Info("service started", "port", 8080, "env", "dev")
+	slog.Debug("cache warmed", "keys", 42)
+	slog.Warn("dependency slow", "name", "payment")
+	slog.Error("request failed", "error", "timeout")
+}
