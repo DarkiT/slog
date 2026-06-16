@@ -3,6 +3,7 @@ package dlp
 import (
 	"context"
 	"fmt"
+	"maps"
 	"regexp"
 	"strings"
 	"sync"
@@ -16,7 +17,7 @@ import (
 type BaseDesensitizer struct {
 	name    string
 	enabled atomic.Bool
-	config  map[string]interface{}
+	config  map[string]any
 	mu      sync.RWMutex
 	logger  Logger
 
@@ -30,7 +31,7 @@ type BaseDesensitizer struct {
 func NewBaseDesensitizer(name string) *BaseDesensitizer {
 	bd := &BaseDesensitizer{
 		name:   name,
-		config: make(map[string]interface{}),
+		config: make(map[string]any),
 	}
 	bd.enabled.Store(true)
 	bd.cacheEnabled.Store(true)
@@ -64,7 +65,7 @@ func (bd *BaseDesensitizer) Disable() {
 }
 
 // Configure 配置脱敏器参数
-func (bd *BaseDesensitizer) Configure(config map[string]interface{}) error {
+func (bd *BaseDesensitizer) Configure(config map[string]any) error {
 	if config == nil {
 		return fmt.Errorf("config cannot be nil")
 	}
@@ -73,12 +74,10 @@ func (bd *BaseDesensitizer) Configure(config map[string]interface{}) error {
 	defer bd.mu.Unlock()
 
 	// 清空现有配置
-	bd.config = make(map[string]interface{})
+	bd.config = make(map[string]any)
 
 	// 复制新配置
-	for k, v := range config {
-		bd.config[k] = v
-	}
+	maps.Copy(bd.config, config)
 
 	// 处理特殊配置项
 	if cacheEnabled, ok := config["cache_enabled"].(bool); ok {
@@ -93,7 +92,7 @@ func (bd *BaseDesensitizer) Configure(config map[string]interface{}) error {
 }
 
 // GetConfig 获取配置项
-func (bd *BaseDesensitizer) GetConfig(key string) (interface{}, bool) {
+func (bd *BaseDesensitizer) GetConfig(key string) (any, bool) {
 	bd.mu.RLock()
 	defer bd.mu.RUnlock()
 	value, exists := bd.config[key]

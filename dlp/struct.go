@@ -40,16 +40,16 @@ type DlpTagConfig struct {
 // - "type,skip"              // 类型+跳过
 // - "custom:strategy_name"    // 自定义策略
 // - "-"                      // 跳过字段
-func parseDlpTag(tag string) (*DlpTagConfig, error) {
+func parseDlpTag(tag string) (DlpTagConfig, bool, error) {
 	if tag == "" {
-		return nil, nil
+		return DlpTagConfig{}, false, nil
 	}
 
 	if tag == "-" {
-		return &DlpTagConfig{Skip: true}, nil
+		return DlpTagConfig{Skip: true}, true, nil
 	}
 
-	config := &DlpTagConfig{}
+	config := DlpTagConfig{}
 	parts := strings.Split(tag, ",")
 
 	for _, part := range parts {
@@ -63,8 +63,8 @@ func parseDlpTag(tag string) (*DlpTagConfig, error) {
 		case "skip":
 			config.Skip = true
 		default:
-			if strings.HasPrefix(part, "custom:") {
-				config.Custom = strings.TrimPrefix(part, "custom:")
+			if after, ok := strings.CutPrefix(part, "custom:"); ok {
+				config.Custom = after
 			} else if config.Type == "" && part != "" {
 				config.Type = part
 			}
@@ -72,14 +72,14 @@ func parseDlpTag(tag string) (*DlpTagConfig, error) {
 	}
 
 	if config.Type == "" && config.Custom == "" && !config.Skip && !config.Recursive {
-		return nil, ErrInvalidTag
+		return DlpTagConfig{}, false, ErrInvalidTag
 	}
 
-	return config, nil
+	return config, true, nil
 }
 
 // DesensitizeStructAdvanced 高级结构体脱敏处理
-func (s *StructDesensitizer) DesensitizeStructAdvanced(data interface{}) error {
+func (s *StructDesensitizer) DesensitizeStructAdvanced(data any) error {
 	if !s.engine.IsEnabled() {
 		return nil
 	}
@@ -95,7 +95,7 @@ func (s *StructDesensitizer) desensitizeValue(val reflect.Value, depth int) erro
 	}
 
 	// 处理指针
-	if val.Kind() == reflect.Ptr {
+	if val.Kind() == reflect.Pointer {
 		if val.IsNil() {
 			return nil
 		}
@@ -129,18 +129,23 @@ func (s *StructDesensitizer) desensitizeStruct(val reflect.Value, depth int) err
 
 		// 获取标签配置
 		tag := fieldType.Tag.Get("dlp")
-		config, err := parseDlpTag(tag)
+		config, hasConfig, err := parseDlpTag(tag)
 		if err != nil {
 			continue // 忽略无效标签
 		}
 
 		// 跳过标记为跳过的字段
-		if config != nil && config.Skip {
+		if hasConfig && config.Skip {
 			continue
 		}
 
+		var configPtr *DlpTagConfig
+		if hasConfig {
+			configPtr = &config
+		}
+
 		// 处理字段
-		if err := s.desensitizeField(field, config, depth); err != nil {
+		if err := s.desensitizeField(field, configPtr, depth); err != nil {
 			// 记录错误但继续处理其他字段
 			continue
 		}
@@ -163,7 +168,7 @@ func (s *StructDesensitizer) desensitizeField(field reflect.Value, config *DlpTa
 		if config.Recursive {
 			return s.desensitizeValue(field, depth+1)
 		}
-	case reflect.Ptr:
+	case reflect.Pointer:
 		if !field.IsNil() && config.Recursive {
 			return s.desensitizeValue(field, depth+1)
 		}
@@ -287,11 +292,13 @@ func (s *StructDesensitizer) desensitizeMap(val reflect.Value, depth int) error 
 	// 对于map，我们需要重新设置值，因为MapIndex返回的是不可设置的值
 	for _, key := range val.MapKeys() {
 		newKey := key
+		keyChanged := false
 		if key.Kind() == reflect.String {
 			keyText := key.String()
 			desensitizedKey := s.engine.DesensitizeText(keyText)
 			if desensitizedKey != keyText {
 				newKey = reflect.ValueOf(desensitizedKey).Convert(key.Type())
+				keyChanged = true
 			}
 		}
 
@@ -321,7 +328,7 @@ func (s *StructDesensitizer) desensitizeMap(val reflect.Value, depth int) error 
 
 			if err := s.desensitizeValue(newVal, depth+1); err == nil {
 				// key 发生变化时删除旧键，避免并存。
-				if newKey != key {
+				if keyChanged {
 					val.SetMapIndex(key, reflect.Value{})
 				}
 				// 只有在脱敏成功时才更新map中的值
@@ -333,9 +340,9 @@ func (s *StructDesensitizer) desensitizeMap(val reflect.Value, depth int) error 
 }
 
 // BatchDesensitizeStruct 批量处理结构体切片
-func (s *StructDesensitizer) BatchDesensitizeStruct(data interface{}) error {
+func (s *StructDesensitizer) BatchDesensitizeStruct(data any) error {
 	val := reflect.ValueOf(data)
-	if val.Kind() == reflect.Ptr {
+	if val.Kind() == reflect.Pointer {
 		val = val.Elem()
 	}
 

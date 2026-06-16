@@ -40,7 +40,7 @@ func TestTagParsingDebug(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.tag, func(t *testing.T) {
-			config, err := parseDlpTag(tc.tag)
+			config, ok, err := parseDlpTag(tc.tag)
 			if err != nil {
 				t.Fatalf("Parse error: %v", err)
 			}
@@ -49,17 +49,17 @@ func TestTagParsingDebug(t *testing.T) {
 			t.Logf("Expected: %+v", tc.expected)
 			t.Logf("Actual: %+v", config)
 
-			if config == nil && tc.expected != nil {
+			if !ok && tc.expected != nil {
 				t.Error("Config should not be nil")
 				return
 			}
 
-			if config != nil && tc.expected == nil {
+			if ok && tc.expected == nil {
 				t.Error("Config should be nil")
 				return
 			}
 
-			if config != nil && tc.expected != nil {
+			if ok && tc.expected != nil {
 				if config.Type != tc.expected.Type {
 					t.Errorf("Type mismatch: expected %s, got %s", tc.expected.Type, config.Type)
 				}

@@ -13,7 +13,7 @@ type Desensitizer interface {
 	Desensitize(data string) (string, error)
 
 	// Configure 配置脱敏器参数
-	Configure(config map[string]interface{}) error
+	Configure(config map[string]any) error
 
 	// Enabled 检查脱敏器是否启用
 	Enabled() bool
@@ -68,9 +68,9 @@ type CacheStats struct {
 
 // Logger 简化的日志接口，避免循环依赖
 type Logger interface {
-	Error(msg string, args ...interface{})
-	Warn(msg string, args ...interface{})
-	Debug(msg string, args ...interface{})
+	Error(msg string, args ...any)
+	Warn(msg string, args ...any)
+	Debug(msg string, args ...any)
 }
 
 // DesensitizerManager 脱敏器管理器接口
@@ -127,12 +127,12 @@ type PerformanceMetrics struct {
 
 // DesensitizationResult 脱敏结果
 type DesensitizationResult struct {
-	Original     string                 // 原始数据
-	Desensitized string                 // 脱敏后数据
-	DataType     string                 // 数据类型
-	Desensitizer string                 // 使用的脱敏器
-	Duration     int64                  // 处理耗时（纳秒）
-	Cached       bool                   // 是否来自缓存
-	Error        error                  // 错误信息
-	Metadata     map[string]interface{} // 额外元数据
+	Original     string         // 原始数据
+	Desensitized string         // 脱敏后数据
+	DataType     string         // 数据类型
+	Desensitizer string         // 使用的脱敏器
+	Duration     int64          // 处理耗时（纳秒）
+	Cached       bool           // 是否来自缓存
+	Error        error          // 错误信息
+	Metadata     map[string]any // 额外元数据
 }

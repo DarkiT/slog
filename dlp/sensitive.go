@@ -4,11 +4,11 @@ import (
 	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
-	"crypto/des"
-	"crypto/md5"
+	"crypto/des" // #nosec G502 -- legacy compatibility API; prefer AesDesensitize for new code.
+	"crypto/md5" // #nosec G501 -- legacy masking digest, not used for cryptographic verification.
 	"crypto/rand"
 	"crypto/rsa"
-	"crypto/sha1"
+	"crypto/sha1" // #nosec G505 -- legacy masking digest, not used for cryptographic verification.
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -69,7 +69,7 @@ type Sensitive struct {
 var (
 	// 脱敏处理缓存池
 	maskPool = sync.Pool{
-		New: func() interface{} {
+		New: func() any {
 			return new(strings.Builder)
 		},
 	}
@@ -152,9 +152,9 @@ var (
 type DesensitizeFunc func(string) string
 
 // ProcessSensitiveData 处理结构体的脱敏
-func ProcessSensitiveData(v interface{}) error {
+func ProcessSensitiveData(v any) error {
 	val := reflect.ValueOf(v)
-	if val.Kind() == reflect.Ptr {
+	if val.Kind() == reflect.Pointer {
 		val = val.Elem()
 	}
 
@@ -466,7 +466,7 @@ func ChineseIDCardDesensitize(id string) bool {
 	validChecksum := "10X98765432"
 	sum := 0
 
-	for i := 0; i < 17; i++ {
+	for i := range 17 {
 		n, _ := strconv.Atoi(string(id[i]))
 		sum += n * weights[i]
 	}
@@ -786,9 +786,10 @@ func AesDesensitize(data, key []byte) (string, error) {
 	return hex.EncodeToString(ciphertext), nil
 }
 
-// DesDesensitize DES加密脱敏方法
+// DesDesensitize DES 加密脱敏方法。
+// 该函数保留用于兼容历史脱敏策略；新代码需要可逆加密脱敏时优先使用 AesDesensitize。
 func DesDesensitize(data string, key []byte) (string, error) {
-	block, err := des.NewCipher(key)
+	block, err := des.NewCipher(key) // #nosec G405 -- legacy compatibility API; prefer AesDesensitize for new code.
 	if err != nil {
 		return "", err
 	}
@@ -804,7 +805,10 @@ func DesDesensitize(data string, key []byte) (string, error) {
 	mode := cipher.NewCBCEncrypter(block, iv)
 	mode.CryptBlocks(ciphertext, padded)
 
-	return hex.EncodeToString(append(iv, ciphertext...)), nil
+	output := make([]byte, 0, len(iv)+len(ciphertext))
+	output = append(output, iv...)
+	output = append(output, ciphertext...)
+	return hex.EncodeToString(output), nil
 }
 
 // RsaDesensitize RSA加密脱敏方法
@@ -893,15 +897,17 @@ func UUIDDesensitize(uuid string) string {
 	return uuid
 }
 
-// MD5Desensitize 计算输入的MD5哈希值并返回
+// MD5Desensitize 计算输入的 MD5 摘要并返回。
+// 该函数仅用于兼容历史脱敏策略与非安全标识场景；新代码需要不可逆摘要时优先使用 SHA256Desensitize。
 func MD5Desensitize(input string) string {
-	hash := md5.Sum([]byte(input))
+	hash := md5.Sum([]byte(input)) // #nosec G401 -- legacy masking digest, not used for cryptographic verification.
 	return fmt.Sprintf("%x", hash)
 }
 
-// SHA1Desensitize 计算输入的SHA1哈希值并返回
+// SHA1Desensitize 计算输入的 SHA-1 摘要并返回。
+// 该函数仅用于兼容历史脱敏策略与非安全标识场景；新代码需要不可逆摘要时优先使用 SHA256Desensitize。
 func SHA1Desensitize(input string) string {
-	hash := sha1.Sum([]byte(input))
+	hash := sha1.Sum([]byte(input)) // #nosec G401 -- legacy masking digest, not used for cryptographic verification.
 	return fmt.Sprintf("%x", hash)
 }
 
@@ -950,7 +956,11 @@ func MaskString(str string, start, end int, maskChar string) string {
 
 // pkcs7Padding PKCS#7填充
 func pkcs7Padding(data []byte, blockSize int) []byte {
+	if blockSize <= 0 || blockSize > 255 {
+		return data
+	}
 	padding := blockSize - len(data)%blockSize
+	// #nosec G115 -- blockSize 已限制在 1..255，padding 必定落在 PKCS#7 允许的单字节范围。
 	padtext := bytes.Repeat([]byte{byte(padding)}, padding)
 	return append(data, padtext...)
 }

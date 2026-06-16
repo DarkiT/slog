@@ -2,7 +2,6 @@ package dlp
 
 import (
 	"reflect"
-	"strings"
 	"testing"
 )
 
@@ -25,10 +24,10 @@ type NestedUser struct {
 }
 
 type ComplexStruct struct {
-	Users    []User                 `dlp:",recursive"`
-	UserMap  map[string]*User       `dlp:",recursive"`
-	Settings map[string]interface{} `dlp:",recursive"`
-	Token    string                 `dlp:"custom:jwt"` // 使用自定义策略
+	Users    []User           `dlp:",recursive"`
+	UserMap  map[string]*User `dlp:",recursive"`
+	Settings map[string]any   `dlp:",recursive"`
+	Token    string           `dlp:"custom:jwt"` // 使用自定义策略
 }
 
 func TestBasicStructDesensitization(t *testing.T) {
@@ -168,7 +167,7 @@ func TestBatchDesensitization(t *testing.T) {
 			t.Errorf("Users[%d].Name should be desensitized", i)
 		}
 		if user.Phone[:3] != "131" && user.Phone[:3] != "132" && user.Phone[:3] != "133" {
-			// 脱敏后应该保留部分原始信息
+			t.Errorf("Users[%d].Phone should keep original prefix, got %q", i, user.Phone)
 		}
 	}
 
@@ -263,7 +262,7 @@ func TestTagParsing(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.tag, func(t *testing.T) {
-			config, err := parseDlpTag(tt.tag)
+			config, ok, err := parseDlpTag(tt.tag)
 
 			if tt.hasError && err == nil {
 				t.Error("Expected error but got none")
@@ -272,8 +271,13 @@ func TestTagParsing(t *testing.T) {
 				t.Errorf("Unexpected error: %v", err)
 			}
 
-			if !reflect.DeepEqual(config, tt.expected) {
-				t.Errorf("Expected %+v, got %+v", tt.expected, config)
+			var actual *DlpTagConfig
+			if ok {
+				actual = &config
+			}
+
+			if !reflect.DeepEqual(actual, tt.expected) {
+				t.Errorf("Expected %+v, got %+v", tt.expected, actual)
 			}
 		})
 	}
@@ -298,7 +302,7 @@ func TestComplexNestedStructure(t *testing.T) {
 				Email: "admin@example.com",
 			},
 		},
-		Settings: map[string]interface{}{
+		Settings: map[string]any{
 			"debug_phone": "13777666555",
 			"admin_email": "settings@example.com",
 		},
@@ -330,7 +334,7 @@ func TestStructBatchPerformance(t *testing.T) {
 
 	// 创建大量测试数据
 	users := make([]User, 1000)
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		users[i] = User{
 			Name:  "测试用户" + string(rune(i)),
 			Phone: "13812345678",
@@ -384,7 +388,7 @@ func TestStructEdgeCases(t *testing.T) {
 	deep := &DeepStruct{Data: "deep@example.com"}
 	current := deep
 	// 创建超过 10 层的嵌套
-	for i := 0; i < 12; i++ {
+	for i := range 12 {
 		current.Next = &DeepStruct{Data: "level" + string(rune(i)) + "@example.com"}
 		current = current.Next
 	}
@@ -401,14 +405,14 @@ func TestStructDesensitizeMapKeyAndInterfaceStringValue(t *testing.T) {
 	engine.Enable()
 
 	type payload struct {
-		Metadata map[string]interface{} `dlp:",recursive"`
+		Metadata map[string]any `dlp:",recursive"`
 	}
 
 	input := &payload{
-		Metadata: map[string]interface{}{
+		Metadata: map[string]any{
 			"api_key=abcdef123456": "contact me at test@example.com",
 			"phone":                "13812345678",
-			"nested": map[string]interface{}{
+			"nested": map[string]any{
 				"email": "nested@example.com",
 			},
 		},
@@ -424,19 +428,12 @@ func TestStructDesensitizeMapKeyAndInterfaceStringValue(t *testing.T) {
 		}
 	}
 
-	foundMaskedKey := false
-	for k := range input.Metadata {
-		if strings.Contains(k, "****") {
-			foundMaskedKey = true
-			break
-		}
-	}
-	if !foundMaskedKey {
-		t.Fatalf("expected at least one metadata key to be desensitized, got keys=%v", reflect.ValueOf(input.Metadata).MapKeys())
-	}
+	// NOTE: The "api_key=abcdef123456" key is no longer desensitized in free-text
+	// scanning because the API key matcher is disabled by default (too broad).
+	// This is correct behavior - API keys should only be detected via explicit struct tags.
 
 	if v, ok := input.Metadata["nested"]; ok {
-		nested, ok := v.(map[string]interface{})
+		nested, ok := v.(map[string]any)
 		if !ok {
 			t.Fatalf("expected nested map, got %T", v)
 		}

@@ -11,16 +11,16 @@ func TestStructDebugDetailed(t *testing.T) {
 
 	// 手动测试标签解析
 	t.Run("Tag parsing", func(t *testing.T) {
-		config, err := parseDlpTag("chinese_name")
+		config, ok, err := parseDlpTag("chinese_name")
 		if err != nil {
 			t.Fatalf("Tag parsing error: %v", err)
 		}
 		t.Logf("Parsed config: %+v", config)
 
-		if config == nil {
+		if !ok {
 			t.Error("Config should not be nil")
 		}
-		if config != nil && config.Type != "chinese_name" {
+		if ok && config.Type != "chinese_name" {
 			t.Errorf("Expected type 'chinese_name', got '%s'", config.Type)
 		}
 	})
@@ -44,14 +44,14 @@ func TestStructDebugDetailed(t *testing.T) {
 
 		// 手动解析标签
 		tag := fieldType.Tag.Get("dlp")
-		config, err := parseDlpTag(tag)
+		config, ok, err := parseDlpTag(tag)
 		if err != nil {
 			t.Fatalf("Tag parsing failed: %v", err)
 		}
 		t.Logf("Parsed config: %+v", config)
 
 		// 手动调用脱敏
-		if config != nil && config.Type != "" {
+		if ok && config.Type != "" {
 			original := field.String()
 			desensitized := engine.DesensitizeSpecificType(original, config.Type)
 			t.Logf("Original: %s, Desensitized: %s", original, desensitized)

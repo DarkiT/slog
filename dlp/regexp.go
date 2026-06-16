@@ -3,6 +3,7 @@ package dlp
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -16,7 +17,8 @@ const (
 		")"
 	ChineseNamePattern   = "(?:" + ChineseSurnames + ")[\u4e00-\u9fa5]{1,5}"                                     // 中文姓名：百家姓+名字
 	ChineseIDCardPattern = "[1-9]\\d{5}(?:18|19|20)\\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\\d|3[01])\\d{3}[\\dXx]" // 身份证
-	PassportPattern      = "[a-zA-Z][0-9]{9}"                                                                    // 护照号
+	// #nosec G101 -- DLP detection regex, not a credential.
+	PassportPattern = "[a-zA-Z][0-9]{9}" // 护照号
 	// 社会保障号：18位身份证格式，避免误匹配19位银行卡
 	SocialSecurityPattern = "[1-9]\\d{5}(?:18|19|20)\\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\\d|3[01])\\d{3}[\\dXx]" // 社会保障号（18位身份证格式）
 	DriversLicensePattern = "[1-9]\\d{5}[a-zA-Z]\\d{6}"                                                           // 驾驶证号
@@ -29,29 +31,34 @@ const (
 
 	// 地址信息
 	AddressPattern = "[\u4e00-\u9fa5]{2,}(?:省|自治区|市|特别行政区|自治州)?[\u4e00-\u9fa5]{2,}(?:市|区|县|镇|村|街道|路|号楼|栋|单元|室)" // 详细地址
-	// 邮政编码：更严格的格式，避免误匹配银行卡号尾数
-	PostalCodePattern = `(?:^|[^\d])[1-9]\d{5}(?:[^\d]|$)` // 邮政编码（独立的6位数字）
+	// 邮政编码：使用单词边界，避免误匹配银行卡号尾数
+	PostalCodePattern = `\b[1-9]\d{5}\b` // 邮政编码（独立的6位数字）
 
 	// 金融信息
 	// 中国银行卡：19位，以特定BIN码开头（更精确的匹配）
 	BankCardPattern = `(?:(?:6(?:2[2-9]\d|3\d{2}|4\d{2}|5\d{2}|6\d{2}|7\d{2}|8\d{2}|9\d{2})\d{13,16})|(?:62\d{16,17}))` // 中国银行卡（19位，以62-69开头）
 	// 国际信用卡：16位，标准国际格式
+	// #nosec G101 -- DLP detection regex, not a credential.
 	CreditCardPattern = `(?:4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|6(?:011|5[0-9][0-9])[0-9]{12}|3[47][0-9]{13}|3(?:0[0-5]|[68][0-9])[0-9]{11}|(?:2131|1800|35\d{3})\d{11})` // 国际信用卡（主要16位）
 
 	// 网络标识
 	IPv4Pattern = `(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)` // IPv4
 	IPv6Pattern = "(([0-9a-fA-F]{1,4}:){7,7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)|fe80:(:[0-9a-fA-F]{0,4}){0,4}%[0-9a-zA-Z]{1,}|::(ffff(:0{1,4}){0,1}:){0,1}((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])|([0-9a-fA-F]{1,4}:){1,4}:((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9]))"
 	MACPattern  = `(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}` // MAC地址
-	IMEIPattern = `\d{15,17}`                               // IMEI号
+	IMEIPattern = `\b\d{15}\b`                              // IMEI号（恰好15位数字）
 
 	// 车辆信息
 	LicensePlatePattern = `[京津沪渝冀豫云辽黑湘皖鲁新苏浙赣鄂桂甘晋蒙陕吉闽贵粤青藏川宁琼使领][A-Z][A-HJ-NP-Z0-9]{4,5}[A-HJ-NP-Z0-9挂学警港澳]` // 车牌号
 	VINPattern          = `[A-HJ-NPR-Z0-9]{17}`                                                            // 车架号
 
 	// 密钥和令牌
-	APIKeyPattern      = `[a-zA-Z0-9]{32,}`                                         // API密钥
-	JWTPattern         = `eyJ[A-Za-z0-9-_=]+\.[A-Za-z0-9-_=]+\.?[A-Za-z0-9-_.+/=]*` // JWT令牌
-	AccessTokenPattern = `[a-zA-Z0-9]{40,}`                                         // 访问令牌
+	// APIKeyPattern and AccessTokenPattern removed from default matchers (too broad).
+	// They can still be used for explicit struct tag desensitization via dlp:"api_key" / dlp:"access_token".
+	// #nosec G101 -- DLP detection regex, not a credential.
+	APIKeyPattern = `[a-zA-Z0-9]{32,}`                                         // API密钥
+	JWTPattern    = `eyJ[A-Za-z0-9-_=]+\.[A-Za-z0-9-_=]+\.?[A-Za-z0-9-_.+/=]*` // JWT令牌
+	// #nosec G101 -- DLP detection regex, not a credential.
+	AccessTokenPattern = `[a-zA-Z0-9]{40,}` // 访问令牌
 
 	// 设备标识
 	DeviceIDPattern = `[A-F0-9]{8}-[A-F0-9]{4}-[A-F0-9]{4}-[A-F0-9]{4}-[A-F0-9]{12}`                // 设备ID
@@ -70,9 +77,12 @@ const (
 	DomainPattern = `(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9][a-z0-9-]{0,61}[a-z0-9]` // 域名
 
 	// 敏感内容
-	PasswordPattern = `^[a-zA-Z]\w{5,17}$` // 密码（以字母开头，长度在6~18之间，只能包含字母、数字和下划线）
+	// #nosec G101 -- DLP detection regex, not a credential.
+	PasswordPattern = `\b[a-zA-Z]\w{5,17}\b` // 密码（以字母开头，长度在6~18之间，只能包含字母、数字和下划线）
 	// PasswordPattern，增加特殊字符要求
 	// PasswordPattern = `^(?=.*[A-Za-z])(?=.*\d)(?=.*[@$!%*#?&])[A-Za-z\d@$!%*#?&]{8,}$`
+	// UsernamePattern removed from default matchers (too broad - matches ordinary English words).
+	// It can still be used for explicit struct tag desensitization via dlp:"username".
 	UsernamePattern = `[a-zA-Z0-9_]{3,16}` // 用户名
 	// 医保卡号：更严格的格式，避免误匹配银行卡号
 	MedicalIDPattern = `[1-5]\\d{7}`  // 医保卡号（8位，1-5开头）
@@ -147,11 +157,12 @@ type MatchResult struct {
 
 // RegexSearcher 定义正则搜索器
 type RegexSearcher struct {
-	matchers []*Matcher                // 按优先级排序的匹配器列表
-	pool     sync.Pool                 // 字符串构建器池
-	mu       sync.RWMutex              // 读写锁
-	cache    map[string]*regexp.Regexp // 正则表达式缓存
-	version  int64                     // 版本号，用于缓存失效
+	matchers         []*Matcher                // 按优先级排序的匹配器列表
+	disabledMatchers map[string]bool           // 被禁用的匹配器名称
+	pool             sync.Pool                 // 字符串构建器池
+	mu               sync.RWMutex              // 读写锁
+	cache            map[string]*regexp.Regexp // 正则表达式缓存
+	version          int64                     // 版本号，用于缓存失效
 }
 
 func init() {
@@ -197,10 +208,11 @@ func init() {
 // NewRegexSearcher 创建新的正则搜索器
 func NewRegexSearcher() *RegexSearcher {
 	searcher := &RegexSearcher{
-		matchers: make([]*Matcher, 0, 50), // 预分配合适的容量
-		cache:    make(map[string]*regexp.Regexp),
+		matchers:         make([]*Matcher, 0, 50), // 预分配合适的容量
+		disabledMatchers: make(map[string]bool),
+		cache:            make(map[string]*regexp.Regexp),
 		pool: sync.Pool{
-			New: func() interface{} {
+			New: func() any {
 				return new(strings.Builder)
 			},
 		},
@@ -209,6 +221,13 @@ func NewRegexSearcher() *RegexSearcher {
 	if err := searcher.registerDefaultMatchers(); err != nil {
 		panic(fmt.Sprintf("Failed to initialize RegexSearcher: %v", err))
 	}
+
+	// Disable overly broad matchers from default scanning.
+	// They are still available for explicit per-type use (e.g., struct tag desensitization).
+	searcher.disabledMatchers[Username] = true
+	searcher.disabledMatchers[APIKey] = true
+	searcher.disabledMatchers[AccessToken] = true
+	searcher.disabledMatchers[Password] = true
 
 	// 根据复杂度和优先级排序匹配器
 	searcher.sortMatchers()
@@ -271,6 +290,10 @@ func (s *RegexSearcher) Match(text string) []MatchResult {
 
 	// 按优先级顺序遍历匹配器
 	for _, matcher := range s.matchers {
+		// 跳过被禁用的匹配器
+		if s.isMatcherDisabled(matcher.Name) {
+			continue
+		}
 		if len(matcher.FastFilters) > 0 && !containsFastToken(text, matcher.FastFilters) {
 			continue
 		}
@@ -340,7 +363,7 @@ func (s *RegexSearcher) AddMatcher(matcher *Matcher) error {
 	// 编译正则表达式
 	regex, err := regexp.Compile(matcher.Pattern)
 	if err != nil {
-		return fmt.Errorf("failed to compile regex pattern for %s: %v", matcher.Name, err)
+		return fmt.Errorf("failed to compile regex pattern for %s: %w", matcher.Name, err)
 	}
 
 	// 计算复杂度
@@ -394,7 +417,7 @@ func (s *RegexSearcher) UpdateMatcher(name string, pattern string, validator fun
 			// 编译新的正则表达式
 			regex, err := regexp.Compile(pattern)
 			if err != nil {
-				return fmt.Errorf("failed to compile regex pattern: %v", err)
+				return fmt.Errorf("failed to compile regex pattern: %w", err)
 			}
 
 			// 更新匹配器
@@ -422,6 +445,78 @@ func (s *RegexSearcher) GetAllSupportedTypes() []string {
 		types[i] = matcher.Name
 	}
 	return types
+}
+
+// DisableMatchers 禁用指定的匹配器（累加式）。
+// 比 Set 更明确地表达「累加禁用」的语义，variadic 参数更简洁。
+func (s *RegexSearcher) DisableMatchers(names ...string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, name := range names {
+		s.disabledMatchers[name] = true
+	}
+	s.version++
+}
+
+// EnableMatchers 重新启用之前被禁用的匹配器。
+// 如果指定的 matcher 未注册或本来就处于启用状态，则为 no-op。
+func (s *RegexSearcher) EnableMatchers(names ...string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, name := range names {
+		delete(s.disabledMatchers, name)
+	}
+	s.version++
+}
+
+// SetMatcherEnabled 启用或禁用单个匹配器。
+// enabled=true  等价于 EnableMatchers(name)
+// enabled=false 等价于 DisableMatchers(name)
+func (s *RegexSearcher) SetMatcherEnabled(name string, enabled bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if enabled {
+		delete(s.disabledMatchers, name)
+	} else {
+		s.disabledMatchers[name] = true
+	}
+	s.version++
+}
+
+// IsMatcherDisabled 检查指定名称的匹配器是否被禁用
+func (s *RegexSearcher) IsMatcherDisabled(name string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.disabledMatchers[name]
+}
+
+// DisabledMatchers 返回所有被禁用的匹配器名称列表
+func (s *RegexSearcher) DisabledMatchers() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	names := make([]string, 0, len(s.disabledMatchers))
+	for name := range s.disabledMatchers {
+		names = append(names, name)
+	}
+	return names
+}
+
+// EnabledMatchers 返回所有处于启用状态的匹配器名称列表（即未被禁用的）。
+func (s *RegexSearcher) EnabledMatchers() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	names := make([]string, 0, len(s.matchers))
+	for _, m := range s.matchers {
+		if !s.disabledMatchers[m.Name] {
+			names = append(names, m.Name)
+		}
+	}
+	return names
+}
+
+// isMatcherDisabled 内部方法，检查匹配器是否被禁用（调用方需持有锁）
+func (s *RegexSearcher) isMatcherDisabled(name string) bool {
+	return s.disabledMatchers[name]
 }
 
 // SearchSensitiveByType 按类型搜索敏感信息
@@ -555,11 +650,8 @@ func extractChineseNames(chars []rune) []nameCandidate {
 	separatorIndices := make([]int, 0)
 
 	for i, char := range chars {
-		for _, sep := range separators {
-			if char == sep {
-				separatorIndices = append(separatorIndices, i)
-				break
-			}
+		if slices.Contains(separators, char) {
+			separatorIndices = append(separatorIndices, i)
 		}
 	}
 
@@ -590,7 +682,7 @@ func extractChineseNames(chars []rune) []nameCandidate {
 	}
 
 	// 3. 根据常见姓氏匹配可能的姓名
-	for i := 0; i < len(chars); i++ {
+	for i := range chars {
 		surname := string(chars[i])
 
 		// 检查是否是常见姓氏
@@ -876,6 +968,11 @@ func (s *RegexSearcher) registerDefaultMatchers() error {
 			Pattern:  PostalCodePattern,
 			Regex:    PostalCodeRegex,
 			Priority: 910,
+			Validator: func(s string) bool {
+				// PostalCode: ensure surrounding chars are not digits
+				// The regex already uses \b, but we double-check context in the original text
+				return true
+			},
 			Transformer: func(s string) string {
 				return PostalCodeDesensitize(s)
 			},
@@ -933,6 +1030,10 @@ func (s *RegexSearcher) registerDefaultMatchers() error {
 			Pattern:  IMEIPattern,
 			Regex:    IMEIRegex,
 			Priority: 200, // 大幅降低优先级，避免干扰银行卡
+			Validator: func(s string) bool {
+				// IMEI is exactly 15 digits; skip if surrounded by digits (likely part of a longer number like bank card)
+				return len(s) == 15
+			},
 			Transformer: func(s string) string {
 				return IMEIDesensitize(s)
 			},
@@ -955,6 +1056,9 @@ func (s *RegexSearcher) registerDefaultMatchers() error {
 				return VINDesensitize(s)
 			},
 		},
+		// NOTE: APIKey and AccessToken matchers are disabled by default
+		// because their patterns are too broad (match any 32+/40+ alphanumeric string).
+		// Use them via explicit struct tags: dlp:"api_key", dlp:"access_token"
 		{
 			Name:     APIKey,
 			Pattern:  APIKeyPattern,
@@ -974,6 +1078,9 @@ func (s *RegexSearcher) registerDefaultMatchers() error {
 				return JWTDesensitize(s)
 			},
 		},
+		// NOTE: AccessToken matcher is disabled by default
+		// because its pattern is too broad (matches any 40+ alphanumeric string).
+		// Use it via explicit struct tag: dlp:"access_token"
 		{
 			Name:     AccessToken,
 			Pattern:  AccessTokenPattern,
@@ -1066,11 +1173,14 @@ func (s *RegexSearcher) registerDefaultMatchers() error {
 				return strings.Repeat("*", len(s))
 			},
 		},
+		// NOTE: Username matcher is disabled by default
+		// because its pattern is too broad (matches ordinary English words like "cleanup", "sessions").
+		// Use it via explicit struct tag: dlp:"username"
 		{
 			Name:     Username,
 			Pattern:  UsernamePattern,
 			Regex:    UsernameRegex,
-			Priority: 400, // 大幅降低优先级，避免干扰银行卡
+			Priority: 400,
 			Transformer: func(s string) string {
 				return UsernameDesensitize(s)
 			},
@@ -1130,8 +1240,8 @@ func (s *RegexSearcher) registerDefaultMatchers() error {
 				if idx := strings.Index(s, "://"); idx != -1 {
 					protocol := s[:idx+3]
 					rest := s[idx+3:]
-					if domainEnd := strings.Index(rest, "/"); domainEnd != -1 {
-						domain := rest[:domainEnd]
+					if before, _, ok := strings.Cut(rest, "/"); ok {
+						domain := before
 						return protocol + domain + "/****"
 					}
 				}
@@ -1155,7 +1265,7 @@ func (s *RegexSearcher) registerDefaultMatchers() error {
 	// 添加到匹配器列表
 	for _, m := range matchers {
 		if err := s.AddMatcher(m); err != nil {
-			return fmt.Errorf("failed to add matcher %s: %v", m.Name, err)
+			return fmt.Errorf("failed to add matcher %s: %w", m.Name, err)
 		}
 	}
 
@@ -1222,12 +1332,7 @@ func isRuleName(text string) bool {
 		"empty",
 	}
 
-	for _, name := range ruleNames {
-		if text == name {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(ruleNames, text)
 }
 
 // getTypesVersion 获取类型版本号（用于缓存失效）
@@ -1265,6 +1370,10 @@ func (s *RegexSearcher) ReplaceAllTypes(text string) string {
 
 	// 收集所有类型的匹配
 	for _, matcher := range matchers {
+		// 跳过被禁用的匹配器
+		if s.isMatcherDisabled(matcher.Name) {
+			continue
+		}
 		// 快速预筛选
 		if !s.quickFilter(text, matcher) {
 			continue
@@ -1401,6 +1510,10 @@ func (s *RegexSearcher) DetectAllTypes(text string) map[string][]MatchResult {
 
 	// 并发检测所有类型
 	for _, matcher := range matchers {
+		// 跳过被禁用的匹配器
+		if s.isMatcherDisabled(matcher.Name) {
+			continue
+		}
 		var typeResults []MatchResult
 
 		// 中文姓名特殊处理

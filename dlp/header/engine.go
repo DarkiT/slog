@@ -26,7 +26,7 @@ type EngineAPI interface {
 	DesensitizeText(text string) string
 
 	// DesensitizeStruct 对结构体进行脱敏处理
-	DesensitizeStruct(data interface{}) error
+	DesensitizeStruct(data any) error
 
 	// Mask 使用指定模型对文本进行脱敏
 	Mask(text string, model string) (string, error)
@@ -64,7 +64,7 @@ func (e *Engine) DesensitizeText(text string) string {
 }
 
 // DesensitizeStruct 对结构体进行脱敏处理
-func (e *Engine) DesensitizeStruct(data interface{}) error {
+func (e *Engine) DesensitizeStruct(data any) error {
 	if !e.config.IsEnabled() {
 		return nil
 	}

@@ -3,6 +3,7 @@ package dlp
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -41,13 +42,7 @@ func TestNewRegexSearcher(t *testing.T) {
 	}
 
 	for _, expectedType := range expectedTypes {
-		found := false
-		for _, actualType := range types {
-			if actualType == expectedType {
-				found = true
-				break
-			}
-		}
+		found := slices.Contains(types, expectedType)
 		if !found {
 			t.Errorf("Expected matcher type %s not found", expectedType)
 		}
@@ -330,8 +325,8 @@ func BenchmarkReplaceParallel(b *testing.B) {
 // generateLongText 生成包含大量手机号的长文本用于测试
 func generateLongText() string {
 	var builder strings.Builder
-	for i := 0; i < 1000; i++ {
-		builder.WriteString(fmt.Sprintf("手机号码%d：138%08d\n", i, i))
+	for i := range 1000 {
+		fmt.Fprintf(&builder, "手机号码%d：138%08d\n", i, i)
 	}
 	return builder.String()
 }
@@ -380,7 +375,7 @@ func TestConcurrentAccess(t *testing.T) {
 	text := "测试文本 13812345678 test@example.com"
 	done := make(chan bool)
 
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		go func() {
 			searcher.SearchSensitiveByType(text, "mobile_phone")
 			searcher.SearchSensitiveByType(text, "email")
@@ -388,7 +383,7 @@ func TestConcurrentAccess(t *testing.T) {
 		}()
 	}
 
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		<-done
 	}
 }
@@ -457,14 +452,14 @@ func BenchmarkEngine_DesensitizeTextLarge(b *testing.B) {
 
 	// 构造大文本
 	baseText := "张三的手机号是13812345678，身份证号是110101199001011237，邮箱是zhangsan@example.com，IP地址是192.168.1.1。"
-	largeText := ""
-	for i := 0; i < 100; i++ {
-		largeText += baseText
+	var largeText strings.Builder
+	for range 100 {
+		largeText.WriteString(baseText)
 	}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		engine.DesensitizeText(largeText)
+		engine.DesensitizeText(largeText.String())
 	}
 }
 
@@ -596,7 +591,7 @@ func TestMemoryAndBatchProcessing(t *testing.T) {
 	batchSize := 10000
 
 	start := time.Now()
-	for i := 0; i < batchSize; i++ {
+	for range batchSize {
 		engine.DesensitizeText(testText)
 	}
 	duration := time.Since(start)
@@ -612,7 +607,7 @@ func TestMemoryAndBatchProcessing(t *testing.T) {
 	engine.ClearCache()
 
 	start = time.Now()
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		text := fmt.Sprintf("用户%d的手机号是1381234%04d", i, i)
 		engine.DesensitizeText(text)
 	}

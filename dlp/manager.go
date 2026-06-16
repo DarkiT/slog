@@ -2,6 +2,8 @@ package dlp
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -295,14 +297,10 @@ func (dm *DefaultDesensitizerManager) GetStats() ManagerStats {
 	}
 
 	// 复制类型覆盖
-	for k, v := range dm.stats.TypeCoverage {
-		stats.TypeCoverage[k] = v
-	}
+	maps.Copy(stats.TypeCoverage, dm.stats.TypeCoverage)
 
 	// 复制性能指标
-	for k, v := range dm.stats.PerformanceMetrics {
-		stats.PerformanceMetrics[k] = v
-	}
+	maps.Copy(stats.PerformanceMetrics, dm.stats.PerformanceMetrics)
 
 	return stats
 }
@@ -363,7 +361,7 @@ func (dm *DefaultDesensitizerManager) ProcessWithDesensitizer(name string, data 
 		Duration:     duration,
 		Cached:       cached,
 		Error:        err,
-		Metadata:     make(map[string]interface{}),
+		Metadata:     make(map[string]any),
 	}, nil
 }
 
@@ -471,13 +469,10 @@ func (dm *DefaultDesensitizerManager) AutoDetectAndProcess(data string) (*Desens
 					}
 
 					if typeSpecific, ok := desensitizer.(TypeSpecificDesensitizer); ok {
-						for _, supportedType := range typeSpecific.GetSupportedTypes() {
-							if supportedType == dataType {
-								// 使用脱敏器的内部正则替换逻辑
-								if processed, err := desensitizer.Desensitize(result); err == nil {
-									result = processed
-								}
-								break
+						if slices.Contains(typeSpecific.GetSupportedTypes(), dataType) {
+							// 使用脱敏器的内部正则替换逻辑
+							if processed, err := desensitizer.Desensitize(result); err == nil {
+								result = processed
 							}
 						}
 					}
@@ -510,13 +505,10 @@ func (dm *DefaultDesensitizerManager) AutoDetectAndProcess(data string) (*Desens
 				}
 
 				if typeSpecific, ok := desensitizer.(TypeSpecificDesensitizer); ok {
-					for _, supportedType := range typeSpecific.GetSupportedTypes() {
-						if supportedType == dataType {
-							// 使用脱敏器的内部正则替换逻辑
-							if processed, err := desensitizer.Desensitize(result); err == nil {
-								result = processed
-							}
-							break
+					if slices.Contains(typeSpecific.GetSupportedTypes(), dataType) {
+						// 使用脱敏器的内部正则替换逻辑
+						if processed, err := desensitizer.Desensitize(result); err == nil {
+							result = processed
 						}
 					}
 				}
@@ -581,10 +573,10 @@ func (dm *DefaultDesensitizerManager) ClearAllCaches() {
 }
 
 // GetDetailedStats 获取详细统计信息
-func (dm *DefaultDesensitizerManager) GetDetailedStats() map[string]interface{} {
+func (dm *DefaultDesensitizerManager) GetDetailedStats() map[string]any {
 	stats := dm.GetStats()
 
-	detailed := map[string]interface{}{
+	detailed := map[string]any{
 		"total_desensitizers":   stats.TotalDesensitizers,
 		"enabled_desensitizers": stats.EnabledDesensitizers,
 		"type_coverage":         stats.TypeCoverage,

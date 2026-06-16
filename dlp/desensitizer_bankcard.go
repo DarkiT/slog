@@ -2,6 +2,7 @@ package dlp
 
 import (
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode"
@@ -163,13 +164,7 @@ func isObviousFakeCard(cardNumber string) bool {
 		"4000000000000002", // 通用测试号码
 	}
 
-	for _, pattern := range testPatterns {
-		if cardNumber == pattern {
-			return true
-		}
-	}
-
-	return false
+	return slices.Contains(testPatterns, cardNumber)
 }
 
 // validateLuhn Luhn算法验证
@@ -229,13 +224,7 @@ func (ebcd *EnhancedBankCardDesensitizer) containsSuspiciousBankCard(text string
 	// 提取所有连续数字序列
 	digitSeqs := regexp.MustCompile(`\d{13,19}`).FindAllString(text, -1)
 
-	for _, seq := range digitSeqs {
-		if ebcd.isValidBankCard(seq) {
-			return true
-		}
-	}
-
-	return false
+	return slices.ContainsFunc(digitSeqs, ebcd.isValidBankCard)
 }
 
 // aggressiveDesensitize 激进脱敏方法

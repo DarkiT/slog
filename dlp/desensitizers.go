@@ -2,6 +2,7 @@ package dlp
 
 import (
 	"regexp"
+	"slices"
 	"strings"
 	"unicode"
 )
@@ -171,13 +172,7 @@ func (epd *EnhancedPhoneDesensitizer) isValidPhone(phone string) bool {
 
 	second := phone[1]
 	validSecond := []byte{'3', '4', '5', '6', '7', '8', '9'}
-	valid := false
-	for _, v := range validSecond {
-		if second == v {
-			valid = true
-			break
-		}
-	}
+	valid := slices.Contains(validSecond, second)
 
 	if !valid {
 		return false

@@ -18,16 +18,13 @@ var (
 	ErrNotStruct      = errors.New("input must be a struct")
 )
 
-// putTieredStringBuilder 将字符串构建器放回分级池
-func putTieredStringBuilder(builder *strings.Builder, expectedCapacity int) {
-	common.GlobalTieredPools.PutStringBuilder(builder, expectedCapacity)
-}
-
 // cacheEntry 缓存条目
 type cacheEntry struct {
 	result string
 	hits   int64 // 命中次数
 }
+
+const negativeCacheTextMaxLen = 128
 
 // DlpEngine 定义脱敏引擎结构体
 type DlpEngine struct {
@@ -161,6 +158,10 @@ func (e *DlpEngine) DesensitizeText(text string) string {
 		return text
 	}
 
+	if !mayContainSensitiveData(text) {
+		return text
+	}
+
 	// 对于超长文本，不使用缓存
 	if len(text) > 5000 {
 		return e.desensitizeTextWithoutCache(text)
@@ -179,8 +180,8 @@ func (e *DlpEngine) DesensitizeText(text string) string {
 	// 处理文本
 	result := e.desensitizeTextWithoutCache(text)
 
-	// 只缓存有变化的结果，避免占用太多内存
-	if result != text {
+	// 对短文本允许负缓存，避免安全消息被反复全量扫描。
+	if result != text || len(text) <= negativeCacheTextMaxLen {
 		e.cache.Put(cacheKey, &cacheEntry{
 			result: result,
 			hits:   1,
@@ -188,6 +189,48 @@ func (e *DlpEngine) DesensitizeText(text string) string {
 	}
 
 	return result
+}
+
+func mayContainSensitiveData(text string) bool {
+	if text == "" {
+		return false
+	}
+
+	hasAt := false
+	hasDigit := false
+	longAlphaNumRun := 0
+
+	for i := 0; i < len(text); i++ {
+		ch := text[i]
+		switch {
+		case ch >= '0' && ch <= '9':
+			hasDigit = true
+			longAlphaNumRun++
+		case (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z'):
+			longAlphaNumRun++
+		default:
+			longAlphaNumRun = 0
+		}
+
+		switch ch {
+		case '@':
+			hasAt = true
+		case ':', '/', '.', '-', '_':
+			if hasDigit || hasAt {
+				return true
+			}
+		}
+
+		if hasDigit && longAlphaNumRun >= 8 {
+			return true
+		}
+	}
+
+	if hasAt || hasDigit {
+		return true
+	}
+
+	return strings.ContainsAny(text, "张李王赵钱孙周吴郑冯陈褚卫蒋沈韩杨朱秦尤许何吕施孔曹严华金魏陶姜戚谢邹喻柏水窦章云苏潘葛奚范彭郎鲁韦昌马苗凤花方俞任袁柳酆鲍史唐费廉岑薛雷贺倪汤滕殷罗毕郝邬安常乐于时傅皮卞齐康伍余元卜顾孟平黄和穆萧尹")
 }
 
 // desensitizeTextWithoutCache 不使用缓存的文本脱敏处理（优化版本）
@@ -252,13 +295,13 @@ func (e *DlpEngine) DesensitizeSpecificType(text string, sensitiveType string) s
 }
 
 // DesensitizeStruct 对结构体进行脱敏处理
-func (e *DlpEngine) DesensitizeStruct(data interface{}) error {
+func (e *DlpEngine) DesensitizeStruct(data any) error {
 	if !e.IsEnabled() {
 		return nil
 	}
 
 	val := reflect.ValueOf(data)
-	if val.Kind() == reflect.Ptr {
+	if val.Kind() == reflect.Pointer {
 		val = val.Elem()
 	}
 
@@ -309,7 +352,9 @@ func (e *DlpEngine) RegisterCustomMatcher(matcher *Matcher) error {
 	}
 
 	matcher.Regex = regex
-	e.searcher.AddMatcher(matcher)
+	if err := e.searcher.AddMatcher(matcher); err != nil {
+		return err
+	}
 
 	// 清除类型缓存
 	e.typesCacheMu.Lock()
@@ -338,7 +383,7 @@ func (e *DlpEngine) GetCacheStats() (hits, misses int64) {
 
 // DesensitizeStructAdvanced 高级结构体脱敏处理（新方法）
 // 支持：嵌套结构体、slice/array、map、多种数据类型、递归处理
-func (e *DlpEngine) DesensitizeStructAdvanced(data interface{}) error {
+func (e *DlpEngine) DesensitizeStructAdvanced(data any) error {
 	if !e.IsEnabled() {
 		return nil
 	}
@@ -346,7 +391,7 @@ func (e *DlpEngine) DesensitizeStructAdvanced(data interface{}) error {
 }
 
 // BatchDesensitizeStruct 批量结构体脱敏处理（新方法）
-func (e *DlpEngine) BatchDesensitizeStruct(data interface{}) error {
+func (e *DlpEngine) BatchDesensitizeStruct(data any) error {
 	if !e.IsEnabled() {
 		return nil
 	}
@@ -395,4 +440,48 @@ func (e *DlpEngine) DisableDesensitizer(name string) error {
 func (e *DlpEngine) ClearDesensitizerCaches() {
 	e.manager.ClearAllCaches()
 	e.ClearCache() // 也清除引擎自身的缓存
+}
+
+// DisableMatchers 禁用指定的匹配器。
+func (e *DlpEngine) DisableMatchers(matcherNames ...string) {
+	e.searcher.DisableMatchers(matcherNames...)
+}
+
+// EnableMatchers 重新启用之前被禁用的匹配器。
+func (e *DlpEngine) EnableMatchers(matcherNames ...string) {
+	e.searcher.EnableMatchers(matcherNames...)
+}
+
+// SetMatcherEnabled 启用或禁用单个匹配器。
+func (e *DlpEngine) SetMatcherEnabled(name string, enabled bool) {
+	e.searcher.SetMatcherEnabled(name, enabled)
+}
+
+// IsMatcherDisabled 检查指定名称的匹配器是否被禁用
+func (e *DlpEngine) IsMatcherDisabled(name string) bool {
+	return e.searcher.IsMatcherDisabled(name)
+}
+
+// DisabledMatchers 返回所有被禁用的匹配器名称列表。
+func (e *DlpEngine) DisabledMatchers() []string {
+	return e.searcher.DisabledMatchers()
+}
+
+// EnabledMatchers 返回所有处于启用状态的匹配器名称列表。
+func (e *DlpEngine) EnabledMatchers() []string {
+	return e.searcher.EnabledMatchers()
+}
+
+// DesensitizeAttrsOnly 仅对属性值进行脱敏，不对消息文本进行脱敏。
+// msg 为原始消息文本，原样返回；attrs 中的每个值会经过 DLP 脱敏处理后返回。
+func (e *DlpEngine) DesensitizeAttrsOnly(msg string, attrs map[string]string) (string, map[string]string) {
+	if !e.IsEnabled() || len(attrs) == 0 {
+		return msg, attrs
+	}
+
+	desensitizedAttrs := make(map[string]string, len(attrs))
+	for k, v := range attrs {
+		desensitizedAttrs[k] = e.DesensitizeText(v)
+	}
+	return msg, desensitizedAttrs
 }

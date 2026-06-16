@@ -161,10 +161,11 @@ func TestEngine_Mask(t *testing.T) {
 				t.Errorf("Mask() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
-			if tt.model == "" {
+			switch tt.model {
+			case "":
 				// 应该返回脱敏后的文本
 				_ = result
-			} else if tt.model == "nonexistent" {
+			case "nonexistent":
 				// 应该返回原文
 				if result != tt.text {
 					t.Errorf("Mask() with nonexistent model = %v, want %v", result, tt.text)

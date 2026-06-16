@@ -97,16 +97,13 @@ func (eicd *EnhancedIDCardDesensitizer) isValidIDCard(idCard string) bool {
 		year, _ := strconv.Atoi("19" + idCard[6:8])
 		month, _ := strconv.Atoi(idCard[8:10])
 		day, _ := strconv.Atoi(idCard[10:12])
-		if !isValidDate(year, month, day) {
-			return false
-		}
-		return true
+		return isValidDate(year, month, day)
 	}
 
 	// 18位身份证验证
 	if len(idCard) == 18 {
 		// 前17位必须是数字
-		for i := 0; i < 17; i++ {
+		for i := range 17 {
 			if idCard[i] < '0' || idCard[i] > '9' {
 				return false
 			}
@@ -169,7 +166,7 @@ func (eicd *EnhancedIDCardDesensitizer) validateChecksum(idCard string) bool {
 	checksumMap := []byte{'1', '0', 'X', '9', '8', '7', '6', '5', '4', '3', '2'}
 
 	sum := 0
-	for i := 0; i < 17; i++ {
+	for i := range 17 {
 		digit, _ := strconv.Atoi(string(idCard[i]))
 		sum += digit * weights[i]
 	}
@@ -266,7 +263,7 @@ func (eicd *EnhancedIDCardDesensitizer) GetTypePattern(dataType string) string {
 }
 
 // GetConfig 获取配置
-func (eicd *EnhancedIDCardDesensitizer) GetConfig(key string) (interface{}, bool) {
+func (eicd *EnhancedIDCardDesensitizer) GetConfig(key string) (any, bool) {
 	if key == "strict_validation" {
 		return true, true
 	}
